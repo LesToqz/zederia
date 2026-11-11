@@ -18,6 +18,10 @@
 #include <malloc.h>
 #endif
 
+#if ZED_TEST_WITH_GUI // the plug-in tests need the framework's message thread
+#include <juce_events/juce_events.h>
+#endif
+
 namespace {
 
 void* allocate(std::size_t size) noexcept {
@@ -123,6 +127,9 @@ void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept 
 void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { releaseAligned(p); }
 
 int main(int argc, char* argv[]) {
+#if ZED_TEST_WITH_GUI
+    const juce::ScopedJuceInitialiser_GUI gui;
+#endif
     const int result = Catch::Session().run(argc, argv);
     if (leakedViolations != 0) {
         std::fprintf(stderr, "\nFAILED: the audio-thread guard reported violations in %d test case(s)\n", leakedViolations);
