@@ -1,0 +1,17 @@
+# Core code may take locks only through zed::rt::Mutex, which the audio-thread guard watches.
+# This check fails when a raw mutex or condition variable appears anywhere else in core/.
+file(GLOB_RECURSE files ${ROOT}/*.h ${ROOT}/*.cpp)
+set(bad "")
+foreach(f ${files})
+    if(f MATCHES "rt/AudioThreadGuard\\.h$")
+        continue()
+    endif()
+    file(STRINGS ${f} hits REGEX "std::(recursive_|shared_|timed_|recursive_timed_|shared_timed_)?mutex|std::condition_variable|CRITICAL_SECTION|SRWLOCK|pthread_mutex")
+    if(hits)
+        list(APPEND bad "${f}: ${hits}")
+    endif()
+endforeach()
+if(bad)
+    string(REPLACE ";" "\n" bad "${bad}")
+    message(FATAL_ERROR "raw locks in core (use zed::rt::Mutex):\n${bad}")
+endif()
