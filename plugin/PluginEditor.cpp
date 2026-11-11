@@ -151,6 +151,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     addAndMakeVisible(*meter_);
 
     keyboard_.setAvailableRange(24, 108);
+    keyboard_.setOctaveForMiddleC(4);
     keyboard_.setTitle("Keyboard");
     addAndMakeVisible(keyboard_);
 
@@ -177,6 +178,7 @@ void ZederiaEditor::resized() {
     status_.setBounds(top);
     area.removeFromTop(6);
     keyboard_.setBounds(area.removeFromBottom(90));
+    keyboard_.setKeyWidth(juce::jmax(8.0f, static_cast<float>(keyboard_.getWidth()) / 50.0f)); // 50 white keys, C1 to C8
     area.removeFromBottom(8);
     search_.setBounds(area.removeFromTop(26));
     area.removeFromTop(6);
