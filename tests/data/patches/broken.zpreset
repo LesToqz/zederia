@@ -1,0 +1,7 @@
+{
+  "format": "zederia.patch",
+  "version": 1,
+  "osc1": { "on": "yes", "positon": 0.5 },
+  "filter1": { "type": "ladder_lp25", "cutoff_hz": 99999 },
+  "mod": [ { "source": "lfo9", "dest": "filter1.cutof" } ]
+}

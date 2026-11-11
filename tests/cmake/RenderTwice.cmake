@@ -1,0 +1,18 @@
+# Renders the same patch and notes twice and fails unless the two files are byte-identical.
+set(notes "C3:0:0.4, E3:0.2:0.4:90, G3:0.4:0.4:110, C4:0.6:0.6")
+foreach(n 1 2)
+    execute_process(COMMAND ${CLI} render --patch ${PATCH} --notes ${notes} --seed 3 --out ${OUT}/render_${n}.wav
+                    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+    if(NOT rc EQUAL 0)
+        message(FATAL_ERROR "render ${n} failed: ${out}${err}")
+    endif()
+    file(SHA256 ${OUT}/render_${n}.wav hash_${n})
+endforeach()
+message(STATUS "sha256 ${hash_1}")
+if(NOT hash_1 STREQUAL hash_2)
+    message(FATAL_ERROR "two renders differ: ${hash_1} vs ${hash_2}")
+endif()
+file(SIZE ${OUT}/render_1.wav size)
+if(size LESS 100000)
+    message(FATAL_ERROR "the render is suspiciously small (${size} bytes)")
+endif()

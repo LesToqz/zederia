@@ -29,7 +29,7 @@ Optional, not installed: clang-cl, Inno Setup (needed for milestone 7), claude, 
 | cpp-httplib | v0.65.0 |
 | pluginval (tool) | v1.0.4 |
 | clap-validator (tool) | 0.4.1 |
-| CLAP route | clap-juce-extensions at commit 6bde108 (JUCE 9.0.5 has no native CLAP client); CLAP SDK tag 1.2.10 to be confirmed in milestone 1 |
+| CLAP route | clap-juce-extensions at commit 6bde108 (JUCE 9.0.5 has no native CLAP client); it brings CLAP SDK 1.2.7 as a submodule (confirmed in milestone 1: the CLAP target builds) |
 
 ## JUCE licence options (checked 2026-11-10, juce.com/get-juce)
 - Starter: free, revenue up to $20,000 per year.
@@ -42,7 +42,7 @@ The choice is yours and is needed before distribution.
 Plug-in (VST3 and Standalone), console program and Catch2 test all built and ran in Release. Configure 9 s (first run 108 s including the JUCE fetch), build 201 s with 3 jobs.
 
 ## Validator
-pluginval v1.0.4 is in `%LOCALAPPDATA%ProgramsZederia	oolspluginvalpluginval.exe`; use `--validate-in-process`.
+pluginval v1.0.4 is in `%LOCALAPPDATA%\Programs\Zederia\tools\pluginval\pluginval.exe`; use `--validate-in-process` (`scripts/test.ps1 -Pluginval` does this at strictness 10).
 
 ## Development install locations (no administrator rights)
 - VST3: `%LOCALAPPDATA%\Programs\Common\VST3\`
