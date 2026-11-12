@@ -186,7 +186,9 @@ inline F classicWave(F p, F inc, const ClassicMix& mix, float pulseWidth) {
     if (mix.saw > 0.0f || mix.square > 0.0f) {
         const F edge = stepCorrection(p, dt, inverseDt);
         if (mix.saw > 0.0f) {
-            const F saw = S::sub(S::sub(S::add(p, p), one), edge);
+            // A falling ramp, so its fundamental is in phase with the other three shapes and
+            // the morph between them never cancels.
+            const F saw = S::add(S::sub(one, S::add(p, p)), edge);
             out = S::add(out, S::mul(saw, k(mix.saw)));
         }
         if (mix.square > 0.0f) {

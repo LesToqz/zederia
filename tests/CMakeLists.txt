@@ -16,9 +16,13 @@ add_executable(zederia_tests
     core/test_toolkit.cpp
     core/test_formula.cpp
     core/test_import.cpp
+    core/test_sources.cpp
+    core/test_content.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
-target_compile_definitions(zederia_tests PRIVATE ZED_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_compile_definitions(zederia_tests PRIVATE
+    ZED_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    ZED_CONTENT_DIR="${CMAKE_SOURCE_DIR}/content")
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
@@ -41,6 +45,10 @@ add_test(NAME cli.render_is_deterministic
                  -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/glass_pluck.zpreset
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderTwice.cmake)
 add_test(NAME cli.bench_runs COMMAND zederia-cli bench --seconds 0.5 --runs 1)
+add_test(NAME cli.table_commands
+         COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_commands
+                 -DDATA=${CMAKE_CURRENT_SOURCE_DIR}/data -DCONTENT=${CMAKE_SOURCE_DIR}/content
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TableCommands.cmake)
 add_test(NAME core.no_raw_locks
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR}/core -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/NoRawLocks.cmake)
 

@@ -408,6 +408,7 @@ bool buildTableRecipe(const J& recipe, Wavetable& out, std::string& error) {
     const auto steps = recipe.find("steps");
     if (steps == recipe.end() || !steps->is_array() || steps->empty()) {
         error = "the recipe has no \"steps\"";
+        out = Wavetable{};
         return false;
     }
     int number = 0;
@@ -424,6 +425,7 @@ bool buildTableRecipe(const J& recipe, Wavetable& out, std::string& error) {
     // The table's own settings are applied last, so no step can leave them in doubt.
     if (recipe.contains("morph") && !morphModeFromName(stringOr(recipe, "morph", ""), out.morph)) {
         error = "unknown morph mode \"" + stringOr(recipe, "morph", "") + "\"";
+        out = Wavetable{};
         return false;
     }
     if (recipe.contains("stepped"))
