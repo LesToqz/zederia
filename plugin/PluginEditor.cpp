@@ -142,6 +142,28 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     search_.onTextChange = [this] { rebuildRows(); };
     addAndMakeVisible(search_);
 
+    static const char* const assetNames[4] = {"Osc 1 table", "Osc 2 table", "Osc 3 table", "Texture"};
+    for (int slot = 0; slot < 4; ++slot) {
+        assetLabel_[slot].setText(assetNames[slot], juce::dontSendNotification);
+        assetLabel_[slot].setFont(juce::FontOptions(13.0f));
+        assetLabel_[slot].setColour(juce::Label::textColourId, kDim);
+        addAndMakeVisible(assetLabel_[slot]);
+        assetBox_[slot].setTitle(assetNames[slot]);
+        assetBox_[slot].onChange = [this, slot] {
+            if (fillingBoxes_)
+                return;
+            const int item = assetBox_[slot].getSelectedItemIndex();
+            if (item < 0 || item >= static_cast<int>(assetRefs_[slot].size()))
+                return;
+            const std::string& reference = assetRefs_[slot][static_cast<std::size_t>(item)];
+            const std::string problem = slot < 3 ? processor_.setTableReference(slot, reference) : processor_.setTextureReference(reference);
+            if (!problem.empty())
+                status_.setText(problem, juce::dontSendNotification);
+        };
+        addAndMakeVisible(assetBox_[slot]);
+    }
+    refreshAssetBoxes();
+
     list_.setRowHeight(26);
     list_.setColour(juce::ListBox::backgroundColourId, kPanel);
     list_.setTitle("Parameters");
@@ -180,6 +202,14 @@ void ZederiaEditor::resized() {
     keyboard_.setBounds(area.removeFromBottom(90));
     keyboard_.setKeyWidth(juce::jmax(8.0f, static_cast<float>(keyboard_.getWidth()) / 50.0f)); // 50 white keys, C1 to C8
     area.removeFromBottom(8);
+    auto assets = area.removeFromTop(24);
+    const int each = assets.getWidth() / 4;
+    for (int slot = 0; slot < 4; ++slot) {
+        auto cell = assets.removeFromLeft(each).reduced(2, 0);
+        assetLabel_[slot].setBounds(cell.removeFromLeft(juce::jmin(84, cell.getWidth() / 2)));
+        assetBox_[slot].setBounds(cell);
+    }
+    area.removeFromTop(6);
     search_.setBounds(area.removeFromTop(26));
     area.removeFromTop(6);
     list_.setBounds(area);
@@ -188,6 +218,30 @@ void ZederiaEditor::resized() {
 void ZederiaEditor::setSearchText(const juce::String& text) {
     search_.setText(text, juce::dontSendNotification);
     rebuildRows();
+}
+
+// Lists what the content folders hold and selects what the patch names.
+void ZederiaEditor::refreshAssetBoxes() {
+    const juce::ScopedValueSetter<bool> guard(fillingBoxes_, true);
+    const zed::ContentLibrary library = processor_.library();
+    const std::vector<std::string> tables = library.listTables(), textures = library.listTextures();
+    for (int slot = 0; slot < 4; ++slot) {
+        const std::string current = slot < 3 ? processor_.tableReference(slot) : processor_.textureReference();
+        auto& refs = assetRefs_[slot];
+        refs.assign(1, std::string());
+        refs.insert(refs.end(), (slot < 3 ? tables : textures).begin(), (slot < 3 ? tables : textures).end());
+        if (!current.empty() && std::find(refs.begin(), refs.end(), current) == refs.end())
+            refs.push_back(current); // named by the patch but not in the folders: still shown
+        assetBox_[slot].clear(juce::dontSendNotification);
+        int selected = 0;
+        for (std::size_t i = 0; i < refs.size(); ++i) {
+            assetBox_[slot].addItem(i == 0 ? juce::String(slot < 3 ? "(built-in: Basic Shapes)" : "(built-in: White Noise)") : juce::String(refs[i]),
+                                    static_cast<int>(i) + 1);
+            if (refs[i] == current)
+                selected = static_cast<int>(i);
+        }
+        assetBox_[slot].setSelectedItemIndex(selected, juce::dontSendNotification);
+    }
 }
 
 void ZederiaEditor::rebuildRows() {
@@ -227,6 +281,8 @@ void ZederiaEditor::timerCallback() {
     if (seenGeneration_ != processor_.stateGeneration()) { // a patch was loaded: names may have changed
         seenGeneration_ = processor_.stateGeneration();
         rebuildRows();
+        refreshAssetBoxes();
+        processor_.engine().collectGarbage(); // frees tables the audio thread has finished with
     }
     const int first = list_.getRowContainingPosition(0, 0);
     const int visible = list_.getHeight() / juce::jmax(1, list_.getRowHeight()) + 2;

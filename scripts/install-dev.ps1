@@ -3,6 +3,8 @@
 #   VST3   %LOCALAPPDATA%\Programs\Common\VST3\Zederia.vst3
 #   CLAP   %LOCALAPPDATA%\Programs\Common\CLAP\Zederia.clap
 #   tools  %LOCALAPPDATA%\Programs\Zederia\  (zederia-cli, zederia-mcp, the standalone)
+#   factory content  %LOCALAPPDATA%\Zederia\Factory\  (built from the recipes in content/; the
+#                    per-user fallback of the factory folder, see plan 5.6)
 #
 #   scripts/install-dev.ps1               install the Release build
 #   scripts/install-dev.ps1 -Config Debug
@@ -16,9 +18,11 @@ $root = Split-Path -Parent $PSScriptRoot
 $vst3Dir = Join-Path $env:LOCALAPPDATA 'Programs\Common\VST3'
 $clapDir = Join-Path $env:LOCALAPPDATA 'Programs\Common\CLAP'
 $toolsDir = Join-Path $env:LOCALAPPDATA 'Programs\Zederia'
+$factoryDir = Join-Path $env:LOCALAPPDATA 'Zederia\Factory'
 $installed = @(
     (Join-Path $vst3Dir 'Zederia.vst3'), (Join-Path $clapDir 'Zederia.clap'),
-    (Join-Path $toolsDir 'zederia-cli.exe'), (Join-Path $toolsDir 'zederia-mcp.exe'), (Join-Path $toolsDir 'Zederia.exe')
+    (Join-Path $toolsDir 'zederia-cli.exe'), (Join-Path $toolsDir 'zederia-mcp.exe'), (Join-Path $toolsDir 'Zederia.exe'),
+    $factoryDir
 )
 
 if ($Uninstall) {
@@ -48,3 +52,10 @@ foreach ($s in $sources) {
     Copy-Item -Recurse -Force $s.From $s.To
     "installed $target"
 }
+
+# Factory wavetables and textures are built from their recipes, not copied.
+$cli = Join-Path $build 'cli\zederia-cli.exe'
+if (Test-Path $factoryDir) { Remove-Item -Recurse -Force $factoryDir }
+& $cli content build --in (Join-Path $root 'content') --out $factoryDir | Select-Object -Last 1
+if ($LASTEXITCODE -ne 0) { throw "building the factory content failed" }
+"installed $factoryDir"

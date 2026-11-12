@@ -16,14 +16,16 @@ constexpr int kBlock = 512;
 struct Setup {
     BenchScenario info;
     std::vector<int> notes; // held for the whole run
+    std::vector<std::pair<const char*, double>> values; // parameters that differ from the default patch
 };
 
 const std::vector<Setup>& setups() {
     static const std::vector<Setup> all = {
-        {{"idle", "Idle instance: no voices, tails finished", 0.2}, {}},
-        {{"one_voice", "One voice, one oscillator", 0.5}, {48}},
-        {{"chord8", "8-voice chord, one oscillator (unison and filter join in milestones 2 and 3)", 4.0},
-         {36, 43, 48, 52, 55, 60, 64, 67}},
+        {{"idle", "Idle instance: no voices, tails finished", 0.2}, {}, {}},
+        {{"one_voice", "One voice, one wavetable oscillator", 0.5}, {48}, {}},
+        {{"chord8", "8-voice chord, one wavetable oscillator at unison 7 (the filter joins in milestone 3)", 4.0},
+         {36, 43, 48, 52, 55, 60, 64, 67},
+         {{"osc1.unison.voices", 7}}},
     };
     return all;
 }
@@ -56,7 +58,10 @@ bool runBench(std::string_view name, double audioSeconds, int runs, BenchResult&
     for (int run = 0; run < std::max(runs, 1); ++run) {
         Engine engine;
         engine.prepare(kSampleRate);
-        engine.loadPatch(Patch());
+        Patch patch;
+        for (const auto& [id, value] : it->values)
+            patch.set(id, value);
+        engine.loadPatch(patch);
         // The first block starts the notes and settles the parameters; it is not timed.
         engine.process({left.data(), right.data(), kBlock, noteOns, {}});
         const auto start = std::chrono::steady_clock::now();

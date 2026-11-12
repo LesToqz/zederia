@@ -91,9 +91,21 @@ RenderResult render(const Patch& patch, int note, double seconds, std::shared_pt
     return renderOffline(patch, sequenceFromNotes(notes, sampleRate), settings);
 }
 
+// Pitch from the zero crossings of the fundamental alone. The harmonics are filtered away first
+// (four gentle low-passes at the expected pitch): a bright wave near the top of the keyboard can
+// cross zero more than once per cycle, and a filter moves no frequency.
 double pitchCents(const std::vector<float>& x, double expectedHz, double sampleRate = kRate) {
-    const auto from = static_cast<std::size_t>(0.2 * sampleRate), to = x.size() - static_cast<std::size_t>(0.1 * sampleRate);
-    return zedtest::cents(zedtest::measureFrequency(x, from, to, sampleRate), expectedHz);
+    std::vector<float> y = x;
+    const double k = 1.0 - std::exp(-2.0 * kPi * expectedHz / sampleRate);
+    for (int pass = 0; pass < 4; ++pass) {
+        double state = 0.0;
+        for (float& s : y) {
+            state += (s - state) * k;
+            s = static_cast<float>(state);
+        }
+    }
+    const auto from = static_cast<std::size_t>(0.2 * sampleRate), to = y.size() - static_cast<std::size_t>(0.1 * sampleRate);
+    return zedtest::cents(zedtest::measureFrequency(y, from, to, sampleRate), expectedHz);
 }
 
 double maxDifference(const std::vector<float>& a, const std::vector<float>& b) {
@@ -181,21 +193,29 @@ TEST_CASE("classic: step correction keeps aliasing well below the naive wave", "
     // The Classic engine trades some purity for cost (plan 3.2). Its sawtooth is measured the
     // same way as the wavetable one and reported; the bound here is what the two-sample
     // polynomial correction can be relied on to give in the audible band.
-    double worstLow = -400.0, worstHigh = -400.0;
-    for (const double note : {33.0, 45.3, 57.6, 64.2, 69.0, 76.9, 81.5, 88.1, 93.7}) {
-        Patch p = classicPatch(0.0);
-        const int key = static_cast<int>(std::floor(note));
-        p.set("osc1.coarse", note - key);
-        const RenderResult r = render(p, key, 3.2, nullptr, 44100.0);
-        const auto s = zedtest::spectrumOf(r.left, 8820, 131072, 44100.0);
-        const double dbc = zedtest::nonHarmonicLevel(s, noteToHz(note), 20000.0).worstDbc;
-        (note < 72.0 ? worstLow : worstHigh) = std::max(note < 72.0 ? worstLow : worstHigh, dbc);
+    struct Mode {
+        const char* name;
+        double low, high; // limits up to C5 and from C5 to A6
+    };
+    for (const Mode mode : {Mode{"draft", -40.0, -30.0}, Mode{"standard", -55.0, -45.0}, Mode{"high", -65.0, -55.0}}) {
+        double worstLow = -400.0, worstHigh = -400.0;
+        for (const double note : {33.0, 45.3, 57.6, 64.2, 69.0, 76.9, 81.5, 88.1, 93.7}) {
+            Patch p = classicPatch(0.0);
+            p.set("global.quality_offline", choiceOf("global.quality_offline", mode.name));
+            const int key = static_cast<int>(std::floor(note));
+            p.set("osc1.coarse", note - key);
+            const RenderResult r = render(p, key, 3.2, nullptr, 44100.0);
+            const auto s = zedtest::spectrumOf(r.left, 8820, 131072, 44100.0);
+            const double dbc = zedtest::nonHarmonicLevel(s, noteToHz(note), 20000.0).worstDbc;
+            (note < 72.0 ? worstLow : worstHigh) = std::max(note < 72.0 ? worstLow : worstHigh, dbc);
+        }
+        char line[200];
+        std::snprintf(line, sizeof line, "aliasing, classic sawtooth below 20 kHz, %s: %.1f dBc up to C5, %.1f dBc from C5 to A6",
+                      mode.name, worstLow, worstHigh);
+        WARN(line);
+        CHECK(worstLow < mode.low);
+        CHECK(worstHigh < mode.high);
     }
-    char line[200];
-    std::snprintf(line, sizeof line, "aliasing, classic sawtooth below 20 kHz: %.1f dBc up to C5, %.1f dBc from C5 to A6", worstLow, worstHigh);
-    WARN(line);
-    CHECK(worstLow < -40.0);
-    CHECK(worstHigh < -30.0);
 }
 
 TEST_CASE("classic: unison and the amplitude warps work; phase shaping needs a wavetable", "[classic]") {

@@ -732,11 +732,13 @@ struct Engine::Impl {
         }
         routing = r;
 
-        // Warped and modulated paths, and the modulators that feed them, run oversampled.
+        // Warped and modulated paths, and the modulators that feed them, run oversampled. So
+        // does the Classic engine: its step correction is cheap but leaves more aliasing than
+        // the wavetable levels do, and oversampling is what pushes that down.
         bool changed = false;
         for (int i = 0; i < kOscCount; ++i) {
             const bool warped = osc[i].mode[0] != WarpMode::Off || osc[i].mode[1] != WarpMode::Off;
-            const int rate = warped || r.usedAsModulator[i] ? oversample : 1;
+            const int rate = warped || r.usedAsModulator[i] || osc[i].classic ? oversample : 1;
             changed = changed || rate != osc[i].oversample;
             osc[i].oversample = rate;
         }

@@ -272,3 +272,134 @@ TEST_CASE("plug-in: the temporary editor opens, lists parameters and follows the
     host.run(12);
     CHECK(host.processor.activeVoices() == 0);
 }
+
+// --- Milestone 2: sources, tables and textures ---------------------------------------------------
+
+#include "../support/Analysis.h"
+#include "zederia/content/Recipe.h"
+
+#include <filesystem>
+
+namespace {
+
+// The starter content built into a temporary folder, once for all tests in this file.
+const std::string& factoryFolder() {
+    static const std::string folder = [] {
+        const auto dir = std::filesystem::temp_directory_path() / "zederia_test_plugin_factory";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        const ContentBuild built = buildContentFolder(ZED_CONTENT_DIR, dir.string());
+        REQUIRE(built.errors.empty());
+        return dir.string();
+    }();
+    return folder;
+}
+
+} // namespace
+
+TEST_CASE("plug-in: all three oscillators, Sub and Texture play", "[plugin][sources]") {
+    const auto& reg = Registry::get();
+    const auto level = [&](const std::vector<const char*>& on) {
+        Host host;
+        host.processor.engine().params().set(idx("osc1.on"), 0.0);
+        for (const char* id : on)
+            host.processor.engine().params().set(idx(id), 1.0);
+        host.midi.addEvent(juce::MidiMessage::noteOn(1, 57, 0.9f), 0);
+        host.run(40);
+        return zedtest::rmsOf(host.left, 4800, host.left.size());
+    };
+    CHECK(level({}) == 0.0);
+    const double osc1 = level({"osc1.on"}), osc2 = level({"osc2.on"}), osc3 = level({"osc3.on"});
+    const double sub = level({"sub.on"}), texture = level({"texture.on"});
+    CHECK(osc1 > 0.02);
+    CHECK(osc2 == Approx(osc1).epsilon(0.2)); // identical oscillators (random start phases)
+    CHECK(osc3 == Approx(osc1).epsilon(0.2));
+    CHECK(sub > 0.02);
+    CHECK(texture > 0.005);
+    CHECK(level({"osc1.on", "osc2.on", "osc3.on", "sub.on", "texture.on"}) > osc1);
+
+    // The Classic engine through the host parameter path (engine is not automatable: set directly).
+    Host classic;
+    classic.processor.engine().params().set(idx("osc1.engine"), reg.find("osc1.engine")->choiceIndex("classic"));
+    classic.midi.addEvent(juce::MidiMessage::noteOn(1, 57, 0.9f), 0);
+    classic.run(20);
+    CHECK(classic.peak(2400) > 0.02f);
+}
+
+TEST_CASE("plug-in: tables and the texture load by reference, change while playing and survive a state round trip",
+          "[plugin][sources][state]") {
+    zed::rt::resetViolations();
+    Host host;
+    host.processor.setContentFolders(factoryFolder(), "");
+    CHECK(host.processor.library().listTables().size() == 12);
+    CHECK(host.processor.library().listTextures().size() == 6);
+
+    host.midi.addEvent(juce::MidiMessage::noteOn(1, 48, 0.9f), 0);
+    host.run(10);
+    CHECK(host.processor.setTableReference(0, "factory:Formant/Vowel Drift").empty());
+    CHECK(host.processor.setTextureReference("factory:Wind").empty());
+    host.processor.engine().params().set(idx("texture.on"), 1.0);
+    host.run(20); // the swap happens inside the callback, under the guard
+    CHECK(host.processor.engine().table(0)->name() == "Vowel Drift");
+    CHECK(host.processor.engine().texture()->name == "Wind");
+    CHECK(host.processor.tableReference(0) == "factory:Formant/Vowel Drift");
+    CHECK(zed::rt::violationCount() == 0);
+    bool finite = true;
+    for (const float s : host.left)
+        finite = finite && std::isfinite(s);
+    CHECK(finite);
+
+    // A reference that cannot be loaded is kept in the patch, reported, and played with the built-in table.
+    const std::string problem = host.processor.setTableReference(1, "factory:Nowhere/Missing");
+    CHECK(problem.find("Missing") != std::string::npos);
+    CHECK(host.processor.engine().table(1)->name() == "Basic Shapes");
+
+    juce::MemoryBlock state;
+    host.processor.getStateInformation(state);
+    Host other;
+    other.processor.setContentFolders(factoryFolder(), "");
+    other.processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(other.processor.tableReference(0) == "factory:Formant/Vowel Drift");
+    CHECK(other.processor.tableReference(1) == "factory:Nowhere/Missing");
+    CHECK(other.processor.textureReference() == "factory:Wind");
+    CHECK(other.processor.engine().table(0)->name() == "Vowel Drift");
+    CHECK(other.processor.engine().texture()->name == "Wind");
+    REQUIRE(other.processor.assetProblems().size() == 1);
+    CHECK(other.processor.assetProblems()[0].find("osc2") != std::string::npos);
+    other.midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+    other.run(20);
+    CHECK(other.peak(2400) > 0.01f);
+    CHECK(zed::rt::violationCount() == 0);
+}
+
+TEST_CASE("plug-in: the temporary editor offers the tables and textures", "[plugin][editor][sources]") {
+    Host host;
+    host.processor.setContentFolders(factoryFolder(), "");
+    std::unique_ptr<juce::AudioProcessorEditor> base(host.processor.createEditor());
+    auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
+    REQUIRE(editor != nullptr);
+    for (int slot = 0; slot < 3; ++slot)
+        CHECK(editor->assetChoiceCount(slot) == 13); // the built-in table and the twelve of the starter set
+    CHECK(editor->assetChoiceCount(3) == 7);
+    CHECK(editor->chosenAsset(0).startsWith("(built-in"));
+
+    editor->chooseAsset(1, 3);
+    const std::string chosen = editor->chosenAsset(1).toStdString();
+    CHECK(chosen.rfind("factory:", 0) == 0);
+    CHECK(host.processor.tableReference(1) == chosen);
+    editor->chooseAsset(3, 1);
+    CHECK(host.processor.textureReference() == editor->chosenAsset(3).toStdString());
+    editor->chooseAsset(1, 0); // back to the built-in table
+    CHECK(host.processor.tableReference(1).empty());
+
+    // Every source can be switched on from the parameter list and heard.
+    for (const char* id : {"osc2.on", "osc3.on", "sub.on", "texture.on"}) {
+        editor->setSearchText(id);
+        CHECK(editor->visibleParameterCount() == 1);
+        host.processor.setNormalizedFromUi(idx(id), 1.0f);
+    }
+    host.processor.keyboardState().noteOn(1, 52, 0.9f);
+    host.run(20);
+    CHECK(host.peak(2400) > 0.02f);
+    base.reset();
+}
