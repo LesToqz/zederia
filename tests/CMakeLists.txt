@@ -10,6 +10,8 @@ add_executable(zederia_tests
     core/test_tuning.cpp
     core/test_render.cpp
     core/test_rt_guard.cpp
+    core/test_osc_quality.cpp
+    core/test_osc.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE ZED_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")

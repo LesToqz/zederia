@@ -1599,18 +1599,7 @@ void Engine::setWarpCurve(int osc, int slot, std::span<const float> values) {
     if (osc < 0 || osc >= kOscCount || slot < 0 || slot > 1)
         return;
     auto curve = std::make_shared<WarpCurve>();
-    if (values.empty()) {
-        std::copy(osc::defaultWarpCurve(), osc::defaultWarpCurve() + curve->values.size(), curve->values.begin());
-    } else {
-        const auto last = static_cast<double>(values.size() - 1);
-        for (std::size_t i = 0; i < curve->values.size(); ++i) {
-            const double at = std::min(static_cast<double>(i) / osc::kCurvePoints, 1.0) * last;
-            const auto index = static_cast<std::size_t>(at);
-            const std::size_t next = std::min(index + 1, values.size() - 1);
-            const double v = values[index] + (values[next] - values[index]) * (at - static_cast<double>(index));
-            curve->values[i] = static_cast<float>(std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0);
-        }
-    }
+    osc::fillWarpCurve(values, curve->values.data());
     impl_->curves[osc][slot].set(std::move(curve));
 }
 

@@ -16,6 +16,13 @@ add_library(zederia_core STATIC
     src/audio/WavFile.cpp
     src/table/Wavetable.cpp
     src/table/TableData.cpp
+    src/table/Toolkit.cpp
+    src/table/Formula.cpp
+    src/table/Import.cpp
+    src/table/Resynth.cpp
+    src/util/Image.cpp
+    src/content/Recipe.cpp
+    src/content/Library.cpp
     src/engine/VoiceAllocator.cpp
     src/engine/SampleData.cpp
     src/engine/OscKernelScalar.cpp

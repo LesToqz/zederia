@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -106,9 +107,11 @@ RenderFn pickRender(int lanes) noexcept;
 // For tests and benchmarks: 0 = automatic, 1 = scalar only, 4 = SSE2 only, 8 = AVX2 where possible.
 void forceKernelWidth(int width) noexcept;
 
-// The default warp curve (an S-shaped ease) and a helper that fills a curve table from any
-// function of 0..1; values are clamped to 0..1.
+// The default warp curve (an S-shaped ease): kCurvePoints + 2 values.
 const float* defaultWarpCurve() noexcept;
+// Fills a curve table (kCurvePoints + 2 values) from any number of evenly spaced values across
+// the cycle, clamped to 0..1; no values gives the default curve.
+void fillWarpCurve(std::span<const float> values, float* table) noexcept;
 
 } // namespace zed::osc
 

@@ -3,6 +3,7 @@
 #include "zederia/dsp/Simd.h"
 #include "zederia/engine/OscKernel.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -103,6 +104,21 @@ const float* defaultWarpCurve() noexcept {
         return c;
     }();
     return curve.data();
+}
+
+void fillWarpCurve(std::span<const float> values, float* table) noexcept {
+    if (values.empty()) {
+        std::copy(defaultWarpCurve(), defaultWarpCurve() + kCurvePoints + 2, table);
+        return;
+    }
+    const auto last = static_cast<double>(values.size() - 1);
+    for (int i = 0; i < kCurvePoints + 2; ++i) {
+        const double at = std::min(static_cast<double>(i) / kCurvePoints, 1.0) * last;
+        const auto index = static_cast<std::size_t>(at);
+        const std::size_t next = std::min(index + 1, values.size() - 1);
+        const double v = values[index] + (values[next] - values[index]) * (at - static_cast<double>(index));
+        table[i] = static_cast<float>(std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0);
+    }
 }
 
 namespace {
