@@ -1,0 +1,23 @@
+{
+  "kind": "table",
+  "name": "Harmonic Ladder",
+  "category": "Harmonic",
+  "frames": 16,
+  "stepped": true,
+  "about": "One overtone per step above a steady fundamental: a staircase on purpose.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "h == 1 ? 0.7 : h == 2 + round(y * 15) ? 1 : 0"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    },
+    {
+      "op": "stepped",
+      "value": true
+    }
+  ]
+}

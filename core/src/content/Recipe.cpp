@@ -8,9 +8,13 @@
 #include "zederia/table/Toolkit.h"
 #include "zederia/util/Math.h"
 
+#include "zederia/render/OfflineRenderer.h"
+
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <nlohmann/json.hpp>
+#include <system_error>
 
 namespace zed {
 namespace {
@@ -95,14 +99,14 @@ bool tableStep(const J& step, Wavetable& table, std::string& error) {
         return applyFormula(table, request, error);
     }
     if (op == "process") {
-        ProcessOp process;
+        ProcessOp process = ProcessOp::Clear;
         if (!processOpFromName(stringOr(step, "name", ""), process))
             return refuse("unknown process \"" + stringOr(step, "name", "") + "\"");
         processFrames(table, selection, process, intOr(step, "n", 0));
         return true;
     }
     if (op == "harmonic") {
-        HarmonicOp harmonic;
+        HarmonicOp harmonic = HarmonicOp::ClearAll;
         if (!harmonicOpFromName(stringOr(step, "name", ""), harmonic))
             return refuse("unknown harmonic operation \"" + stringOr(step, "name", "") + "\"");
         for (int f = first; f <= last; ++f)
@@ -111,7 +115,7 @@ bool tableStep(const J& step, Wavetable& table, std::string& error) {
         return true;
     }
     if (op == "draw") {
-        DrawShape shape;
+        DrawShape shape = DrawShape::Flat;
         if (!drawShapeFromName(stringOr(step, "shape", ""), shape))
             return refuse("unknown shape \"" + stringOr(step, "shape", "") + "\"");
         for (int f = first; f <= last; ++f)
@@ -136,7 +140,7 @@ bool tableStep(const J& step, Wavetable& table, std::string& error) {
         return true;
     }
     if (op == "sort") {
-        SortKey key;
+        SortKey key = SortKey::Brightness;
         if (!sortKeyFromName(stringOr(step, "by", ""), key))
             return refuse("unknown sort key \"" + stringOr(step, "by", "") + "\"");
         sortFrames(table, key, boolOr(step, "descending", false));
@@ -503,6 +507,89 @@ bool buildTextureRecipe(const J& recipe, WavData& out, std::string& error) {
     out.loopStart = 0;
     out.loopEnd = static_cast<std::int64_t>(length);
     return true;
+}
+
+} // namespace zed
+
+namespace zed {
+namespace {
+
+// A recipe's name as a file name: letters, digits, spaces, dashes and underscores.
+std::string fileNameOf(const std::string& name) {
+    std::string out;
+    for (const char c : name)
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_')
+            out += c;
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out.substr(0, 80);
+}
+
+} // namespace
+
+ContentBuild buildContentFolder(const std::string& recipesDir, const std::string& outDir) {
+    namespace fs = std::filesystem;
+    ContentBuild result;
+    std::error_code ec;
+    std::vector<fs::path> recipes;
+    for (fs::recursive_directory_iterator it(fs::path(recipesDir), ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec) && it->path().extension() == ".json")
+            recipes.push_back(it->path());
+    if (ec || recipes.empty()) {
+        result.errors.push_back("no recipes (*.json) were found in " + recipesDir);
+        return result;
+    }
+    std::sort(recipes.begin(), recipes.end());
+    for (const fs::path& file : recipes) {
+        const std::string shown = file.filename().string();
+        std::vector<std::uint8_t> bytes;
+        std::string error;
+        if (!readFile(file.string(), bytes, error)) {
+            result.errors.push_back(shown + ": " + error);
+            continue;
+        }
+        const J recipe = J::parse(bytes.begin(), bytes.end(), nullptr, false);
+        const std::string kind = recipeKind(recipe);
+        const std::string name = fileNameOf(recipeName(recipe));
+        if (kind.empty() || name.empty()) {
+            result.errors.push_back(shown + ": not a recipe (it needs \"kind\": \"table\" or \"texture\" and a \"name\")");
+            continue;
+        }
+        fs::path relative;
+        std::vector<std::uint8_t> wav;
+        if (kind == "table") {
+            Wavetable table;
+            if (!buildTableRecipe(recipe, table, error)) {
+                result.errors.push_back(shown + ": " + error);
+                continue;
+            }
+            const std::string category = fileNameOf(recipeCategory(recipe));
+            relative = fs::path("Wavetables") / (category.empty() ? fs::path() : fs::path(category)) / (name + ".wav");
+            wav = encodeWavetable(table);
+            ++result.tables;
+        } else {
+            WavData texture;
+            if (!buildTextureRecipe(recipe, texture, error)) {
+                result.errors.push_back(shown + ": " + error);
+                continue;
+            }
+            relative = fs::path("Textures") / (name + ".wav");
+            wav = encodeWavData(texture, WavSampleFormat::Pcm24);
+            ++result.textures;
+        }
+        const fs::path target = fs::path(outDir) / relative;
+        fs::create_directories(target.parent_path(), ec);
+        if (!writeFile(target.string(), wav, error)) {
+            result.errors.push_back(shown + ": " + error);
+            if (kind == "table")
+                --result.tables;
+            else
+                --result.textures;
+            continue;
+        }
+        result.written.push_back(relative.generic_string());
+    }
+    return result;
 }
 
 } // namespace zed

@@ -1,6 +1,9 @@
-// zederia-cli: render, validate-patch, params, bench.
+// zederia-cli: render, validate-patch, params, bench, and the wavetable toolkit (table, texture,
+// content; see TableCommands.cpp).
+#include "CliUtil.h"
 #include "zederia/Version.h"
 #include "zederia/bench/Bench.h"
+#include "zederia/content/Library.h"
 #include "zederia/params/ParamDocs.h"
 #include "zederia/patch/PatchIO.h"
 #include "zederia/render/OfflineRenderer.h"
@@ -10,17 +13,16 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
-#include <map>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
 namespace {
 
+using namespace cli;
 using zed::Issue;
 using J = nlohmann::ordered_json;
-
-constexpr int kOk = 0, kFailed = 1, kUsage = 2;
 
 const char* kHelp = R"(zederia-cli %s
 
@@ -38,6 +40,8 @@ Usage: zederia-cli <command> [options]
       --tail SECONDS           time rendered after the last event (default: the patch's own tail)
       --seed N                 random seed (default 1); same seed, same file
       --tempo BPM              tempo reported to the engine (default 120)
+      --content DIR            factory content folder for "factory:" table and sample references
+      --live-quality           render with the patch's realtime quality instead of its offline quality
 
   validate-patch FILE          Check a patch; exit code 1 when it has errors
       --json                   print the result as JSON
@@ -55,59 +59,49 @@ Usage: zederia-cli <command> [options]
       --baseline FILE          compare with stored results; exit code 1 on a regression of more than 10 %%
       --update-baseline        write the measured results to the baseline file
 
+  table SUBCOMMAND             The wavetable toolkit. Tables are WAV files of 2048-sample frames.
+                               Frame numbers start at 0; --scope is all, a frame, or a range such as 2-7.
+      info FILE [--json]       name, frames, morph mode, level and size
+      new --frames N --out FILE
+      formula --expr "E" [--in FILE | --frames N] [--domain wave|harmonics] [--phase "E"] [--scope S]
+              [--selected N] [--seed N] [--normalize] [--morph MODE] --out FILE
+                               symbols t x y z h in sel rand pi tau e; see docs/ARCHITECTURE.md
+      process --in FILE --op NAME [--n N] [--scope S] --out FILE
+                               normalize_each normalize_shared remove_dc flip_polarity mirror_time
+                               shift_to_zero_crossing clear fade_edges crossfade_edges low_pass
+                               remove_fundamental sample_rate_reduce align_fundamental
+      harmonic --in FILE --op NAME [--n N] [--amount X] [--seed N] [--scope S] --out FILE
+                               clear_all clear_above clear_below fill_saw randomize_lowest randomize_all
+                               random_gaps fade_highs octave_up octave_down odd_only even_only
+                               snap_quarters scale_by_harmonic
+      frames --in FILE --op NAME [--at N] [--from N --to N] [--every N] [--source N] [--scope S] --out FILE
+                               insert duplicate delete move thin crop reverse split join
+                               copy_spectrum copy_phases trim_silent
+      morph --in FILE [--mode none|crossfade|spectral|spectral_aligned|spectral_zero]
+            [--stepped on|off] [--bake N] --out FILE
+      sort --in FILE --by brightest_peak|brightness|strongest_partial|active_partials|
+           highest_partial|fundamental [--descending] --out FILE
+      import FILE... [--method auto|table|cycles|pitch|fixed|spectral|image] --out FILE
+              [--channel left|right|mid|split]     stereo files; split writes _left and _right tables
+              [--frame-size N]                     table: samples per frame in the file
+              [--snap] [--max-frames N] [--average]  pitch, fixed: cut on zero crossings; reduce cycles
+              [--cycle-samples X | --note A3]      fixed: cycle length (default: detected)
+              [--fft 256..2048] [--frames N] [--phase original|zero|random]   spectral
+              [--image-mode amplitude|harmonics]   image (PNG, BMP, PGM, PPM): rows become frames
+              [--fade-edges N] [--normalize] [--trim-silent DB]   follow-ups
+      resynth --op bake-warp --in FILE --mode WARP [--position P] [--frames N] --out FILE
+      resynth --op bake-patch [--patch FILE|init] [--bars B] [--tempo BPM] [--note C3] [--frames N] --out FILE
+      resynth --op shape --values "0,1,0.5,0" [--unipolar] --out FILE
+      export --in FILE [--scope S] --out FILE | --generated N --out FILE | --out-dir DIR
+                               a selection, the generated positions, or a folder of single cycles
+      build RECIPE.json --out FILE
+
+  texture build RECIPE.json --out FILE.wav
+  content build --in RECIPES_DIR --out FACTORY_DIR
+                               Build every wavetable and texture recipe (see content/README.md)
+
   --version                    Print the version
 )";
-
-struct Args {
-    std::vector<std::string> positional;
-    std::map<std::string, std::string> options;
-    bool has(const std::string& key) const { return options.count(key) != 0; }
-    std::string get(const std::string& key, const std::string& fallback = {}) const {
-        const auto it = options.find(key);
-        return it == options.end() ? fallback : it->second;
-    }
-};
-
-// Options that take no value.
-bool isFlag(const std::string& name) {
-    static const char* flags[] = {"json", "print", "compact", "list", "update-baseline", "help"};
-    return std::any_of(std::begin(flags), std::end(flags), [&](const char* f) { return name == f; });
-}
-
-bool parseArgs(int argc, char** argv, int first, Args& out) {
-    for (int i = first; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a.rfind("--", 0) != 0) {
-            out.positional.push_back(a);
-            continue;
-        }
-        const std::string name = a.substr(2);
-        if (isFlag(name)) {
-            out.options[name] = "1";
-        } else if (i + 1 < argc) {
-            out.options[name] = argv[++i];
-        } else {
-            std::fprintf(stderr, "error: --%s needs a value\n", name.c_str());
-            return false;
-        }
-    }
-    return true;
-}
-
-bool toNumber(const std::string& text, double& out) {
-    const auto r = std::from_chars(text.data(), text.data() + text.size(), out);
-    return r.ec == std::errc() && r.ptr == text.data() + text.size() && std::isfinite(out);
-}
-
-bool numberOption(const Args& args, const char* key, double min, double max, double& value) {
-    if (!args.has(key))
-        return true;
-    if (!toNumber(args.get(key), value) || value < min || value > max) {
-        std::fprintf(stderr, "error: --%s must be a number from %g to %g\n", key, min, max);
-        return false;
-    }
-    return true;
-}
 
 void printIssues(const std::vector<Issue>& issues, std::FILE* to) {
     for (const auto& i : issues)
@@ -115,9 +109,11 @@ void printIssues(const std::vector<Issue>& issues, std::FILE* to) {
                      i.path.empty() ? "(document)" : i.path.c_str(), i.message.c_str(), i.fix.c_str());
 }
 
-bool loadPatchArg(const std::string& arg, zed::Patch& patch) {
+bool loadPatchArg(const std::string& arg, zed::Patch& patch, std::string* presetDir = nullptr) {
     if (arg.empty() || arg == "init")
         return true;
+    if (presetDir != nullptr)
+        *presetDir = std::filesystem::path(arg).parent_path().string();
     std::vector<std::uint8_t> bytes;
     std::string error;
     if (!zed::readFile(arg, bytes, error)) {
@@ -132,15 +128,6 @@ bool loadPatchArg(const std::string& arg, zed::Patch& patch) {
     }
     patch = std::move(result.patch);
     return true;
-}
-
-bool writeText(const std::string& path, const std::string& text) {
-    std::string error;
-    const auto* data = reinterpret_cast<const std::uint8_t*>(text.data());
-    if (zed::writeFile(path, {data, text.size()}, error))
-        return true;
-    std::fprintf(stderr, "error: %s\n", error.c_str());
-    return false;
 }
 
 // --- render ------------------------------------------------------------------------------------
@@ -168,8 +155,28 @@ int cmdRender(const Args& args) {
     const auto format = bits == "16" ? zed::WavFormat::Pcm16 : bits == "24" ? zed::WavFormat::Pcm24 : zed::WavFormat::Float32;
 
     zed::Patch patch;
-    if (!loadPatchArg(args.get("patch", "init"), patch))
+    std::string presetDir;
+    if (!loadPatchArg(args.get("patch", "init"), patch, &presetDir))
         return kFailed;
+    settings.offlineQuality = !args.has("live-quality");
+
+    // The tables and the sample the patch names. What cannot be found is replaced by the built-in
+    // table or noise, with a warning.
+    zed::ContentLibrary library = zed::ContentLibrary::standard();
+    if (args.has("content"))
+        library.setFactoryDir(args.get("content"));
+    for (int i = 0; i < zed::kNumOscs; ++i) {
+        std::string problem;
+        settings.tables[static_cast<std::size_t>(i)] = library.loadTable(patch.tables[static_cast<std::size_t>(i)], problem, presetDir);
+        if (settings.tables[static_cast<std::size_t>(i)] == nullptr)
+            std::fprintf(stderr, "warning: osc%d: %s; the built-in table is used instead\n", i + 1, problem.c_str());
+    }
+    {
+        std::string problem;
+        settings.texture = library.loadTexture(patch.textureSample, problem, presetDir);
+        if (settings.texture == nullptr)
+            std::fprintf(stderr, "warning: texture: %s; the built-in noise is used instead\n", problem.c_str());
+    }
 
     std::vector<zed::SeqEvent> events;
     std::string error;
@@ -401,6 +408,9 @@ int main(int argc, char** argv) {
         if (command == "validate-patch") return cmdValidate(args);
         if (command == "params") return cmdParams(args);
         if (command == "bench") return cmdBench(args);
+        if (command == "table") return cmdTable(args);
+        if (command == "texture") return cmdTexture(args);
+        if (command == "content") return cmdContent(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return kFailed;

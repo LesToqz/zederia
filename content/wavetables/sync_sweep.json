@@ -1,0 +1,35 @@
+{
+  "kind": "table",
+  "name": "Sync Sweep",
+  "category": "Motion",
+  "frames": 1,
+  "morph": "crossfade",
+  "about": "A soft-synced sawtooth captured across the whole range of the warp with Bake warp.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "1/h",
+      "phase": "pi",
+      "normalize": true
+    },
+    {
+      "op": "bake_warp",
+      "mode": "soft_sync",
+      "position": 0,
+      "count": 96
+    },
+    {
+      "op": "thin",
+      "keep_every": 2
+    },
+    {
+      "op": "process",
+      "name": "remove_dc"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

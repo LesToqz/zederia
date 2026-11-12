@@ -32,6 +32,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 #include <string>
+#include <vector>
 
 namespace zed {
 
@@ -44,5 +45,14 @@ std::string recipeCategory(const nlohmann::json& recipe);
 // Both return false with a message that names the step or layer and the problem.
 bool buildTableRecipe(const nlohmann::json& recipe, Wavetable& out, std::string& error);
 bool buildTextureRecipe(const nlohmann::json& recipe, WavData& out, std::string& error);
+
+// Builds every recipe found under `recipesDir` (searched through its subfolders) into
+// `outDir`/Wavetables/<Category>/<Name>.wav and `outDir`/Textures/<Name>.wav.
+struct ContentBuild {
+    int tables = 0, textures = 0;
+    std::vector<std::string> written; // files, relative to outDir
+    std::vector<std::string> errors;  // one line per recipe that failed
+};
+ContentBuild buildContentFolder(const std::string& recipesDir, const std::string& outDir);
 
 } // namespace zed

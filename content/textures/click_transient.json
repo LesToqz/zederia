@@ -1,0 +1,36 @@
+{
+  "kind": "texture",
+  "name": "Click Transient",
+  "seconds": 0.35,
+  "rate": 48000,
+  "loop": false,
+  "seed": 6,
+  "peak_db": -1,
+  "about": "A short attack layer: a bright burst over a falling thump. Plays once.",
+  "layers": [
+    {
+      "type": "burst",
+      "at": 0,
+      "decay_ms": 4,
+      "color": "white",
+      "highpass": 2500,
+      "level": 1
+    },
+    {
+      "type": "burst",
+      "at": 0.002,
+      "decay_ms": 18,
+      "color": "pink",
+      "lowpass": 5000,
+      "level": 0.4
+    },
+    {
+      "type": "tone",
+      "at": 0,
+      "hz": 170,
+      "decay_ms": 35,
+      "drop_octaves": 1,
+      "level": 0.7
+    }
+  ]
+}

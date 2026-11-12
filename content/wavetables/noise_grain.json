@@ -1,0 +1,50 @@
+{
+  "kind": "table",
+  "name": "Noise Grain",
+  "category": "Digital",
+  "frames": 6,
+  "morph": "crossfade",
+  "about": "A triangle that gathers seeded grain from frame to frame; the edges are made to loop.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "wave",
+      "expr": "tri(t)"
+    },
+    {
+      "op": "formula",
+      "domain": "wave",
+      "expr": "in + rand * y * 0.7",
+      "seed": 12
+    },
+    {
+      "op": "noise",
+      "from": 0.4,
+      "to": 0.6,
+      "amount": 0.15,
+      "seed": 3,
+      "frames": [
+        3,
+        5
+      ]
+    },
+    {
+      "op": "process",
+      "name": "crossfade_edges",
+      "n": 96
+    },
+    {
+      "op": "process",
+      "name": "low_pass",
+      "n": 500
+    },
+    {
+      "op": "process",
+      "name": "remove_dc"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

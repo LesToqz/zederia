@@ -138,7 +138,8 @@ Harmonics analyzeFrame(const Frame& frame) {
     // m sin(x + p) transforms to (N m / 2) e^(i (p - pi/2)).
     for (std::size_t k = 1; k < static_cast<std::size_t>(kMaxHarmonics); ++k) {
         h.magnitude[k] = 2.0 * std::abs(bins[k]) / kFrameSize;
-        h.phase[k] = h.magnitude[k] > 1e-15 ? wrapPhase(std::arg(bins[k]) + kPi / 2.0) : 0.0;
+        // Below the rounding noise of 32-bit samples a harmonic is absent: its phase reads as zero.
+        h.phase[k] = h.magnitude[k] > 1e-7 ? wrapPhase(std::arg(bins[k]) + kPi / 2.0) : 0.0;
     }
     const double top = bins[kMaxHarmonics].real() / kFrameSize;
     h.magnitude[kMaxHarmonics] = std::abs(top);

@@ -1,0 +1,43 @@
+{
+  "kind": "table",
+  "name": "Pulse Sweep",
+  "category": "Basics",
+  "frames": 1,
+  "morph": "crossfade",
+  "about": "A square whose cycle is squeezed into a shrinking part of the period.",
+  "steps": [
+    {
+      "op": "draw",
+      "shape": "flat",
+      "from": 0,
+      "to": 0.5,
+      "a": 1
+    },
+    {
+      "op": "draw",
+      "shape": "flat",
+      "from": 0.5,
+      "to": 1,
+      "a": -1
+    },
+    {
+      "op": "pulse_width_sweep",
+      "frame": 0,
+      "count": 24,
+      "narrowest": 0.08
+    },
+    {
+      "op": "process",
+      "name": "low_pass",
+      "n": 400
+    },
+    {
+      "op": "process",
+      "name": "remove_dc"
+    },
+    {
+      "op": "process",
+      "name": "normalize_shared"
+    }
+  ]
+}

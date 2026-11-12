@@ -1,0 +1,21 @@
+{
+  "kind": "table",
+  "name": "Bell Plate",
+  "category": "Metallic",
+  "frames": 8,
+  "morph": "spectral",
+  "about": "Sparse, unevenly spaced partials with scattered phases; the spacing shifts across the table.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "h == 1 ? 0.8 : (frac(sqrt(h) * (1.37 + 0.5*y)) < 0.13 ? 1 / sqrt(h) : 0) * (h < 300)",
+      "phase": "rand * pi",
+      "seed": 5
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

@@ -444,7 +444,7 @@ void copySpectrumToAll(Wavetable& table, int source) {
             continue;
         Harmonics h = analyzeFrame(table.frames[static_cast<std::size_t>(f)]);
         for (std::size_t k = 1; k <= static_cast<std::size_t>(kMaxHarmonics); ++k) {
-            if (h.magnitude[k] < 1e-12)
+            if (h.magnitude[k] < 1e-7)
                 h.phase[k] = from.phase[k]; // a harmonic the frame did not have takes the source's phase
             h.magnitude[k] = from.magnitude[k];
         }
@@ -507,10 +507,14 @@ double sortValue(const Frame& frame, SortKey key) {
         return best;
     }
     case SortKey::Brightness: {
+        // Harmonics more than 100 dB below the strongest are rounding noise, not brightness.
         double weighted = 0.0, total = 0.0;
         for (int k = 1; k <= kMaxHarmonics; ++k) {
-            weighted += k * m[static_cast<std::size_t>(k)];
-            total += m[static_cast<std::size_t>(k)];
+            const double level = m[static_cast<std::size_t>(k)];
+            if (level < top * 1.0e-5)
+                continue;
+            weighted += k * level;
+            total += level;
         }
         return weighted / total;
     }

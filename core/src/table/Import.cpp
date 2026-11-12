@@ -232,9 +232,19 @@ bool importPitchTracked(const AudioClip& clip, const SliceOptions& options, Wave
     }
     const auto total = static_cast<double>(clip.samples.size());
     double period = pitch.periodSamples;
-    double position = options.snapToZeroCrossings ? nearestUpwardCrossing(clip, period * 0.5, period * 0.5) : 0.0;
+    {
+        // The pitch at the very start may be some way from the recording's typical pitch.
+        const auto span = static_cast<int>(std::min<double>(2.0 * clip.sampleRate / std::max(options.minHz, 5.0) + 4096.0, total));
+        const PitchEstimate local = pitchOfWindow(clip.samples.data(), span, clip.sampleRate, std::max(options.minHz, 5.0),
+                                                  std::min(options.maxHz, clip.sampleRate / 4.0));
+        if (local.confidence >= 0.6 && local.periodSamples >= 2.0)
+            period = local.periodSamples;
+    }
+    // With snapping, the first cut is the first upward crossing found within a cycle and a half.
+    double position = options.snapToZeroCrossings ? nearestUpwardCrossing(clip, period * 0.75, period * 0.75) : 0.0;
     std::vector<double> markers = {position};
     constexpr std::size_t kMaxCycles = 200000;
+    double previousLag = -1.0;
     while (position + 2.3 * period < total && markers.size() < kMaxCycles) {
         // The lag near the current period at which the next stretch best matches this one.
         const int length = std::max(32, static_cast<int>(std::lround(period)));
@@ -268,9 +278,14 @@ bool importPitchTracked(const AudioClip& clip, const SliceOptions& options, Wave
         if (score[static_cast<std::size_t>(best)] < 0.3)
             lag = period; // nothing matches here (silence, noise): keep the pace
         period = 0.5 * period + 0.5 * lag;
-        position += lag;
+        // The match compares two stretches one cycle long, so what it measures is the length of
+        // the cycle that starts half a cycle further on. While the pitch moves, the cycle that
+        // starts here lies halfway between this measurement and the previous one; using the
+        // measurement alone would let the cut drift along the wave.
+        position += previousLag > 0.0 ? 0.5 * (lag + previousLag) : lag;
+        previousLag = lag;
         if (options.snapToZeroCrossings)
-            position = nearestUpwardCrossing(clip, position, period * 0.25);
+            position = nearestUpwardCrossing(clip, position, period * 0.5); // half a cycle either way always holds one
         if (position <= markers.back() + 1.0)
             position = markers.back() + period;
         markers.push_back(position);

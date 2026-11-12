@@ -95,20 +95,23 @@ double call(std::uint8_t fn, const double* a, std::uint64_t seed) {
     }
 }
 
+// How many single-character edits (insert, delete, replace, swap neighbours) turn a into b.
 int editDistance(std::string_view a, std::string_view b) {
-    std::vector<int> row(b.size() + 1);
-    for (std::size_t j = 0; j <= b.size(); ++j)
-        row[j] = static_cast<int>(j);
-    for (std::size_t i = 1; i <= a.size(); ++i) {
-        int diagonal = row[0];
-        row[0] = static_cast<int>(i);
-        for (std::size_t j = 1; j <= b.size(); ++j) {
-            const int above = row[j];
-            row[j] = std::min({row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)});
-            diagonal = above;
+    const std::size_t rows = a.size() + 1, columns = b.size() + 1;
+    std::vector<int> d(rows * columns);
+    const auto at = [&](std::size_t i, std::size_t j) -> int& { return d[i * columns + j]; };
+    for (std::size_t i = 0; i < rows; ++i)
+        at(i, 0) = static_cast<int>(i);
+    for (std::size_t j = 0; j < columns; ++j)
+        at(0, j) = static_cast<int>(j);
+    for (std::size_t i = 1; i < rows; ++i) {
+        for (std::size_t j = 1; j < columns; ++j) {
+            at(i, j) = std::min({at(i - 1, j) + 1, at(i, j - 1) + 1, at(i - 1, j - 1) + (a[i - 1] == b[j - 1] ? 0 : 1)});
+            if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                at(i, j) = std::min(at(i, j), at(i - 2, j - 2) + 1);
         }
     }
-    return row[b.size()];
+    return at(a.size(), b.size());
 }
 
 std::string suggestion(std::string_view name) {
@@ -522,6 +525,8 @@ bool applyFormula(Wavetable& table, const FormulaRequest& request, std::string& 
                 v.rand = noiseAt(k);
                 double level = clean(value.evaluate(v), 1.0e6);
                 double angle = existing.magnitude[at] > 1e-12 ? existing.phase[at] : 0.0;
+                if (k == kMaxHarmonics && !hasPhase)
+                    angle = existing.magnitude[at] > 1e-12 ? existing.phase[at] : kPi / 2.0; // only a cosine exists up there
                 if (hasPhase) {
                     v.in = existing.phase[at];
                     v.sel = selectedHarmonics.phase[at];
