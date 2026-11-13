@@ -1,0 +1,45 @@
+{
+  "kind": "table",
+  "name": "Bright Stack",
+  "category": "Harmonic",
+  "frames": 12,
+  "morph": "spectral_aligned",
+  "about": "Random low harmonics per frame, tilted, then ordered from dark to bright.",
+  "steps": [
+    {
+      "op": "harmonic",
+      "name": "randomize_lowest",
+      "n": 28,
+      "amount": 1,
+      "seed": 41
+    },
+    {
+      "op": "harmonic",
+      "name": "random_gaps",
+      "amount": 0.35,
+      "seed": 7
+    },
+    {
+      "op": "harmonic",
+      "name": "fade_highs",
+      "amount": 0.8
+    },
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "h == 1 ? max(in, 0.5) : in"
+    },
+    {
+      "op": "process",
+      "name": "align_fundamental"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    },
+    {
+      "op": "sort",
+      "by": "brightness"
+    }
+  ]
+}

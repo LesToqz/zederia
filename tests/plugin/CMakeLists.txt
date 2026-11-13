@@ -6,6 +6,7 @@ zed_strict_sources(../support/TestMain.cpp test_processor.cpp)
 target_compile_definitions(zederia_plugin_tests PRIVATE
     ZED_TEST_WITH_GUI=1
     ZED_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
+    ZED_CONTENT_DIR="${CMAKE_SOURCE_DIR}/content"
     $<TARGET_PROPERTY:Zederia,COMPILE_DEFINITIONS>)
 target_include_directories(zederia_plugin_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/plugin

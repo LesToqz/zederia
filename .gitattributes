@@ -3,3 +3,5 @@
 *.wav binary
 *.zpack binary
 *.png binary
+*.zlib binary
+*.bmp binary

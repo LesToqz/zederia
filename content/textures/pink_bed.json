@@ -1,0 +1,19 @@
+{
+  "kind": "texture",
+  "name": "Pink Bed",
+  "seconds": 4,
+  "rate": 48000,
+  "loop": true,
+  "seed": 2,
+  "peak_db": -4,
+  "about": "Soft noise that falls three decibels per octave, with the very top rolled off.",
+  "layers": [
+    {
+      "type": "noise",
+      "color": "pink",
+      "level": 1,
+      "width": 0.8,
+      "lowpass": 9000
+    }
+  ]
+}

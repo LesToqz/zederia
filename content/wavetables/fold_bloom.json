@@ -1,0 +1,37 @@
+{
+  "kind": "table",
+  "name": "Fold Bloom",
+  "category": "Motion",
+  "frames": 2,
+  "morph": "none",
+  "about": "A sine and its second harmonic morphed, then driven into a wave folder frame by frame.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "wave",
+      "expr": "sin(tau*t) * (1 - 0.4*y) + 0.4 * y * sin(2*tau*t)"
+    },
+    {
+      "op": "morph",
+      "mode": "spectral"
+    },
+    {
+      "op": "bake_morph",
+      "frames": 24
+    },
+    {
+      "op": "formula",
+      "domain": "wave",
+      "expr": "1 - abs(4 * frac((in * (1 + 4*y) + 1) / 4) - 2)"
+    },
+    {
+      "op": "process",
+      "name": "low_pass",
+      "n": 300
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

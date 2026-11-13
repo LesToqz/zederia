@@ -1,0 +1,20 @@
+{
+  "kind": "table",
+  "name": "Vowel Drift",
+  "category": "Formant",
+  "frames": 9,
+  "morph": "spectral",
+  "about": "Two resonant peaks slide through a soft harmonic series, like a slowly changing vowel.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "0.3/h + exp(-((h - (3 + 7*y)) / 2.2)^2) + 0.7 * exp(-((h - (15 + 12*sin(pi*y))) / 3.5)^2) + 0.3 * exp(-((h - 34) / 6)^2)",
+      "phase": "pi"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "kind": "texture",
+  "name": "Dust Crackle",
+  "seconds": 5,
+  "rate": 48000,
+  "loop": true,
+  "seed": 3,
+  "peak_db": -3,
+  "about": "Sparse ticks of different sizes over a faint low rumble.",
+  "layers": [
+    {
+      "type": "crackle",
+      "density": 14,
+      "decay_ms": 0.6,
+      "lowpass": 7000,
+      "level": 1
+    },
+    {
+      "type": "crackle",
+      "density": 3,
+      "decay_ms": 2.5,
+      "lowpass": 2500,
+      "level": 0.8
+    },
+    {
+      "type": "noise",
+      "color": "brown",
+      "level": 0.04,
+      "width": 0.6,
+      "highpass": 40
+    }
+  ]
+}

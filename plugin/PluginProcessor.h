@@ -2,6 +2,7 @@
 // stable ids, saves and restores state as a patch document, and reports latency and tail.
 #pragma once
 
+#include "zederia/content/Library.h"
 #include "zederia/engine/Engine.h"
 #include "zederia/patch/PatchIO.h"
 
@@ -86,6 +87,20 @@ public:
     zed::LoadResult loadPatchJson(std::string_view json);
     int stateGeneration() const { return generation_.load(std::memory_order_relaxed); }
 
+    // --- Wavetables and the texture sample (any non-audio thread) ---
+    // Where "factory:" and "user:" references are looked up; the standard folders by default.
+    void setContentFolders(const std::string& factoryDir, const std::string& userDir);
+    zed::ContentLibrary library() const;
+    // Selects the table of oscillator 0..2, or the texture sample, by reference ("" is the
+    // built-in one). The reference is stored in the patch; notes that are playing fade over.
+    // Returns "" or what went wrong (the built-in object is then used).
+    std::string setTableReference(int osc, const std::string& reference);
+    std::string setTextureReference(const std::string& reference);
+    std::string tableReference(int osc) const;
+    std::string textureReference() const;
+    // What could not be loaded when the current patch was applied.
+    std::vector<std::string> assetProblems() const;
+
     // --- For the editor ---
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
     float meterPeak(int channel) { return meter_[static_cast<std::size_t>(channel)].exchange(0.0f, std::memory_order_relaxed); }
@@ -108,6 +123,8 @@ private:
     // audio thread never takes.
     juce::CriticalSection documentLock_;
     zed::Patch document_;
+    zed::ContentLibrary library_ = zed::ContentLibrary::standard();
+    std::vector<std::string> assetProblems_;
     std::array<std::atomic<int>, zed::kNumFxLanes * zed::kNumFxSlots> slotTypes_;
     std::atomic<int> generation_{0};
 

@@ -1,0 +1,20 @@
+{
+  "kind": "table",
+  "name": "Saw Morph",
+  "category": "Basics",
+  "frames": 2,
+  "morph": "spectral",
+  "about": "A sine that opens into a full sawtooth: two key frames, the rest generated.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "harmonics",
+      "expr": "y == 0 ? h == 1 : 1/h",
+      "phase": "pi"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

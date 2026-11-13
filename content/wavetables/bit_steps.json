@@ -1,0 +1,26 @@
+{
+  "kind": "table",
+  "name": "Bit Steps",
+  "category": "Digital",
+  "frames": 10,
+  "morph": "none",
+  "about": "A sine held in fewer and fewer steps per cycle.",
+  "steps": [
+    {
+      "op": "formula",
+      "domain": "wave",
+      "expr": "sin(tau * (floor(t * (4 + 60 * (1 - y)^2)) + 0.5) / (4 + 60 * (1 - y)^2))"
+    },
+    {
+      "op": "reverse"
+    },
+    {
+      "op": "process",
+      "name": "remove_dc"
+    },
+    {
+      "op": "process",
+      "name": "normalize_each"
+    }
+  ]
+}

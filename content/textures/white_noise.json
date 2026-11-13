@@ -1,0 +1,18 @@
+{
+  "kind": "texture",
+  "name": "White Noise",
+  "seconds": 2.5,
+  "rate": 48000,
+  "loop": true,
+  "seed": 1,
+  "peak_db": -6,
+  "about": "Even noise across the whole band, different on each side.",
+  "layers": [
+    {
+      "type": "noise",
+      "color": "white",
+      "level": 1,
+      "width": 1
+    }
+  ]
+}

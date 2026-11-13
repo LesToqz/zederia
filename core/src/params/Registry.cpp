@@ -222,7 +222,7 @@ void declareOsc(Builder& b, int n) {
             "/" + id, Scope::Voice);
     b.toggle("on", "On", n == 1, "Power switch; an oscillator that is off costs nothing.");
     b.choice("engine", "Engine", {"wavetable", "classic"}, "wavetable",
-             "Wavetable plays the loaded table; Classic is a virtual-analog saw, square, triangle and sine.")
+             "Wavetable plays the loaded table; Classic is a low-cost virtual-analog saw, square, triangle and sine.")
         .noAuto();
     b.amount("position", "Position", 0, "Where in the wavetable the oscillator plays, continuous across frames.");
     b.integer("octave", "Octave", -4, 4, 0, Unit::Octaves, "Pitch offset in octaves.");
@@ -244,7 +244,8 @@ void declareOsc(Builder& b, int n) {
         const std::string key = slot;
         const std::string label = key == "warp_a" ? "Warp A" : "Warp B";
         b.choice(key + ".mode", label + " Mode", kWarpModes, "off",
-                 "What this warp slot does to the cycle; pm, am and rm take another source as the modulator.");
+                 "What this warp slot does to the cycle; pm, am and rm take another source as the modulator. "
+                 "The Classic engine uses fold, drive, pm, am and rm only: the phase-shaping modes need a wavetable.");
         b.amount(key + ".amount", label + " Amount", 0,
                  "Strength of the warp; two-sided modes (bend_both, skew_both) are neutral at 50 %.");
         b.choice(key + ".source", label + " Source", kSources, n == 1 ? "osc2" : "osc1",

@@ -338,7 +338,13 @@ RenderResult renderOffline(const Patch& patch, std::span<const SeqEvent> events,
     Engine engine;
     engine.setSeed(settings.seed);
     engine.prepare(settings.sampleRate);
+    engine.setOffline(settings.offlineQuality);
     engine.loadPatch(patch);
+    for (int i = 0; i < kNumOscs; ++i)
+        if (settings.tables[static_cast<std::size_t>(i)] != nullptr)
+            engine.setTable(i, settings.tables[static_cast<std::size_t>(i)]);
+    if (settings.texture != nullptr)
+        engine.setTexture(settings.texture);
 
     const std::int64_t lastEvent = events.empty() ? 0 : std::max<std::int64_t>(events.back().sample, 0);
     const double tail = settings.tailSeconds >= 0.0 ? settings.tailSeconds : engine.tailSeconds();

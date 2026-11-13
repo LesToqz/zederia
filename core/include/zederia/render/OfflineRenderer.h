@@ -4,8 +4,12 @@
 #pragma once
 
 #include "zederia/engine/MidiEvent.h"
+#include "zederia/engine/SampleData.h"
 #include "zederia/patch/Patch.h"
+#include "zederia/table/TableData.h"
 
+#include <array>
+#include <memory>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -47,6 +51,10 @@ struct RenderSettings {
     std::uint64_t seed = 1;
     double tailSeconds = -1.0; // time rendered after the last event; negative = the engine's own tail
     double bpm = 120.0;
+    bool offlineQuality = true; // use the patch's offline quality; false renders as the plug-in plays live
+    // Tables and the texture sample to play; null entries leave the engine's built-in ones.
+    std::array<std::shared_ptr<const TableData>, kNumOscs> tables;
+    std::shared_ptr<const SampleData> texture;
 };
 
 struct RenderResult {

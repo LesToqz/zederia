@@ -255,6 +255,9 @@ void ZederiaProcessor::applyPatch(const zed::Patch& patch) {
     {
         const juce::ScopedLock lock(documentLock_);
         document_ = patch;
+        // The tables and the sample the patch names: loaded here, off the audio thread, and
+        // handed to the engine, which switches to them at the start of its next block.
+        assetProblems_ = zed::applyPatchAssets(engine_, patch, library_);
         for (int lane = 0; lane < zed::kNumFxLanes; ++lane) {
             for (int slot = 0; slot < zed::kNumFxSlots; ++slot) {
                 auto& type = slotTypes_[static_cast<std::size_t>(lane * zed::kNumFxSlots + slot)];
@@ -274,11 +277,66 @@ void ZederiaProcessor::applyPatch(const zed::Patch& patch) {
         triggerAsyncUpdate(); // parameter names changed: the host is told on the message thread
 }
 
+// --- Wavetables and the texture sample -----------------------------------------------------------
+
+void ZederiaProcessor::setContentFolders(const std::string& factoryDir, const std::string& userDir) {
+    const juce::ScopedLock lock(documentLock_);
+    library_.setFactoryDir(factoryDir);
+    library_.setUserDir(userDir);
+}
+
+zed::ContentLibrary ZederiaProcessor::library() const {
+    const juce::ScopedLock lock(documentLock_);
+    return library_;
+}
+
+std::string ZederiaProcessor::setTableReference(int osc, const std::string& reference) {
+    if (osc < 0 || osc >= zed::kNumOscs)
+        return "there is no such oscillator";
+    std::string error;
+    {
+        const juce::ScopedLock lock(documentLock_);
+        auto table = library_.loadTable(reference, error);
+        document_.tables[static_cast<std::size_t>(osc)] = reference;
+        engine_.setTable(osc, std::move(table)); // null (not loadable) selects the built-in table
+    }
+    generation_.fetch_add(1, std::memory_order_relaxed);
+    return error;
+}
+
+std::string ZederiaProcessor::setTextureReference(const std::string& reference) {
+    std::string error;
+    {
+        const juce::ScopedLock lock(documentLock_);
+        auto sample = library_.loadTexture(reference, error);
+        document_.textureSample = reference;
+        engine_.setTexture(std::move(sample));
+    }
+    generation_.fetch_add(1, std::memory_order_relaxed);
+    return error;
+}
+
+std::string ZederiaProcessor::tableReference(int osc) const {
+    const juce::ScopedLock lock(documentLock_);
+    return osc >= 0 && osc < zed::kNumOscs ? document_.tables[static_cast<std::size_t>(osc)] : std::string();
+}
+
+std::string ZederiaProcessor::textureReference() const {
+    const juce::ScopedLock lock(documentLock_);
+    return document_.textureSample;
+}
+
+std::vector<std::string> ZederiaProcessor::assetProblems() const {
+    const juce::ScopedLock lock(documentLock_);
+    return assetProblems_;
+}
+
 void ZederiaProcessor::handleAsyncUpdate() {
     updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withParameterInfoChanged(true));
 }
 
 void ZederiaProcessor::getStateInformation(juce::MemoryBlock& destination) {
+    engine_.collectGarbage(); // a convenient moment off the audio thread to free replaced tables
     const std::string json = patchJson();
     juce::MemoryOutputStream out(destination, false);
     out.write(kStateMagic, 4);
