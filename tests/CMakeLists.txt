@@ -18,6 +18,7 @@ add_executable(zederia_tests
     core/test_import.cpp
     core/test_sources.cpp
     core/test_content.cpp
+    core/test_filter.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE

@@ -28,6 +28,7 @@ add_library(zederia_core STATIC
     src/engine/OscKernelScalar.cpp
     src/engine/OscKernelSse2.cpp
     src/engine/OscKernelAvx2.cpp
+    src/engine/Filter.cpp
     src/engine/Engine.cpp
     src/render/OfflineRenderer.cpp
     src/bench/Bench.cpp

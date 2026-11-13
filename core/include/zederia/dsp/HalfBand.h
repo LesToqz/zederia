@@ -82,4 +82,51 @@ inline void decimate(const DecimatorDesign& d, DecimatorState& s, float* data, i
         halfBandDecimate(d.stage[0], s.stage[0], data, data, frames);
 }
 
+// The same half-band filter used the other way: `frames` input samples become 2 * frames output
+// samples. In and out must not overlap.
+inline void halfBandInterpolate(const HalfBandCoefs& k, HalfBandState& s, const float* in, float* out, int frames) {
+    for (int n = 0; n < frames; ++n) {
+        float a = in[n]; // chain 0 gives the even output samples
+        float b = in[n]; // chain 1 the odd ones
+        int i = 0;
+        for (; i + 1 < k.count; i += 2) {
+            const float ya = (a - s.y[static_cast<std::size_t>(i)]) * k.c[static_cast<std::size_t>(i)] +
+                             s.x[static_cast<std::size_t>(i)];
+            const float yb = (b - s.y[static_cast<std::size_t>(i + 1)]) * k.c[static_cast<std::size_t>(i + 1)] +
+                             s.x[static_cast<std::size_t>(i + 1)];
+            s.x[static_cast<std::size_t>(i)] = a;
+            s.x[static_cast<std::size_t>(i + 1)] = b;
+            s.y[static_cast<std::size_t>(i)] = ya;
+            s.y[static_cast<std::size_t>(i + 1)] = yb;
+            a = ya;
+            b = yb;
+        }
+        if (i < k.count) {
+            const float ya = (a - s.y[static_cast<std::size_t>(i)]) * k.c[static_cast<std::size_t>(i)] +
+                             s.x[static_cast<std::size_t>(i)];
+            s.x[static_cast<std::size_t>(i)] = a;
+            s.y[static_cast<std::size_t>(i)] = ya;
+            a = ya;
+        }
+        out[2 * n] = a;
+        out[2 * n + 1] = b;
+    }
+}
+
+// Raises `frames` samples in `in` to frames * factor samples in `out` (factor 2, 4 or 8). `out`
+// needs room for the result and `scratch` for the same amount; neither may overlap `in`.
+inline void interpolate(const DecimatorDesign& d, DecimatorState& s, const float* in, float* out, float* scratch,
+                        int frames, int factor) {
+    if (factor == 2) {
+        halfBandInterpolate(d.stage[0], s.stage[0], in, out, frames);
+    } else if (factor == 4) {
+        halfBandInterpolate(d.stage[0], s.stage[0], in, scratch, frames);
+        halfBandInterpolate(d.stage[1], s.stage[1], scratch, out, frames * 2);
+    } else if (factor >= 8) {
+        halfBandInterpolate(d.stage[0], s.stage[0], in, out, frames);
+        halfBandInterpolate(d.stage[1], s.stage[1], out, scratch, frames * 2);
+        halfBandInterpolate(d.stage[2], s.stage[2], scratch, out, frames * 4);
+    }
+}
+
 } // namespace zed::dsp
