@@ -265,7 +265,192 @@ void readRef(const J& v, const std::string& path, const char* what, std::string&
                 "Add \"ref\" with the name of the item, for example { \"ref\": \"factory:Basics/Saw\" }.");
 }
 
+// A finite number inside [low, high]; values outside are clamped with a warning.
+bool readNumber(const J& v, const std::string& path, const char* what, double low, double high, double& out, Reporter& r) {
+    if (!v.is_number() || !std::isfinite(v.get<double>())) {
+        r.error("wrong_type", path, std::string(what) + " must be a number, but this is " + kindOf(v) + ".",
+                "Use a number from " + num(low) + " to " + num(high) + ".");
+        return false;
+    }
+    const double raw = v.get<double>();
+    out = std::clamp(raw, low, high);
+    if (out != raw)
+        r.warn("out_of_range", path, num(raw) + " is outside the range of " + what + "; " + num(out) + " is used instead.",
+               "Use a value from " + num(low) + " to " + num(high) + ".");
+    return true;
+}
+
+// A note length such as "1/8", "3/16" or "1/4T".
+bool readNoteLength(const J& v, const std::string& path, std::string& out, Reporter& r) {
+    std::string token;
+    if (!readString(v, path, "A note length", kMaxTagLength, token, r))
+        return false;
+    if (!token.empty() && divisionInBeats(token) <= 0.0) {
+        r.error("bad_note_length", path, inQuotes(token) + " is not a note length.",
+                "Write a fraction of a whole note such as \"1/8\", \"3/16\" or \"1/4T\" (T for triplet, D for dotted), or "
+                "leave the text empty to use the time in milliseconds.");
+        return false;
+    }
+    out = std::move(token);
+    return true;
+}
+
+// A drawn shape: { "points": [ { "x": 0, "y": 0, "curve": 0 }, ... ], "loop_start": 0 }.
+void readShape(const J& v, const std::string& path, double yLow, double yHigh, Shape& out, Reporter& r) {
+    if (!requireObject(v, path, "A shape", r))
+        return;
+    static const std::vector<std::string> known = {"points", "loop_start"};
+    static const std::vector<std::string> pointKeys = {"x", "y", "curve"};
+    Shape shape;
+    for (const auto& [key, child] : v.items()) {
+        const std::string childPath = path + "/" + escapeKey(key);
+        if (key == "loop_start") {
+            readNumber(child, childPath, "The loop start", 0.0, 1.0, shape.loopStart, r);
+        } else if (key == "points") {
+            if (!requireArray(child, childPath, "\"points\"", kMaxShapePoints, r))
+                continue;
+            double lastX = 0.0;
+            for (std::size_t i = 0; i < child.size() && i < static_cast<std::size_t>(kMaxShapePoints); ++i) {
+                const std::string pointPath = childPath + "/" + std::to_string(i);
+                if (!requireObject(child[i], pointPath, "A point", r))
+                    continue;
+                ShapePoint p;
+                for (const auto& [name, value] : child[i].items()) {
+                    const std::string valuePath = pointPath + "/" + escapeKey(name);
+                    if (name == "x") readNumber(value, valuePath, "A point's x", 0.0, 1.0, p.x, r);
+                    else if (name == "y") readNumber(value, valuePath, "A point's y", yLow, yHigh, p.y, r);
+                    else if (name == "curve") readNumber(value, valuePath, "A point's curve", -1.0, 1.0, p.curve, r);
+                    else r.unknownField(valuePath, name, closest(name, pointKeys));
+                }
+                if (p.x < lastX) {
+                    r.warn("out_of_order", pointPath + "/x",
+                           "Points must run from left to right; this one was moved to x = " + num(lastX) + ".",
+                           "List the points in order of x.");
+                    p.x = lastX;
+                }
+                lastX = p.x;
+                shape.points.push_back(p);
+            }
+        } else {
+            r.unknownField(childPath, key, closest(key, known));
+        }
+    }
+    out = std::move(shape);
+}
+
+// Envelope times that follow the tempo: { "attack": "1/8", "release": "1/4" }.
+void readEnvSync(const J& v, const std::string& path, std::array<std::string, 5>& out, Reporter& r) {
+    if (!requireObject(v, path, "\"sync\"", r))
+        return;
+    const std::vector<std::string> known(std::begin(kEnvSyncKeys), std::end(kEnvSyncKeys));
+    for (const auto& [key, child] : v.items()) {
+        const auto it = std::find(known.begin(), known.end(), key);
+        const std::string childPath = path + "/" + escapeKey(key);
+        if (it == known.end())
+            r.unknownField(childPath, key, closest(key, known));
+        else
+            readNoteLength(child, childPath, out[static_cast<std::size_t>(it - known.begin())], r);
+    }
+}
+
+// A multi-segment envelope: { "points": [ { "time_ms": 10, "level": 1, "curve": 0 }, ... ],
+// "sustain_point": 2, "loop": [1, 3] }. A point may give "time" as a note length instead.
+void readEnvShape(const J& v, const std::string& path, EnvShape& out, Reporter& r) {
+    if (!requireObject(v, path, "\"multi\"", r))
+        return;
+    static const std::vector<std::string> known = {"points", "sustain_point", "loop"};
+    static const std::vector<std::string> pointKeys = {"time_ms", "time", "level", "curve"};
+    EnvShape shape;
+    const J* loop = nullptr;
+    const J* sustain = nullptr;
+    for (const auto& [key, child] : v.items()) {
+        const std::string childPath = path + "/" + escapeKey(key);
+        if (key == "sustain_point") {
+            sustain = &child;
+        } else if (key == "loop") {
+            loop = &child;
+        } else if (key == "points") {
+            if (!requireArray(child, childPath, "\"points\"", kMaxEnvPoints, r))
+                continue;
+            for (std::size_t i = 0; i < child.size() && i < static_cast<std::size_t>(kMaxEnvPoints); ++i) {
+                const std::string pointPath = childPath + "/" + std::to_string(i);
+                if (!requireObject(child[i], pointPath, "A point", r))
+                    continue;
+                EnvPoint p;
+                for (const auto& [name, value] : child[i].items()) {
+                    const std::string valuePath = pointPath + "/" + escapeKey(name);
+                    if (name == "time_ms") readNumber(value, valuePath, "A segment time", 0.0, 30000.0, p.timeMs, r);
+                    else if (name == "time") readNoteLength(value, valuePath, p.sync, r);
+                    else if (name == "level") readNumber(value, valuePath, "A point's level", 0.0, 1.0, p.level, r);
+                    else if (name == "curve") readNumber(value, valuePath, "A point's curve", -1.0, 1.0, p.curve, r);
+                    else r.unknownField(valuePath, name, closest(name, pointKeys));
+                }
+                shape.points.push_back(std::move(p));
+            }
+        } else {
+            r.unknownField(childPath, key, closest(key, known));
+        }
+    }
+    const double last = static_cast<double>(shape.points.size()) - 1.0;
+    const auto readIndex = [&](const J& value, const std::string& indexPath, const char* what, int& index) {
+        double number = -1.0;
+        if (!readNumber(value, indexPath, what, -1.0, std::max(last, -1.0), number, r))
+            return;
+        index = static_cast<int>(std::floor(number));
+    };
+    if (sustain != nullptr)
+        readIndex(*sustain, path + "/sustain_point", "The sustain point", shape.sustainPoint);
+    if (loop != nullptr) {
+        if (!loop->is_array() || loop->size() != 2) {
+            r.error("wrong_type", path + "/loop", "\"loop\" must be a list of two point numbers.",
+                    "Write it as [first, last], for example [1, 3].");
+        } else {
+            readIndex((*loop)[0], path + "/loop/0", "The loop start", shape.loopStart);
+            readIndex((*loop)[1], path + "/loop/1", "The loop end", shape.loopEnd);
+            if (shape.loopStart < 0 || shape.loopEnd <= shape.loopStart) {
+                if (shape.loopStart >= 0 || shape.loopEnd >= 0)
+                    r.warn("bad_loop", path + "/loop", "The loop must end at a later point than it starts; it is ignored.",
+                           "Give two different point numbers in rising order.");
+                shape.loopStart = shape.loopEnd = -1;
+            }
+        }
+    }
+    out = std::move(shape);
+}
+
+// A microtuning: { "name": "...", "keys": [128 note numbers] }.
+void readTuning(const J& v, PatchTuning& out, Reporter& r) {
+    if (!requireObject(v, "/tuning", "\"tuning\"", r))
+        return;
+    static const std::vector<std::string> known = {"name", "keys"};
+    PatchTuning tuning;
+    for (const auto& [key, child] : v.items()) {
+        const std::string path = "/tuning/" + escapeKey(key);
+        if (key == "name") {
+            readString(child, path, "The tuning's name", kMaxNameLength, tuning.name, r);
+        } else if (key == "keys") {
+            if (!child.is_array() || (child.size() != 128 && !child.empty())) {
+                r.error("wrong_type", path, "\"keys\" must list the pitch of all 128 keys.",
+                        "Give 128 note numbers (60 is middle C in equal temperament), or leave the list empty for "
+                        "equal temperament.");
+                continue;
+            }
+            for (std::size_t i = 0; i < child.size(); ++i) {
+                double note = static_cast<double>(i);
+                readNumber(child[i], path + "/" + std::to_string(i), "A key's pitch", -48.0, 200.0, note, r);
+                tuning.keys.push_back(note);
+            }
+        } else {
+            r.unknownField(path, key, closest(key, known));
+        }
+    }
+    out = std::move(tuning);
+}
+
 // --- Schema tree for the plain modules ---------------------------------------------------------
+
+// Things inside a module's object that are not parameters.
+enum class Extra : std::uint8_t { None, LfoShape, EnvSync, EnvMulti, WarpCurve };
 
 struct Node {
     std::map<std::string, Node, std::less<>> children;
@@ -273,6 +458,8 @@ struct Node {
     int tableOsc = -1;
     bool sample = false;
     bool isArray = false;
+    Extra extra = Extra::None;
+    int extraA = 0, extraB = 0;
 };
 
 void markArrays(Node& node) {
@@ -307,6 +494,24 @@ const Node& schema() {
             tree.children["osc" + std::to_string(i + 1)].children["table"].tableOsc = i;
         tree.children["texture"].children["sample"].sample = true;
         markArrays(tree);
+        // Added after the arrays are marked: these are objects whose contents have their own readers.
+        const auto extra = [](Node& node, Extra kind, int a, int b = 0) {
+            node.extra = kind;
+            node.extraA = a;
+            node.extraB = b;
+        };
+        for (int i = 0; i < kNumLfos; ++i)
+            extra(tree.children["lfo" + std::to_string(i + 1)].children["shape"], Extra::LfoShape, i);
+        for (int i = 0; i < kNumEnvs; ++i) {
+            Node& env = tree.children["env" + std::to_string(i + 1)];
+            extra(env.children["sync"], Extra::EnvSync, i);
+            if (i > 0)
+                extra(env.children["multi"], Extra::EnvMulti, i);
+        }
+        for (int i = 0; i < kNumOscs; ++i)
+            for (int slot = 0; slot < 2; ++slot)
+                extra(tree.children["osc" + std::to_string(i + 1)].children[slot == 0 ? "warp_a" : "warp_b"].children["curve"],
+                      Extra::WarpCurve, i, slot);
         return tree;
     }();
     return root;
@@ -326,6 +531,15 @@ void walk(const J& v, const Node& node, const std::string& path, Patch& patch, R
         return readRef(v, path, "A wavetable reference", patch.tables[static_cast<std::size_t>(node.tableOsc)], r);
     if (node.sample)
         return readRef(v, path, "A sample reference", patch.textureSample, r);
+    switch (node.extra) {
+    case Extra::LfoShape: return readShape(v, path, -1.0, 1.0, patch.lfoShapes[static_cast<std::size_t>(node.extraA)], r);
+    case Extra::EnvSync: return readEnvSync(v, path, patch.envSync[static_cast<std::size_t>(node.extraA)], r);
+    case Extra::EnvMulti: return readEnvShape(v, path, patch.envShapes[static_cast<std::size_t>(node.extraA)], r);
+    case Extra::WarpCurve:
+        return readShape(v, path, 0.0, 1.0,
+                         patch.warpCurves[static_cast<std::size_t>(node.extraA)][static_cast<std::size_t>(node.extraB)], r);
+    case Extra::None: break;
+    }
     if (node.isArray) {
         if (!requireArray(v, path, "This field", node.children.size(), r))
             return;
@@ -383,8 +597,8 @@ void readRoutes(const J& v, Patch& patch, Reporter& r) {
     const auto& reg = Registry::get();
     if (!requireArray(v, "/mod", "\"mod\"", kNumModRoutes, r))
         return;
-    static const std::vector<std::string> known = {"source", "via", "via_invert", "dest", "amount",
-                                                   "polarity", "curve", "enabled", "mute", "solo"};
+    static const std::vector<std::string> known = {"source", "via",   "via_invert",  "dest",    "amount", "polarity",
+                                                   "curve",  "curve_shape", "enabled", "mute",   "solo"};
     static const std::vector<std::string> polarities = {"bi", "uni"};
     static const std::vector<std::string> curves = {"linear", "exp", "log", "s", "drawn"};
     const auto sourceNames = [&] {
@@ -442,6 +656,8 @@ void readRoutes(const J& v, Patch& patch, Reporter& r) {
                 int c = static_cast<int>(route.curve);
                 readToken(child, path, "The curve", curves, c);
                 route.curve = static_cast<ModCurve>(c);
+            } else if (key == "curve_shape") {
+                readShape(child, path, 0.0, 1.0, route.curveShape, r);
             } else if (key == "dest") {
                 std::string id;
                 if (!readString(child, path, "A destination", kMaxNameLength, id, r))
@@ -598,11 +814,12 @@ void loadDocument(J& doc, LoadResult& out, Reporter& r) {
         return;
 
     std::vector<std::string> topKeys = keysOf(schema());
-    for (const char* k : {"format", "version", "meta", "mod", "fx", "macros"})
+    for (const char* k : {"format", "version", "meta", "mod", "fx", "macros", "tuning"})
         topKeys.emplace_back(k);
     for (const auto& [key, child] : doc.items()) {
         if (key == "format" || key == "version") continue;
         if (key == "meta") readMeta(child, out.patch.meta, r);
+        else if (key == "tuning") readTuning(child, out.patch.tuning, r);
         else if (key == "mod") readRoutes(child, out.patch, r);
         else if (key == "fx") readFx(child, out.patch, r);
         else if (key == "macros") readMacros(child, out.patch, r);
@@ -627,6 +844,17 @@ J valueToJson(const ParamDef& d, double value) {
     case ParamType::Float: break;
     }
     return value;
+}
+
+J shapeToJson(const Shape& shape, bool withLoop) {
+    J o = J::object();
+    J points = J::array();
+    for (const ShapePoint& p : shape.points)
+        points.push_back({{"x", p.x}, {"y", p.y}, {"curve", p.curve}});
+    o["points"] = std::move(points);
+    if (withLoop && shape.loopStart != 0.0)
+        o["loop_start"] = shape.loopStart;
+    return o;
 }
 
 bool endsWithIndex(const std::string& pointer) {
@@ -760,7 +988,43 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
                 doc["texture"]["sample"]["ref"] = patch.textureSample;
         }
     }
-    // A compact save may have produced half-filled pairs such as bend_range; drop the section if empty.
+    // Structure that lives inside the modules' objects: written only when there is something to say.
+    for (int i = 0; i < kNumLfos; ++i)
+        if (!patch.lfoShapes[static_cast<std::size_t>(i)].empty())
+            doc["lfo" + std::to_string(i + 1)]["shape"] = shapeToJson(patch.lfoShapes[static_cast<std::size_t>(i)], true);
+    for (int i = 0; i < kNumEnvs; ++i) {
+        const std::string env = "env" + std::to_string(i + 1);
+        J sync = J::object();
+        for (std::size_t k = 0; k < 5; ++k)
+            if (!patch.envSync[static_cast<std::size_t>(i)][k].empty())
+                sync[kEnvSyncKeys[k]] = patch.envSync[static_cast<std::size_t>(i)][k];
+        if (!sync.empty())
+            doc[env]["sync"] = std::move(sync);
+        const EnvShape& shape = patch.envShapes[static_cast<std::size_t>(i)];
+        if (i > 0 && !shape.points.empty()) {
+            J multi = J::object();
+            J points = J::array();
+            for (const EnvPoint& p : shape.points) {
+                J o = J::object();
+                if (p.sync.empty())
+                    o["time_ms"] = p.timeMs;
+                else
+                    o["time"] = p.sync;
+                o["level"] = p.level;
+                if (full || p.curve != 0.0) o["curve"] = p.curve;
+                points.push_back(std::move(o));
+            }
+            multi["points"] = std::move(points);
+            if (shape.sustainPoint >= 0) multi["sustain_point"] = shape.sustainPoint;
+            if (shape.loopStart >= 0 && shape.loopEnd > shape.loopStart) multi["loop"] = {shape.loopStart, shape.loopEnd};
+            doc[env]["multi"] = std::move(multi);
+        }
+    }
+    for (int i = 0; i < kNumOscs; ++i)
+        for (std::size_t slot = 0; slot < 2; ++slot)
+            if (!patch.warpCurves[static_cast<std::size_t>(i)][slot].empty())
+                doc["osc" + std::to_string(i + 1)][slot == 0 ? "warp_a" : "warp_b"]["curve"] =
+                    shapeToJson(patch.warpCurves[static_cast<std::size_t>(i)][slot], false);
 
     const std::size_t routeCount = std::min<std::size_t>(patch.routes.size(), kNumModRoutes);
     if (full || routeCount > 0) {
@@ -779,6 +1043,7 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
             o["amount"] = patch.get(reg.modAmount(static_cast<int>(i)));
             if (full || route.polarity != Polarity::Bi) o["polarity"] = polarities[static_cast<int>(route.polarity)];
             if (full || route.curve != ModCurve::Linear) o["curve"] = curves[static_cast<int>(route.curve)];
+            if (!route.curveShape.empty()) o["curve_shape"] = shapeToJson(route.curveShape, false);
             if (full || !route.enabled) o["enabled"] = route.enabled;
             if (full || route.mute) o["mute"] = route.mute;
             if (full || route.solo) o["solo"] = route.solo;
@@ -834,6 +1099,13 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
             macros.push_back(std::move(o));
         }
         doc["macros"] = std::move(macros);
+    }
+
+    if (!patch.tuning.empty() || !patch.tuning.name.empty()) {
+        J tuning = J::object();
+        tuning["name"] = patch.tuning.name;
+        tuning["keys"] = patch.tuning.keys;
+        doc["tuning"] = std::move(tuning);
     }
 
     return doc.dump(2, ' ', false, J::error_handler_t::replace) + "\n";
