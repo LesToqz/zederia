@@ -46,13 +46,15 @@ Measured 2026-11-12 and 2026-11-13 on the machine in `docs/ENVIRONMENT.md`, Rele
 
 Benchmarks (Release, one core, 48 kHz, 512-sample blocks; baseline in `tests/bench/baseline.json`):
 
-| Scenario | 2026-11-12, best of 3 runs of 10 s | 2026-11-13, best of 3 runs of 10 s | Budget (plan 5.8) |
-|---|---|---|---|
-| idle | 0.019 % | 0.040 to 0.048 % | 0.2 % |
-| one_voice (one wavetable oscillator) | 0.162 % | 0.35 to 0.37 % | 0.5 % |
-| chord8 (8 voices, one oscillator at unison 7; the filter joins in milestone 3) | 2.23 % | 4.8 to 5.0 % | 4 % |
+| Scenario | Baseline: best of 5 runs of 20 s (`scripts/bench.ps1 -UpdateBaseline`) | Budget (plan 5.8) |
+|---|---|---|
+| idle | 0.023 % | 0.2 % |
+| one_voice (one wavetable oscillator) | 0.171 % | 0.5 % |
+| chord8 (8 voices, one oscillator at unison 7; the filter joins in milestone 3) | 2.42 % | 4 % |
 
-The two days differ because the machine did, not the code: on 2026-11-13 this virtual machine ran at about half its earlier speed. A milestone 1 test whose code has not changed (the patch fuzz test, Debug, run alone) took 210 s against 111 s the day before, and the idle scenario slowed by the same factor as the others. The budgets are met at the machine's normal speed and the stored baseline holds those numbers; at the reduced speed `chord8` reads over its budget. The baseline was recalibrated once for this milestone (the milestone 1 numbers were for the placeholder oscillator). See Known issues.
+All three budgets are met. Other runs at normal speed gave 2.23 % and 2.30 % for `chord8`. The baseline was recalibrated once for this milestone (the milestone 1 numbers were for the placeholder oscillator).
+
+For part of 2026-11-13 this virtual machine ran at about half speed: the same scenarios read 0.04 %, 0.36 % and 4.8 to 5.0 %, and a milestone 1 test whose code has not changed (the patch fuzz test, Debug, run alone) took 210 s against 111 s the day before. Readings taken in that state are not used. See Known issues.
 
 ### Milestone 1
 Measured 2026-11-12 on the machine in `docs/ENVIRONMENT.md`.
@@ -112,7 +114,7 @@ Milestone 2:
 - **Baseline recalibrated once** to the milestone 2 sources, as the milestone allows.
 
 ## Known issues
-- **Benchmarks need re-measuring at normal machine speed.** On 2026-11-13 the machine ran at about half speed and `scripts/bench.ps1` fails there (`chord8` about 5 % against a budget of 4 %). The stored baseline is the 2026-11-12 measurement (best of 3 runs of 10 s, not the script's usual 5 of 20 s), entered by hand in the tool's format. When the machine is back to normal, run `scripts/bench.ps1`; if it passes, `scripts/bench.ps1 -UpdateBaseline` replaces the hand-entered numbers.
+- **The machine's speed varies.** It is a virtual machine and has been seen at half speed for hours, which makes `scripts/bench.ps1` fail (`chord8` about 5 %). If a benchmark fails unexpectedly, check that `idle` is near its baseline before looking for a regression.
 - `chord8` has less than a factor of two to spare on its budget before the filter exists; milestone 3 must watch it.
 - The placeholder envelope has straight segments and ignores the curve parameters; the filter slots pass audio through; modulation, effects and the remaining parameters have no behaviour yet (by design: milestones 3 and 4).
 - The Texture player reads its sample with plain interpolation and no band-limited copies, so a sample played far above its recorded pitch can alias.
