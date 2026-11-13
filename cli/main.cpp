@@ -58,6 +58,7 @@ Usage: zederia-cli <command> [options]
       --runs N                 runs; the fastest counts (default 5)
       --baseline FILE          compare with stored results; exit code 1 on a regression of more than 10 %%
       --update-baseline        write the measured results to the baseline file
+      --report-only            print the verdicts but always exit with code 0
 
   table SUBCOMMAND             The wavetable toolkit. Tables are WAV files of 2048-sample frames.
                                Frame numbers start at 0; --scope is all, a frame, or a range such as 2-7.
@@ -389,7 +390,9 @@ int cmdBench(const Args& args) {
             return kFailed;
         std::printf("baseline written to %s\n", baselinePath.c_str());
     }
-    return failed ? kFailed : kOk;
+    // --report-only: the table is the result. The tests use it to check that the scenarios run;
+    // a half-second run on a busy or unoptimised build says nothing about the budgets.
+    return failed && !args.has("report-only") ? kFailed : kOk;
 }
 
 } // namespace

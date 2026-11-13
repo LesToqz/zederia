@@ -44,7 +44,7 @@ add_test(NAME cli.render_is_deterministic
          COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}
                  -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/glass_pluck.zpreset
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderTwice.cmake)
-add_test(NAME cli.bench_runs COMMAND zederia-cli bench --seconds 0.5 --runs 1)
+add_test(NAME cli.bench_runs COMMAND zederia-cli bench --seconds 0.5 --runs 1 --report-only)
 add_test(NAME cli.table_commands
          COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_commands
                  -DDATA=${CMAKE_CURRENT_SOURCE_DIR}/data -DCONTENT=${CMAKE_SOURCE_DIR}/content

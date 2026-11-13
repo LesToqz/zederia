@@ -1,18 +1,18 @@
 # Architecture
 
-How the pieces fit as of milestone 1, and the rules every later milestone keeps.
+How the pieces fit as of milestone 2, and the rules every later milestone keeps.
 
 ## Targets
 
 | Target | Folder | What it is | Depends on |
 |---|---|---|---|
-| `zederia_core` | `core/` | Static library: parameter registry, patch model, engine, offline renderer, benchmarks. No interface code and no plug-in framework | nlohmann/json |
+| `zederia_core` | `core/` | Static library: parameter registry, patch model, engine and sound sources, wavetable model and toolkit, content recipes, offline renderer, benchmarks. No interface code and no plug-in framework | nlohmann/json |
 | `Zederia` | `plugin/` | The plug-in (VST3, Standalone, CLAP): processor and a temporary editor | `zederia_core`, the plug-in framework |
-| `zederia-cli` | `cli/` | `render`, `validate-patch`, `params`, `bench` | `zederia_core` |
+| `zederia-cli` | `cli/` | `render`, `validate-patch`, `params`, `bench`, `table ...`, `texture build`, `content build` | `zederia_core` |
 | `zederia-mcp` | `mcp/` | The agent server; prints its version until milestone 6 | `zederia_core` |
 | `zederia_tests`, `zederia_plugin_tests` | `tests/` | Core tests; processor and editor tests | the above, Catch2 |
 
-Everything that makes or describes sound lives in `zederia_core`, so the plug-in, the command-line tool and the agent server produce identical results. The core stays portable: the only platform-specific code is `rt/Denormals.h`. `link/` (the local pipe protocol) and `content/` (recipes) are added by the milestones that need them.
+Everything that makes or describes sound lives in `zederia_core`, so the plug-in, the command-line tool and the agent server produce identical results. The core stays portable: the only platform-specific code is `rt/Denormals.h` and the SIMD wrappers in `dsp/Simd.h`. `link/` (the local pipe protocol) is added by the milestone that needs it. The repository's `content/` folder holds recipes (JSON), never audio: the factory wavetables and textures are built from them.
 
 ## The core
 
@@ -34,11 +34,45 @@ Everything that makes or describes sound lives in `zederia_core`, so the plug-in
 - **PatchIO.** `loadPatch` never throws and never crashes; it returns the patch plus issues, each with a code, a JSON-pointer path, a message and a fix. Errors fail the load; warnings (unknown fields, clamped values) do not. `savePatch` writes every value by default so a later change of defaults cannot alter saved sounds; `compact` leaves defaults out. Save, load, save is byte-identical. `migratePatch` brings older format versions forward one step at a time.
 - **Engine** (`engine/`). `process()` splits each block at MIDI event offsets and at control ticks. Ticks fall every 16 samples on a grid fixed in absolute time; between ticks, amplitude and pitch move in straight lines toward the value computed for the next tick. Because nothing depends on where block boundaries fall, the output is bit-identical for any block size (tested). The control tick is where milestone 3 evaluates envelopes, LFOs and the modulation matrix.
 - **VoiceAllocator.** Pure bookkeeping, tested on its own: poly, mono and legato, note priority, sustain pedal, stealing (oldest, quietest, releasing first). It returns actions (start, retrigger, glide, release, kill) that the engine carries out. A stolen voice fades out on a spare slot while its replacement starts.
-- **OfflineRenderer** (`render/`). Patch plus events (from a note list or a Standard MIDI File) to audio, then WAV. Same engine code, fixed seed, bit-identical between runs of the same build.
+- **OfflineRenderer** (`render/`). Patch plus events (from a note list or a Standard MIDI File) to audio, then WAV. Same engine code, fixed seed, bit-identical between runs of the same build. It renders at the patch's offline quality unless told to use the live one, and takes the tables and the texture sample the patch names.
+
+## Sound sources
+
+```
+ Wavetable (frames a user edits) ──► TableData (what the oscillator reads) ──► rt::Handoff ──► Engine
+ WavFile / Import / Toolkit / Formula / Resynth / Recipe all produce or change a Wavetable
+ SampleData (texture) ───────────────────────────────────────────────────────► rt::Handoff ──► Engine
+
+ per voice:  Sub ─┐
+              Texture ─┤  (modulators first, in dependency order)
+              Osc 1..3 ┴─► level, pan, sends ──► bus Filter 1 │ bus Filter 2 │ direct ──► amp envelope ──► out
+```
+
+- **Wavetable** (`table/Wavetable.h`). 1 to 256 key frames of 2048 samples, a morph mode (none, crossfade, spectral, spectral with zeroed phase, spectral with aligned fundamental), a Stepped flag and a name. Saved as a WAV file whose `ZEDT` chunk holds the metadata as JSON; files without the chunk are read by the usual conventions (a text marker chunk, then lengths that divide by 2048, 1024, 4096, 512 or 256, then one cycle of any length). Damaged files are refused with a message, never a crash.
+- **TableData** (`table/TableData.h`). The read-only form the oscillator plays, built off the audio thread: the positions (the key frames themselves for none, crossfade and stepped tables, 256 generated positions for the spectral modes), each stored at 28 band limits (1024 harmonics down to 1, about three per octave). A level's size is chosen so the interpolation error of a sawtooth stays below -104 dBc, and the data is pre-emphasised for the six-point spline the oscillator reads it with, so the response is flat. Builds are cached by content hash for the life of the process.
+- **Oscillator kernel** (`src/engine/OscKernel.inl`). One template, compiled three times: scalar, 4 lanes and 8 lanes. A lane is one unison voice. The three results are bit-identical (no fused multiply-add, a fixed order for summing lanes), so the scalar kernel is the reference the vector ones are tested against. Phase is a 32-bit integer; the level is chosen per lane so that no harmonic lies above half the sample rate, and a change of level is crossfaded over one control tick. Position moves between the two nearest stored positions (or jumps, for Stepped).
+- **Warps.** Two slots in series, each a phase stage or an amplitude stage: sync, soft sync, bend, pulse width, skew, mirror, flip, quantize, curve, fold, drive, and phase, amplitude and ring modulation from another source. The Classic engine (saw, square, triangle and sine with a polynomial correction at the steps) takes the amplitude stages and the modulations.
+- **Cross-modulation.** Sources are rendered in dependency order: Sub, Texture, then the oscillators sorted so that a modulator comes before what it modulates. A loop, or an oscillator modulating itself, runs one sample at a time with a delay of one base-rate sample.
+- **Unison.** Up to 16 lanes laid out from the centre outward: detune laws, stack intervals, blend between the centre and the sides at constant power, stereo width, position and warp spread, start phases.
+- **Quality.** Draft, Standard, High and Ultra oversample by 1, 2, 4 and 8 the paths that can alias (a warped or modulated oscillator, a modulator, the Classic engine) and come back down through polyphase half-band filters that add no latency. A plain wavetable oscillator is clean at the base rate in every mode and is never oversampled.
+- **Sub and Texture.** Sub is one simple shape (sine, triangle, saw, square, 25 % pulse or rounded square) under the note. Texture plays a sample (one-shot or looped, keytracked or fixed, with start and random start). Each source has a level, a pan and a send to each of the two filter slots, which are placeholders until milestone 3 and can be routed in series or in parallel.
+
+## The wavetable toolkit
+
+Library functions on a `Wavetable`, all reachable from `zederia-cli table`:
+
+- **Toolkit** (`table/Toolkit.h`): frame operations (normalise, remove DC, mirror, fades, low-pass and more), harmonic operations (clear, fill, randomise, octave shifts, odd or even only), frame management (insert, duplicate, delete, move, reverse, reduce), morph generation between frames and sorting by brightness or level.
+- **Formula** (`table/Formula.h`): a small expression language over `t`, `x`, `y`, `z`, the harmonic number, the input and the selected frame; in the wave or the harmonic domain. Expressions are compiled to bytecode with limits on length, depth and size; errors carry the column and, for a misspelt name, a suggestion.
+- **Import** (`table/Import.h`): single cycles, a recording cut by tracked pitch (with drift correction) or by a fixed length, spectral snapshots, and an image read row by row. `util/Image` decodes PNG, BMP and PNM with its own inflate.
+- **Resynth** (`table/Resynth.h`): bakes a warp, or a whole patch played at one note, into a new table.
+- **Recipes** (`content/Recipe.h`): a table or a texture described as a list of steps in JSON. `zederia-cli content build` turns the repository's `content/` folder into the factory folder; the same recipe always gives the same bytes.
+- **ContentLibrary** (`content/Library.h`): resolves the references a patch holds (`factory:Group/Name`, `user:...`, or a path) to files, lists what the folders hold, and loads what a patch names into an engine.
 
 ## The plug-in
 
 `ZederiaProcessor` owns one `Engine`. Each automatable registry entry becomes a `ZederiaParameter` whose value lives in the engine's `ParamStore`; a rack slot's generic parameters take the loaded effect's name and range. The non-parameter part of the patch is kept in a document guarded by a lock the audio thread never takes. State in a host project is a 12-byte header (`ZEDS`, version, length) followed by the deflated patch JSON; unreadable state is ignored and leaves the current state in place. The on-screen keyboard reaches the audio thread through a lock-free queue.
+
+The processor holds a `ContentLibrary` (factory folder, user folder). Applying a patch, or choosing a table or texture in the temporary editor, loads the file on the calling thread and hands the result to the engine; a reference that cannot be loaded leaves the built-in table or noise in place and is reported, not fatal. The reference, not the audio, is what a patch and the host state store.
 
 ## Threads and real-time rules
 
@@ -52,7 +86,7 @@ Everything that makes or describes sound lives in `zederia_core`, so the plug-in
 How the rules are kept:
 
 - **Parameter values** cross threads through `ParamStore`: one atomic per value plus a dirty bitmap. Any thread sets; the audio thread drains at block start. No queue can overflow and nothing waits.
-- **Structure** (tables, shapes, samples, rack layout) will be built off the audio thread and swapped in by pointer, with the old object retired on a non-audio thread. Milestone 1 has no such data in the engine yet; milestone 2 introduces the swap with the first wavetables.
+- **Structure** (tables, samples, warp curves; later shapes and rack layout) is built off the audio thread and handed over through `rt::Handoff<T>`: the newest offered object waits in an atomic slot, the audio thread takes it at the start of a block, and the object it replaces goes into a ring that a non-audio thread empties (`Engine::collectGarbage`). The audio thread never frees. A playing voice crossfades from the old table or sample to the new one over 256 samples, so a swap does not click (tested from a second thread while audio runs).
 - **Locks.** Core code may lock only through `zed::rt::Mutex`; a test scans `core/` for raw mutexes.
 - **The audio-thread guard.** `process()` (and the plug-in's `processBlock`) open an `rt::AudioThreadScope`. The test programs replace the global allocation functions and report any allocation or free made inside the scope; `rt::Mutex` reports locks. After every test case the count must be zero or the run fails, so the whole test corpus is checked, not only the tests written for it.
 - **Denormals.** Flush-to-zero and denormals-are-zero are set for the duration of the callback.
@@ -66,3 +100,5 @@ Offline renders are reproducible because: all randomness comes from one seeded g
 - A parameter: append a declaration after the last module in `Registry::Registry()`, append its id to `tests/data/registry_ids.txt`, run `zederia-cli params --format md --out docs/PARAMETERS.md`.
 - A patch format change that old files cannot be read through: raise `kPatchVersion` and add a `MigrationStep`.
 - A benchmark scenario: add it in `core/src/bench/Bench.cpp`, then `scripts/bench.ps1 -UpdateBaseline`.
+- A factory wavetable or texture: add a recipe under `content/wavetables` or `content/textures` (see `content/README.md`); `scripts/install-dev.ps1` rebuilds the factory folder.
+- A warp mode: add the choice to the registry, its derived value in `warpDerive` and its stage in `OscKernel.inl`; the kernel test then checks all three widths against each other.

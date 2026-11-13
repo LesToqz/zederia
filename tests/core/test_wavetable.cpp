@@ -257,7 +257,7 @@ TEST_CASE("wavetable: damaged table files are refused, never a crash", "[table][
         for (int e = 0; e < edits; ++e) {
             const std::size_t at = static_cast<std::size_t>(rng.next() % 200); // headers and metadata are at the front
             switch (rng.next() % 4) {
-            case 0: bytes[at] = static_cast<std::uint8_t>(rng.next()); break;
+            case 0: bytes[std::min(at, bytes.size() - 1)] = static_cast<std::uint8_t>(rng.next()); break;
             case 1: bytes.resize(static_cast<std::size_t>(rng.next() % bytes.size())); break;
             case 2: bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(std::min(at, bytes.size())), static_cast<std::uint8_t>(rng.next())); break;
             default: bytes[std::min(at, bytes.size() - 1)] ^= 0x80; break;
