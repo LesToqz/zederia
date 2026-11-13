@@ -127,5 +127,4 @@ Milestone 2:
 - Inno Setup not installed (needed by milestone 7). JUCE licence choice is open.
 
 ## Next
-- Re-run `scripts/bench.ps1` once the machine is at normal speed (see Known issues).
 - Milestone 3: filters in the two slots, envelopes, LFOs, the modulation matrix and the shape model (which also gives the warp curve its patch field).
