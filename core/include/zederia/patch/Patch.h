@@ -4,6 +4,7 @@
 #pragma once
 
 #include "zederia/params/Registry.h"
+#include "zederia/patch/Shape.h"
 
 #include <array>
 #include <span>
@@ -32,9 +33,22 @@ struct ModRoute {
     bool viaInvert = false;
     Polarity polarity = Polarity::Bi;
     ModCurve curve = ModCurve::Linear;
+    Shape curveShape;        // the drawn curve (ModCurve::Drawn): y from 0 to 1 over x from 0 to 1
     bool enabled = true, mute = false, solo = false;
     bool operator==(const ModRoute&) const = default;
 };
+
+// A microtuning stored with the patch: the pitch of each of the 128 keys as an equal-tempered
+// note number (see tuning/Tuning.h). No keys means equal temperament.
+struct PatchTuning {
+    std::string name;
+    std::vector<double> keys;
+    bool empty() const { return keys.empty(); }
+    bool operator==(const PatchTuning&) const = default;
+};
+
+// Names of the five envelope times that can follow the tempo, in the order of Patch::envSync.
+inline constexpr const char* kEnvSyncKeys[5] = {"delay", "attack", "hold", "decay", "release"};
 
 class Patch {
 public:
@@ -69,6 +83,15 @@ public:
     std::string textureSample;                      // sample reference for the texture player
     std::array<std::string, kNumMacros> macroNames; // empty = "Macro N"
     std::vector<ModRoute> routes;                   // at most kNumModRoutes; route i uses mod.(i+1).amount
+
+    // Structure that is not a parameter (milestone 3). An empty shape means the built-in one.
+    std::array<Shape, kNumLfos> lfoShapes;                     // y from -1 to 1; empty = a sine
+    std::array<EnvShape, kNumEnvs> envShapes;                  // multi-segment mode (envelopes 2 to 4)
+    // Envelope times given as note lengths ("1/8", "3/16", "1/4T"): delay, attack, hold, decay,
+    // release. A non-empty entry replaces the time in milliseconds and follows the tempo.
+    std::array<std::array<std::string, 5>, kNumEnvs> envSync;
+    std::array<std::array<Shape, 2>, kNumOscs> warpCurves;     // drawn phase curves of warp A and B; y from 0 to 1
+    PatchTuning tuning;                                        // empty = equal temperament
 
     bool operator==(const Patch&) const = default;
 

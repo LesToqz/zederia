@@ -454,9 +454,9 @@ TEST_CASE("texture: one-shot and loop, loop points, start and random start", "[t
 // --- Sends -------------------------------------------------------------------------------------
 
 TEST_CASE("sends: every source reaches the output through the filter slots or directly", "[sends]") {
-    // The two filter slots pass their input through until milestone 3, so wherever a source is
-    // sent - filter 1, filter 2, the direct path, in series or in parallel - the result is the
-    // same sound. This pins the routing arithmetic the filters will be dropped into.
+    // A filter slot that is off passes its input through, so wherever a source is sent - filter 1,
+    // filter 2, the direct path, in series or in parallel - the result is the same sound. This
+    // pins the routing arithmetic around the filters (test_voice.cpp covers the filters in it).
     Patch base = quietPatch();
     base.set("osc1.on", 1);
     base.set("osc2.on", 1);
@@ -480,11 +480,16 @@ TEST_CASE("sends: every source reaches the output through the filter slots or di
         CHECK(maxDifference(r.left, reference.left) < 2e-5);
         CHECK(maxDifference(r.right, reference.right) < 2e-5);
     }
-    // Turning a filter slot "on" changes nothing yet either.
+    // Neither does a filter that is on with its mix at 0 %: only the dry signal passes.
     Patch filters = base;
     filters.set("filter1.on", 1);
     filters.set("filter2.on", 1);
+    filters.set("filter1.mix", 0);
+    filters.set("filter2.mix", 0);
     CHECK(maxDifference(render(filters, 57, 0.4).left, reference.left) < 2e-5);
+    // At full mix the default low-pass at 2 kHz is clearly at work.
+    filters.set("filter1.mix", 1);
+    CHECK(maxDifference(render(filters, 57, 0.4).left, reference.left) > 0.01);
 
     // Moving the sends while a note sounds is smooth.
     Rig rig(base);

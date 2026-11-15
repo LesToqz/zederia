@@ -199,6 +199,8 @@ TEST_CASE("engine: amp envelope timing is within a millisecond", "[engine][envel
     patch.set("env1.decay", 100);
     patch.set("env1.sustain", 0.5);
     patch.set("env1.release", 80);
+    patch.set("env1.decay_curve", 0); // straight segments, so halfway in time is halfway in level
+    patch.set("env1.release_curve", 0);
     patch.set("osc1.phase_random", 0);
     // A period of exactly 24 samples: every cycle is sampled at the same points, so the peak of
     // each cycle is the envelope times a constant.
@@ -278,12 +280,13 @@ TEST_CASE("engine: parameter changes while playing are smooth", "[engine]") {
     rig.run(4800, {MidiEvent::noteOn(0, 36, 1.0f)});
     // A 60 dB jump of the master volume, from another "thread", between two blocks.
     rig.engine.params().set(idx("global.master"), -66.0);
-    rig.run(512);
+    rig.run(1024);
     float jump = 0.0f;
     for (std::size_t i = 4800 - 8; i < rig.left.size(); ++i)
         jump = std::max(jump, std::abs(rig.left[i] - rig.left[i - 1]));
-    CHECK(jump < 0.05f); // ramped over one control interval, not stepped
-    CHECK(zedtest::peakOf(rig.left, 4800 + 64, rig.left.size()) < 0.001f);
+    CHECK(jump < 0.05f); // glides there over a few milliseconds, not stepped
+    CHECK(zedtest::peakOf(rig.left, 4800, 4800 + 16) > 0.01f);              // still on its way at first
+    CHECK(zedtest::peakOf(rig.left, 4800 + 720, rig.left.size()) < 0.001f); // and there within 15 ms
 }
 
 TEST_CASE("engine: survives a storm of events with finite output", "[engine][fuzz]") {
