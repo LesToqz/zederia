@@ -1,0 +1,32 @@
+{
+  "format": "zederia.patch",
+  "version": 1,
+  "meta": { "name": "Test Pad", "author": "", "type": "pad", "tags": ["wide", "slow"] },
+  "global": { "mode": "poly", "polyphony": 16, "master_db": -9.0 },
+  "voice": { "drift": 0.4, "noise_floor": 0.15, "filter_routing": 1.0, "variance": { "pan": 0.3, "cutoff": 0.15 } },
+  "osc1": {
+    "on": true, "position": 0.2, "level_db": -8.0,
+    "unison": { "voices": 7, "detune": 0.3, "blend": 0.8, "width": 1.0 },
+    "sends": { "filter_balance": 0.3 }
+  },
+  "osc2": {
+    "on": true, "engine": "classic", "octave": 1, "fine_cents": 6.0, "level_db": -16.0,
+    "classic": { "shape": 0.55 },
+    "sends": { "filter_balance": 1.0 }
+  },
+  "filter1": { "on": true, "type": "svf_lp24", "cutoff_hz": 900, "resonance": 0.2, "stereo_offset": 0.15, "keytrack": 0.4 },
+  "filter2": { "on": true, "type": "svf_bp12", "cutoff_hz": 2400, "resonance": 0.3, "mix": 0.8 },
+  "env1": { "attack_ms": 600, "decay_ms": 2000, "sustain": 0.8, "release_ms": 1500, "attack_curve": -0.3 },
+  "lfo1": { "mode": "free", "rate_hz": 0.23, "scope": "voice" },
+  "lfo2": { "mode": "free", "sync": true, "division": "2/1", "anchor": true, "scope": "global",
+            "shape": { "points": [ { "x": 0, "y": -1, "curve": 0.4 }, { "x": 0.5, "y": 1, "curve": -0.4 }, { "x": 1, "y": -1 } ] } },
+  "flux1": { "type": "smooth", "rate_hz": 0.4, "scope": "voice" },
+  "mod": [
+    { "source": "lfo1", "dest": "filter1.cutoff", "amount": 0.1, "polarity": "bi" },
+    { "source": "lfo2", "dest": "osc1.position", "amount": 0.3, "polarity": "bi" },
+    { "source": "flux1", "dest": "osc1.pan", "amount": 0.2, "polarity": "bi" },
+    { "source": "aftertouch", "dest": "filter2.cutoff", "amount": 0.25, "polarity": "uni", "curve": "exp" },
+    { "source": "unison_index", "dest": "osc1.position", "amount": 0.1, "polarity": "bi" }
+  ],
+  "macros": [ { "name": "Open", "value": 0.0 } ]
+}

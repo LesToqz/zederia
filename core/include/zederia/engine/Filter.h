@@ -51,6 +51,7 @@ struct Settings {
     float character = 0.5f;                 // 0..1, meaning depends on the type
     float mix = 1.0f;                       // 0..1
     bool levelMode = false;                 // true: mix is an output level and no dry signal passes
+    bool operator==(const Settings&) const = default;
 };
 
 // Linear types as a chain (or a parallel bank) of one- and two-pole sections. The same design

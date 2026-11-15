@@ -282,17 +282,26 @@ TEST_CASE("plug-in: the temporary editor opens, lists parameters and follows the
 
 namespace {
 
-// The starter content built into a temporary folder, once for all tests in this file.
-const std::string& factoryFolder() {
-    static const std::string folder = [] {
-        const auto dir = std::filesystem::temp_directory_path() / "zederia_test_plugin_factory";
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
+// The starter content built into a temporary folder, once per test process. The tests run in
+// parallel, one process each, so every process has a folder of its own and removes it at the end.
+struct FactoryFolder {
+    std::string path;
+    FactoryFolder() {
+        const auto dir = std::filesystem::temp_directory_path() /
+                         ("zederia_test_plugin_factory_" + juce::Uuid().toString().toStdString());
         const ContentBuild built = buildContentFolder(ZED_CONTENT_DIR, dir.string());
         REQUIRE(built.errors.empty());
-        return dir.string();
-    }();
-    return folder;
+        path = dir.string();
+    }
+    ~FactoryFolder() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+const std::string& factoryFolder() {
+    static const FactoryFolder folder;
+    return folder.path;
 }
 
 } // namespace

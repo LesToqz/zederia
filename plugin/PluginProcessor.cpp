@@ -179,6 +179,11 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
             args.transport.bpm = position->getBpm().orFallback(120.0);
             args.transport.ppqPosition = position->getPpqPosition().orFallback(0.0);
             args.transport.playing = position->getIsPlaying();
+            if (const auto signature = position->getTimeSignature()) {
+                args.transport.timeSigNumerator = signature->numerator;
+                args.transport.timeSigDenominator = signature->denominator;
+            }
+            args.transport.barStartPpq = position->getPpqPositionOfLastBarStart().orFallback(0.0);
         }
     }
     engine_.process(args);
@@ -265,8 +270,8 @@ void ZederiaProcessor::applyPatch(const zed::Patch& patch) {
                 type.store(patch.fxSlotType(lane, slot), std::memory_order_relaxed);
             }
         }
-        for (int i = 0; i < engine_.params().size(); ++i)
-            engine_.params().set(i, patch.get(i));
+        // Every value, and with them the routes, shapes, tempo-linked times and the tuning.
+        engine_.loadPatch(patch);
     }
     // Tell the host about every value that moved.
     for (auto* parameter : hostParams_)

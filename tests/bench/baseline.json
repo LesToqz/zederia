@@ -2,8 +2,11 @@
   "about": "Realtime factor in percent: one core, 48 kHz, 512-sample blocks, Release build. Written by zederia-cli bench --update-baseline.",
   "zederia_version": "0.1.0",
   "scenarios": {
-    "idle": 0.0232,
-    "one_voice": 0.1706,
-    "chord8": 2.4178
+    "idle": 0.0263,
+    "one_voice": 0.1952,
+    "chord8": 3.0905,
+    "chord8_mod": 3.0989,
+    "full8": 15.1097,
+    "full8_draft": 15.167
   }
 }

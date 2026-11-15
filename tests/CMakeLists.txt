@@ -7,7 +7,7 @@ add_executable(zederia_tests
     core/test_patch_fuzz.cpp
     core/test_voice_allocator.cpp
     core/test_engine.cpp
-    core/test_tuning.cpp
+    core/test_pitch.cpp
     core/test_render.cpp
     core/test_rt_guard.cpp
     core/test_osc_quality.cpp
@@ -21,6 +21,10 @@ add_executable(zederia_tests
     core/test_filter.cpp
     core/test_modulators.cpp
     core/test_tuning.cpp
+    core/test_matrix.cpp
+    core/test_modulation.cpp
+    core/test_voice.cpp
+    core/test_patches.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE
@@ -47,6 +51,16 @@ add_test(NAME cli.render_is_deterministic
          COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}
                  -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/glass_pluck.zpreset
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderTwice.cmake)
+# The hand-written test patches render through the command-line tool, the same every time.
+foreach(patch bass pad pluck lead)
+    add_test(NAME cli.render_test_patch_${patch}
+             COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/render_${patch}
+                     -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/${patch}.zpreset
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderTwice.cmake)
+    add_test(NAME cli.validate_test_patch_${patch}
+             COMMAND zederia-cli validate-patch ${CMAKE_CURRENT_SOURCE_DIR}/data/patches/${patch}.zpreset)
+    set_tests_properties(cli.validate_test_patch_${patch} PROPERTIES FAIL_REGULAR_EXPRESSION "[1-9][0-9]* warning")
+endforeach()
 add_test(NAME cli.bench_runs COMMAND zederia-cli bench --seconds 0.5 --runs 1 --report-only)
 add_test(NAME cli.table_commands
          COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_commands

@@ -571,31 +571,45 @@ void VoiceFilter::aim(const Settings& in, int samples, int oversample, bool snap
     }
 }
 
-void VoiceFilter::advanceRamps(int, int frames) noexcept {
-    const auto n = static_cast<float>(frames);
-    const auto move = [n](Ramp& r) { r.now += r.step * n; };
-    for (int st = 0; st < kMaxStages; ++st) {
-        move(g_[st][0]);
-        move(g_[st][1]);
-        move(k_[st]);
+// Moves every ramp on by the same additions the audio loops made, one per sample they rendered
+// (`coreSteps` per frame for the values an oversampled core uses). Adding step by step, instead
+// of multiplying, makes the result independent of how a control interval was cut into calls, so
+// the engine's output does not depend on the host's block size.
+void VoiceFilter::advanceRamps(int coreSteps, int frames) noexcept {
+    const auto move = [frames](Ramp& r, int rate) {
+        if (r.step == 0.0f)
+            return;
+        const float step = r.step / static_cast<float>(rate);
+        float now = r.now;
+        for (int i = 0; i < frames * rate; ++i)
+            now += step;
+        r.now = now;
+    };
+    const int used = stages_ > 0 ? stages_ : kMaxStages; // a section chain only moves the sections it has
+    for (int st = 0; st < used; ++st) {
+        move(g_[st][0], coreSteps);
+        move(g_[st][1], coreSteps);
+        move(k_[st], coreSteps);
         for (auto& m : m_[st])
-            move(m);
+            move(m, coreSteps);
     }
     for (auto& p : p_)
-        move(p);
+        move(p, coreSteps);
     for (int ch = 0; ch < 2; ++ch) {
-        move(dampLp_[ch]);
-        move(dampHp_[ch]);
+        move(dampLp_[ch], 1);
+        move(dampHp_[ch], 1);
     }
-    move(dry_);
-    move(wet_);
-    move(driveGain_);
-    move(bodyGain_);
-    move(bodyAmount_);
+    move(dry_, 1);
+    move(wet_, 1);
+    move(driveGain_, oversample_);
+    move(driveAmount_, oversample_);
+    move(bodyGain_, oversample_);
+    move(bodyAmount_, oversample_);
 }
 
 void VoiceFilter::guardStates() noexcept {
-    for (int st = 0; st < kMaxStages; ++st)
+    const int used = stages_ > 0 ? stages_ : kMaxStages;
+    for (int st = 0; st < used; ++st)
         for (int ch = 0; ch < 2; ++ch) {
             s1_[st][ch] = finiteOr(s1_[st][ch], kStateLimit);
             s2_[st][ch] = finiteOr(s2_[st][ch], kStateLimit);
@@ -809,7 +823,8 @@ void VoiceFilter::runComb(float* io, int ch, int frames, const float* modScale) 
     const float gls = dampLp_[ch].step, ghs = dampHp_[ch].step;
     float lowState = dampState_[ch][0], highState = dampState_[ch][1];
     const bool grit = info_.family == Family::GritComb, flange = info_.family == Family::Flange;
-    const float step = p_[kExtra].now, hard = p_[kHardness].now;
+    float step = p_[kExtra].now, hard = p_[kHardness].now;
+    const float steps = p_[kExtra].step, hards = p_[kHardness].step;
     const float sign = info_.a == 1 && !grit ? -1.0f : 1.0f;
     const auto maxDelay = static_cast<float>(memoryLength_ - 4);
     float* memory = memory_[ch];
@@ -843,6 +858,8 @@ void VoiceFilter::runComb(float* io, int ch, int frames, const float* modScale) 
         outGain += outGains;
         gl += gls;
         gh += ghs;
+        step += steps;
+        hard += hards;
     }
     writeIndex_[ch] = write;
     dampState_[ch][0] = lowState;
@@ -920,12 +937,14 @@ void VoiceFilter::runDiffuser(float* io, int ch, int frames, const float* modSca
     const auto maxDelay = static_cast<float>(segment - 3);
     float c = p_[kFeedback].now;
     const float cs = p_[kFeedback].step;
+    float lengths[4] = {g_[0][ch].now, g_[1][ch].now, g_[2][ch].now, g_[3][ch].now};
     int write = writeIndex_[ch] & mask;
     for (int i = 0; i < frames; ++i) {
         float x = io[i];
         for (int n = 0; n < 4; ++n) {
             float* m = memory_[ch] + n * segment;
-            float length = g_[n][ch].now + g_[n][ch].step * static_cast<float>(i);
+            float length = lengths[n];
+            lengths[n] += g_[n][ch].step;
             if (modScale != nullptr)
                 length /= modScale[i];
             length = std::clamp(length, 2.0f, maxDelay);
@@ -956,6 +975,7 @@ void VoiceFilter::runSaturator(float* left, float* right, int frames, Resampler*
     const bool compensate = &gain == &driveGain_; // the drive stage keeps the level roughly level
     const float fadeStep = wanted ? kFadeStep : -kFadeStep;
     float* io[2] = {left, right};
+    float fadeEnd = fade;
     for (int ch = 0; ch < 2; ++ch) {
         float work[kMaxCoreSamples], scratch[kMaxCoreSamples];
         if (os > 1)
@@ -975,12 +995,12 @@ void VoiceFilter::runSaturator(float* left, float* right, int frames, Resampler*
             dsp::decimate(hb, resamplers[ch].down, work, frames, os);
         float f = fade;
         for (int i = 0; i < frames; ++i) {
-            const float w = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
-            io[ch][i] += w * (work[i] - io[ch][i]);
-            f += fadeStep;
+            io[ch][i] += f * (work[i] - io[ch][i]);
+            f = std::clamp(f + fadeStep, 0.0f, 1.0f);
         }
+        fadeEnd = f;
     }
-    fade = std::clamp(fade + fadeStep * static_cast<float>(frames), 0.0f, 1.0f);
+    fade = fadeEnd;
 }
 
 void VoiceFilter::process(float* left, float* right, int frames, const float* cutoffMod,

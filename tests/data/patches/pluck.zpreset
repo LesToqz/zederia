@@ -1,0 +1,30 @@
+{
+  "format": "zederia.patch",
+  "version": 1,
+  "meta": { "name": "Test Pluck", "author": "", "type": "pluck", "tags": ["short", "bright"] },
+  "global": { "mode": "poly", "polyphony": 12, "master_db": -6.0 },
+  "voice": { "variance": { "level": 0.1 } },
+  "osc1": {
+    "on": true, "level_db": -5.0,
+    "unison": { "voices": 3, "detune": 0.12 },
+    "warp_a": { "mode": "bend_plus", "amount": 0.25 }
+  },
+  "filter1": { "on": true, "type": "svf_lp12", "cutoff_hz": 500, "resonance": 0.25, "keytrack": 1.0 },
+  "env1": { "attack_ms": 0, "decay_ms": 500, "sustain": 0.0, "release_ms": 200, "sync": { "decay": "1/4" } },
+  "env2": {
+    "mode": "multi",
+    "multi": {
+      "points": [
+        { "time_ms": 2, "level": 1.0 },
+        { "time_ms": 120, "level": 0.25, "curve": 0.6 },
+        { "time_ms": 300, "level": 0.0 }
+      ]
+    }
+  },
+  "mod": [
+    { "source": "env2", "dest": "filter1.cutoff", "amount": 0.5, "polarity": "uni" },
+    { "source": "env2", "dest": "osc1.warp_a.amount", "amount": 0.4, "polarity": "uni" },
+    { "source": "random1", "dest": "osc1.pan", "amount": 0.25, "polarity": "bi" },
+    { "source": "velocity", "dest": "mod.1.amount", "amount": 0.2, "polarity": "uni" }
+  ]
+}

@@ -1,4 +1,5 @@
 # Renders the same patch and notes twice and fails unless the two files are byte-identical.
+file(MAKE_DIRECTORY ${OUT})
 set(notes "C3:0:0.4, E3:0.2:0.4:90, G3:0.4:0.4:110, C4:0.6:0.6")
 foreach(n 1 2)
     execute_process(COMMAND ${CLI} render --patch ${PATCH} --notes ${notes} --seed 3 --out ${OUT}/render_${n}.wav

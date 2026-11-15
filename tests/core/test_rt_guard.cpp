@@ -107,30 +107,99 @@ TEST_CASE("guard: the engine's audio callback never allocates, frees or locks", 
     engine.loadPatch(patch);
 
     Rng rng(5);
-    std::vector<float> left(1024), right(1024);
+    // Routes from every kind of source to every kind of destination, replaced now and then, as
+    // an editor or an agent would while the instrument plays.
+    std::vector<std::string> sources, destinations;
+    for (const ModSourceDef& s : reg.modSources())
+        sources.push_back(s.id);
+    sources.emplace_back("cc21");
+    for (const ParamDef& d : reg.params())
+        if (d.modulatable)
+            destinations.push_back(d.id);
+    const auto randomRoutes = [&] {
+        std::vector<ModRoute> routes(1 + rng.next() % kNumModRoutes);
+        for (ModRoute& r : routes) {
+            r.source = sources[rng.next() % sources.size()];
+            r.dest = destinations[rng.next() % destinations.size()];
+            if (rng.next() % 3 == 0)
+                r.via = sources[rng.next() % sources.size()];
+            r.polarity = rng.next() % 2 == 0 ? Polarity::Bi : Polarity::Uni;
+            r.curve = static_cast<ModCurve>(rng.next() % 5);
+            if (r.curve == ModCurve::Drawn)
+                r.curveShape.points = {{0.0, 0.0, 0.3}, {0.4, 1.0, -0.5}, {1.0, 0.2, 0.0}};
+            r.solo = rng.next() % 40 == 0;
+            r.mute = rng.next() % 20 == 0;
+        }
+        return routes;
+    };
+    const auto randomShape = [&] {
+        Shape shape;
+        const int points = static_cast<int>(rng.next() % 12);
+        for (int i = 0; i < points; ++i)
+            shape.points.push_back({static_cast<double>(i) / std::max(points - 1, 1), rng.uniform() * 2.0 - 1.0, rng.uniform() * 2.0 - 1.0});
+        shape.loopStart = rng.uniform();
+        return shape;
+    };
+
+    std::vector<float> left(1024), right(1024), side(1024, 0.25f);
     std::vector<MidiEvent> events;
     events.reserve(64);
+    Transport transport;
+    transport.playing = true;
     for (int block = 0; block < 2000; ++block) {
         events.clear();
         const int count = static_cast<int>(rng.next() % 16);
         for (int i = 0; i < count; ++i) {
             const int offset = i * 8;
             const int note = static_cast<int>(rng.next() % 128);
-            switch (rng.next() % 5) {
+            const int channel = static_cast<int>(rng.next() % 16);
+            const auto value = static_cast<float>(rng.uniform());
+            switch (rng.next() % 8) {
             case 0:
-            case 1: events.push_back(MidiEvent::noteOn(offset, note, static_cast<float>(rng.uniform()))); break;
-            case 2: events.push_back(MidiEvent::noteOff(offset, note)); break;
-            case 3: events.push_back(MidiEvent::pitchBend(offset, static_cast<float>(rng.uniform() - 0.5))); break;
-            default: events.push_back(MidiEvent::controller(offset, static_cast<int>(rng.next() % 128), static_cast<float>(rng.uniform()))); break;
+            case 1:
+            case 2: events.push_back(MidiEvent::noteOn(offset, note, value, channel)); break;
+            case 3: events.push_back(MidiEvent::noteOff(offset, note, value, channel)); break;
+            case 4: events.push_back(MidiEvent::pitchBend(offset, value - 0.5f, channel)); break;
+            case 5: events.push_back({offset, MidiEvent::Type::ChannelPressure, static_cast<std::uint8_t>(channel), 0, value}); break;
+            case 6: events.push_back({offset, MidiEvent::Type::PolyPressure, static_cast<std::uint8_t>(channel), static_cast<std::uint8_t>(note), value}); break;
+            default: events.push_back(MidiEvent::controller(offset, static_cast<int>(rng.next() % 128), value, channel)); break;
             }
         }
         if (block % 10 == 0) // every parameter moves, as a host automating everything would
             for (const auto& d : reg.params())
                 engine.params().set(d.index, d.fromNormalized(rng.uniform()));
+        if (block % 7 == 0) {
+            engine.setRoutes(randomRoutes());
+            engine.setLfoShape(static_cast<int>(rng.next() % kNumLfos), randomShape());
+            EnvShape env;
+            const int points = static_cast<int>(rng.next() % 9);
+            for (int i = 0; i < points; ++i)
+                env.points.push_back({rng.uniform() * 40.0, i % 3 == 0 ? "1/32" : "", rng.uniform(), rng.uniform() * 2.0 - 1.0});
+            env.sustainPoint = static_cast<int>(rng.next() % 10) - 1;
+            env.loopStart = static_cast<int>(rng.next() % 4) - 1;
+            env.loopEnd = static_cast<int>(rng.next() % 8) - 1;
+            engine.setEnvShape(1 + static_cast<int>(rng.next() % 3), env);
+            engine.setEnvSync(static_cast<int>(rng.next() % kNumEnvs), static_cast<int>(rng.next() % 5), rng.next() % 2 == 0 ? 0.0 : 0.25);
+            auto tuning = std::make_shared<Tuning>();
+            for (double& key : tuning->note)
+                key += rng.uniform() - 0.5;
+            engine.setTuning(rng.next() % 3 == 0 ? nullptr : tuning);
+        }
         const int frames = 1 + static_cast<int>(rng.next() % 1024);
         for (auto& e : events)
             e.offset = std::min(e.offset, frames - 1);
-        engine.process({left.data(), right.data(), frames, events, {}});
+        transport.bpm = 60.0 + 120.0 * rng.uniform();
+        ProcessArgs args{left.data(), right.data(), frames, events, transport};
+        if (block % 2 == 0) {
+            args.sidechainLeft = side.data();
+            args.sidechainRight = side.data();
+        }
+        engine.process(args);
+        transport.ppqPosition += frames * transport.bpm / (60.0 * 48000.0);
+        bool finite = true;
+        for (int i = 0; i < frames; ++i)
+            finite = finite && std::isfinite(left[static_cast<std::size_t>(i)]) && std::isfinite(right[static_cast<std::size_t>(i)]);
+        REQUIRE(finite); // whatever the settings, the output is always a number
     }
     INFO("last violation: " << rt::lastViolation());
     REQUIRE(rt::violationCount() == 0);
