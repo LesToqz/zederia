@@ -44,6 +44,12 @@ struct ProcessArgs {
     // Optional side-chain input for the envelope follower, `frames` samples each.
     const float* sidechainLeft = nullptr;
     const float* sidechainRight = nullptr;
+    // Optional: room for the notes the play features make (arpeggiator, chord tools, clips), for
+    // the host. While global.midi_out is on the engine writes up to midiOutCapacity of them, with
+    // offsets inside the block, and sets *midiOutCount (0 otherwise).
+    MidiEvent* midiOut = nullptr;
+    int midiOutCapacity = 0;
+    int* midiOutCount = nullptr;
 };
 
 // The sources of a voice, in the order used by the warp slots' "source" parameter.
@@ -122,6 +128,10 @@ public:
     // While locked, loadPatch() keeps the current tuning instead of taking the patch's.
     void setTuningLocked(bool locked);
     bool tuningLocked() const;
+
+    // --- Play (any non-audio thread) -----------------------------------------------------------
+    // The arpeggiator's patterns, the chord memory and the clips of a patch (loadPatch() does this).
+    void setPlayData(const Patch& patch);
 
     // --- Effects rack (any non-audio thread) --------------------------------------------------
     // Hands over the patch's rack: the effect in each slot, the slot values and the drawn curves,

@@ -44,6 +44,18 @@ struct SaveOptions {
 };
 std::string savePatch(const Patch& patch, const SaveOptions& options = {});
 
+// Rack presets (plan 3.8, 5.6): the whole rack, or one effect slot, as JSON.
+inline constexpr std::string_view kRackFormat = "zederia.rack";
+inline constexpr std::string_view kSlotFormat = "zederia.fx";
+std::string saveRackPreset(const Patch& patch);
+// Replaces the patch's rack with the preset's. Nothing changes when the preset has errors.
+bool loadRackPreset(std::string_view jsonText, Patch& into, std::vector<Issue>& issues);
+std::string saveSlotPreset(const Patch& patch, int lane, int slot);
+// Loads one effect into slot `position` of `lane` (replacing what is there, or appending when
+// `position` is the lane's slot count) and fills `moves` for Engine::setRack.
+bool loadSlotPreset(std::string_view jsonText, Patch& into, int lane, int position, FxMoves* moves,
+                    std::vector<Issue>& issues);
+
 // One step of forward migration: rewrites a document of version `from` into version `from + 1`.
 struct MigrationStep {
     int from = 0;

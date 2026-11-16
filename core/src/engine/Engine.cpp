@@ -8,6 +8,7 @@
 #include "zederia/engine/OscKernel.h"
 #include "zederia/engine/VoiceAllocator.h"
 #include "zederia/fx/Effect.h"
+#include "zederia/play/Player.h"
 #include "zederia/rt/AudioThreadGuard.h"
 #include "zederia/rt/Denormals.h"
 #include "zederia/rt/Handoff.h"
@@ -106,6 +107,9 @@ struct Engine::Impl {
     rt::Handoff<LfoTable> lfoTables[kNumLfos];
     rt::Handoff<EnvShapeData> envShapes[kNumEnvs];
     rt::Handoff<Tuning> tuningSlot;
+    rt::Handoff<play::PlayData> playData;
+    play::Player player;
+    MidiEvent playEvents[play::Player::kMaxEvents];
     const Tuning* tuningNow = nullptr;
     LfoTable sineTable;
     Tuning equalTuning;
@@ -290,6 +294,8 @@ struct Engine::Impl {
         }
         sampleSlot.set(SampleData::builtin());
         sampleSlot.take();
+        playData.set(play::PlayData::fromPatch(Patch{}));
+        playData.take();
         texture.sample = sampleSlot.current();
         for (auto& l : lfo)
             l.table = &sineTable;
@@ -558,6 +564,7 @@ struct Engine::Impl {
             if (swapIn(shape))
                 dirty = true;
         swapIn(tuningSlot);
+        swapIn(playData);
         const Tuning* tuning = tuningSlot.current();
         tuningNow = tuning != nullptr ? tuning : &equalTuning;
         if (envSyncDirty.load(std::memory_order_relaxed))
@@ -636,6 +643,34 @@ struct Engine::Impl {
             }
             voiceTick(v, slot);
         }
+    }
+
+    // The play parameters as the player reads them.
+    play::Settings playSettings() const {
+        play::Settings st;
+        st.arpOn = flag(ids.arp.on);
+        st.arpMode = static_cast<play::ArpMode>(std::clamp(choice(ids.arp.mode), 0, 7));
+        st.octaves = std::clamp(choice(ids.arp.octaves), 1, 4);
+        st.stepBeats = divisionBeats[static_cast<std::size_t>(std::clamp(choice(ids.arp.rate), 0, static_cast<int>(divisionBeats.size()) - 1))];
+        st.gate = value(ids.arp.gate);
+        st.swing = value(ids.arp.swing);
+        st.latch = flag(ids.arp.latch);
+        st.restart = flag(ids.arp.restart);
+        st.steps = std::clamp(choice(ids.arp.steps), 1, kMaxArpSteps);
+        st.pattern = std::clamp(choice(ids.arp.pattern) - 1, 0, kNumArpPatterns - 1);
+        st.chordMemory = flag(ids.chord.memory);
+        st.scaleLock = flag(ids.chord.scaleLock);
+        st.key = std::clamp(choice(ids.chord.key), 0, 11);
+        st.scale = choice(ids.chord.scale);
+        st.filter = choice(ids.chord.lockMode) == 1;
+        st.strumMs = value(ids.chord.strum);
+        st.strumDirection = std::clamp(choice(ids.chord.strumDirection), 0, 2);
+        st.clipOn = flag(ids.clip.on);
+        st.clipSlot = std::clamp(choice(ids.clip.slot) - 1, 0, kNumClips - 1);
+        st.clipFromKey = choice(ids.clip.trigger) == 1;
+        st.clipLatch = flag(ids.clip.latch);
+        st.clipLoop = flag(ids.clip.loop);
+        return st;
     }
 
     // Once per block: what other threads may look at.
@@ -723,6 +758,7 @@ void Engine::prepare(double sampleRate) {
         for (auto& effect : plan->fresh)
             if (effect != nullptr)
                 effect->prepare(s.sampleRate);
+    s.player.prepare(s.sampleRate);
     reset();
 }
 
@@ -757,6 +793,7 @@ void Engine::reset() {
     s.alternate = -1.0f;
     s.followerLevel = 0.0f;
     s.rng.seed(s.seed);
+    s.player.reset(s.seed);
     for (int k = 0; k < kNumLfos; ++k) {
         s.lfo[k].state = LfoState{};
         s.lfo[k].state.age = 1.0e12; // a shared LFO that no note has started yet runs without delay
@@ -804,6 +841,7 @@ void Engine::loadPatch(const Patch& patch) {
         impl_->store.set(i, patch.get(i));
     }
     setRoutes(patch.routes);
+    setPlayData(patch);
     for (int k = 0; k < kNumLfos; ++k)
         setLfoShape(k, patch.lfoShapes[static_cast<std::size_t>(k)]);
     for (int k = 0; k < kNumEnvs; ++k) {
@@ -1002,7 +1040,10 @@ void Engine::collectGarbage() {
     impl_->tuningSlot.collect();
     impl_->fxBin.collect();
     impl_->planBin.collect();
+    impl_->playData.collect();
 }
+
+void Engine::setPlayData(const Patch& patch) { impl_->playData.set(play::PlayData::fromPatch(patch)); }
 
 // --- Effects rack -------------------------------------------------------------------------------
 
@@ -1192,7 +1233,17 @@ void Engine::process(const ProcessArgs& args) noexcept {
     }
     s.takeHandoffs();
 
-    const auto& midi = args.midi;
+    // The play features turn the incoming events into the ones the voices play.
+    int generated = 0;
+    const bool sendOut = s.flag(s.ids.midiOut) && args.midiOut != nullptr;
+    Transport transport = args.transport;
+    transport.bpm = s.bpm; // a host without a tempo plays at 120
+    const int playCount = s.player.process(s.playSettings(), *s.playData.current(), transport, args.frames, args.midi,
+                                           s.playEvents, sendOut ? args.midiOut : nullptr,
+                                           sendOut ? args.midiOutCapacity : 0, generated);
+    if (args.midiOutCount != nullptr)
+        *args.midiOutCount = sendOut ? generated : 0;
+    const std::span<const MidiEvent> midi(s.playEvents, static_cast<std::size_t>(playCount));
     std::size_t next = 0;
     int pos = 0;
     while (pos < args.frames) {
