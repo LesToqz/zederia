@@ -4,6 +4,7 @@
 #include "zederia/Version.h"
 #include "zederia/bench/Bench.h"
 #include "zederia/content/Library.h"
+#include "zederia/midi/MidiFile.h"
 #include "zederia/params/ParamDocs.h"
 #include "zederia/patch/PatchIO.h"
 #include "zederia/render/OfflineRenderer.h"
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -42,6 +44,12 @@ Usage: zederia-cli <command> [options]
       --tempo BPM              tempo reported to the engine (default 120)
       --content DIR            factory content folder for "factory:" table and sample references
       --live-quality           render with the patch's realtime quality instead of its offline quality
+      --midi-out FILE.mid      also write the notes the arpeggiator, chord tools and clips made
+
+  clip import FILE.mid --patch IN --slot N --out OUT.zpreset
+                               Put a Standard MIDI File into clip slot N (1..8) of a patch
+  clip export --patch IN --slot N --out FILE.mid
+                               Write clip slot N of a patch as a Standard MIDI File
 
   validate-patch FILE          Check a patch; exit code 1 when it has errors
       --json                   print the result as JSON
@@ -207,6 +215,33 @@ int cmdRender(const Args& args) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return kFailed;
     }
+    if (args.has("midi-out")) { // the notes the arpeggiator, chord tools and clips made
+        zed::Clip made;
+        made.name = "Render";
+        made.tempo = settings.bpm;
+        const double beatsPerSample = settings.bpm / 60.0 / audio.sampleRate;
+        std::map<int, std::pair<double, double>> open; // key -> start, velocity
+        double last = 0.0;
+        for (const zed::SeqEvent& e : audio.midiOut) {
+            const double beat = static_cast<double>(e.sample) * beatsPerSample;
+            last = std::max(last, beat);
+            if (e.event.type == zed::MidiEvent::Type::NoteOn) {
+                open[e.event.number] = {beat, e.event.value};
+            } else if (e.event.type == zed::MidiEvent::Type::NoteOff) {
+                const auto it = open.find(e.event.number);
+                if (it != open.end()) {
+                    made.notes.push_back({it->second.first, std::max(beat - it->second.first, 1.0 / 960.0), e.event.number, it->second.second});
+                    open.erase(it);
+                }
+            }
+        }
+        made.bars = std::max(1.0, std::ceil(last / made.beatsPerBar));
+        if (!zed::writeFile(args.get("midi-out"), zed::midi::clipToFile(made), error)) {
+            std::fprintf(stderr, "error: %s\n", error.c_str());
+            return kFailed;
+        }
+        std::printf("wrote %s (%zu notes the play features made)\n", args.get("midi-out").c_str(), made.notes.size());
+    }
     const double peak = audio.peak();
     std::printf("wrote %s\n", args.get("out").c_str());
     std::printf("  %.3f s, %zu frames, %g Hz, %s-bit, %zu events\n", static_cast<double>(audio.left.size()) / audio.sampleRate,
@@ -215,6 +250,48 @@ int cmdRender(const Args& args) {
     std::printf("  audio hash %016llx, file hash %016llx\n", static_cast<unsigned long long>(audio.hash()),
                 static_cast<unsigned long long>(zed::fnv1a(wav.data(), wav.size())));
     return kOk;
+}
+
+// --- clip --------------------------------------------------------------------------------------
+
+int cmdClip(const Args& args) {
+    const std::string action = args.positional.empty() ? "" : args.positional[0];
+    double slot = 1;
+    if (!numberOption(args, "slot", 1, zed::kNumClips, slot))
+        return kUsage;
+    const auto index = static_cast<std::size_t>(slot) - 1;
+    zed::Patch patch;
+    if (!loadPatchArg(args.get("patch", "init"), patch))
+        return kFailed;
+    std::string error;
+    if (action == "import" && args.positional.size() == 2 && args.has("out")) {
+        std::vector<std::uint8_t> bytes;
+        zed::Clip clip;
+        if (!zed::readFile(args.positional[1], bytes, error) || !zed::midi::clipFromFile(bytes, clip, error)) {
+            std::fprintf(stderr, "error: %s\n", error.c_str());
+            return kFailed;
+        }
+        patch.clips[index] = clip;
+        if (!writeText(args.get("out"), zed::savePatch(patch)))
+            return kFailed;
+        std::printf("clip %zu: %zu notes, %g bars at %g bpm%s%s; wrote %s\n", index + 1, clip.notes.size(), clip.bars, clip.tempo,
+                    clip.key.empty() ? "" : ", ", clip.key.c_str(), args.get("out").c_str());
+        return kOk;
+    }
+    if (action == "export" && args.has("out")) {
+        if (patch.clips[index].empty()) {
+            std::fprintf(stderr, "error: clip slot %zu is empty\n", index + 1);
+            return kFailed;
+        }
+        if (!zed::writeFile(args.get("out"), zed::midi::clipToFile(patch.clips[index]), error)) {
+            std::fprintf(stderr, "error: %s\n", error.c_str());
+            return kFailed;
+        }
+        std::printf("wrote %s (%zu notes)\n", args.get("out").c_str(), patch.clips[index].notes.size());
+        return kOk;
+    }
+    std::fprintf(stderr, "error: use clip import FILE.mid --patch IN --slot N --out OUT, or clip export --patch IN --slot N --out FILE.mid\n");
+    return kUsage;
 }
 
 // --- validate-patch ----------------------------------------------------------------------------
@@ -414,6 +491,7 @@ int main(int argc, char** argv) {
         if (command == "table") return cmdTable(args);
         if (command == "texture") return cmdTexture(args);
         if (command == "content") return cmdContent(args);
+        if (command == "clip") return cmdClip(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return kFailed;

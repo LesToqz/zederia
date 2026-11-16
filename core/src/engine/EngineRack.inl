@@ -150,6 +150,8 @@ void applyStaged() {
             x.params = static_cast<int>(reg.effectTypes()[static_cast<std::size_t>(x.type)].params.size());
             x.moving = x.leaving = false;
             x.gTarget = plan.values[k][0] >= 0.5 ? 1.0f : 0.0f;
+            if (snapSmoothing)
+                x.g = x.gTarget; // the first block after a reset: the rack is in place, not fading in
             x.mix.aim(static_cast<float>(plan.values[k][1]), true);
             x.needsSet = x.snap = true;
             x.effect->setCurves(plan.hasCurve[k][0] ? plan.curves[k][0] : nullptr,
@@ -241,6 +243,7 @@ void rackTick() {
     for (int lane = 0; lane < kNumFxLanes; ++lane) {
         for (int n = 0; n < chainCount[lane]; ++n) {
             FxInstance& x = pool[chain[lane][n]];
+            idleCheck(x);
             if (frozen || x.moving || x.leaving)
                 continue;
             const int on = reg.fxSlotOn(lane, x.pos);
@@ -277,7 +280,9 @@ void rackNoteOn() {
             pool[chain[lane][n]].effect->noteOn();
 }
 
-// One effect on one run, in place.
+// One effect on one run, in place. Idling is decided at control ticks (on the fixed grid), and an
+// idle effect wakes at the exact sample where its input becomes audible: neither depends on the
+// host's block size, so renders stay identical for any block size.
 void runInstance(FxInstance& x, float* left, float* right, int frames) {
     if (x.g <= 0.0f && x.gTarget <= 0.0f) {
         if (!x.moving && !x.leaving)
@@ -285,16 +290,17 @@ void runInstance(FxInstance& x, float* left, float* right, int frames) {
         x.ran = false;
         return;
     }
-    float peakIn = 0.0f;
-    for (int s = 0; s < frames; ++s)
-        peakIn = std::max(peakIn, std::max(std::abs(left[s]), std::abs(right[s])));
+    int start = 0;
     if (x.idle) {
-        if (peakIn <= fx::kSilent && x.g >= x.gTarget) {
+        while (start < frames && std::abs(left[start]) <= fx::kSilent && std::abs(right[start]) <= fx::kSilent)
+            ++start;
+        if (start == frames && x.g >= x.gTarget) {
             x.ran = false;
             return;
         }
         x.idle = false;
         x.silent = 0;
+        x.peakIn = x.peakOut = 0.0f;
     }
     if (x.needsClear) {
         x.effect->clear();
@@ -303,33 +309,47 @@ void runInstance(FxInstance& x, float* left, float* right, int frames) {
     }
     if (x.needsSet)
         syncInstance(x);
+    left += start;
+    right += start;
+    frames -= start;
     float wetL[kInterval], wetR[kInterval], presence[kInterval];
-    float g = x.g;
+    float g = x.g, peakIn = x.peakIn;
     for (int s = 0; s < frames; ++s) {
         g = g < x.gTarget ? std::min(g + fxFadeStep, x.gTarget) : std::max(g - fxFadeStep, x.gTarget);
         presence[s] = g;
+        peakIn = std::max(peakIn, std::max(std::abs(left[s]), std::abs(right[s])));
         wetL[s] = left[s] * g;
         wetR[s] = right[s] * g;
     }
     x.g = g;
+    x.peakIn = peakIn;
     x.effect->process(wetL, wetR, frames);
-    float peakOut = 0.0f;
+    float peakOut = x.peakOut;
     for (int s = 0; s < frames; ++s) {
         const float m = x.mix.next() * presence[s];
         peakOut = std::max(peakOut, std::max(std::abs(wetL[s]), std::abs(wetR[s])));
         left[s] += m * (wetL[s] - left[s]);
         right[s] += m * (wetR[s] - right[s]);
     }
+    x.peakOut = peakOut;
     x.ran = true;
-    if (peakIn <= fx::kSilent && peakOut <= fx::kSilent && x.effect->mayIdle() && x.g >= x.gTarget) {
-        x.silent += frames;
+}
+
+// At a control tick: an effect whose input and output stayed silent for longer than it can hold
+// sound goes idle and costs nothing until its input returns.
+void idleCheck(FxInstance& x) {
+    if (x.idle || !x.ran)
+        return;
+    if (x.peakIn <= fx::kSilent && x.peakOut <= fx::kSilent && x.effect->mayIdle() && x.g >= x.gTarget) {
+        x.silent += kInterval;
         if (x.silent > x.effect->holdSamples() + kInterval) {
-            x.idle = true; // nothing it holds can still be heard: it costs nothing until input returns
+            x.idle = true;
             x.silent = 0;
         }
     } else {
         x.silent = 0;
     }
+    x.peakIn = x.peakOut = 0.0f;
 }
 
 void runLane(int lane, float* left, float* right, int frames) {
@@ -351,7 +371,10 @@ void runRack(float (&bus)[3][2][kInterval], bool split, float* left, float* righ
         if (fxGone && !fxCleared) {
             for (FxInstance& x : pool)
                 if (x.effect != nullptr)
-                    x.needsClear = true;
+ {
+                    x.needsClear = true; // silent and transparent: they fade back in when FX return
+                    x.g = 0.0f;
+                }
             fxCleared = true;
         }
         for (int b = 0; b < 3; ++b)
@@ -430,14 +453,6 @@ void outputStage(float* left, float* right, int frames) {
     }
     if (protection == 1) {
         float* io[2] = {left, right};
-        if (clipFactor != oversample || clipDesign != decimator) {
-            clipFactor = oversample;
-            clipDesign = decimator;
-            for (int c = 0; c < 2; ++c) {
-                clipUp[c].reset();
-                clipDown[c].reset();
-            }
-        }
         for (int c = 0; c < 2; ++c) {
             if (clipFactor <= 1) {
                 for (int s = 0; s < frames; ++s)

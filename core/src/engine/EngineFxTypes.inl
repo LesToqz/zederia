@@ -30,7 +30,8 @@ struct FxInstance {
     bool moving = false;            // has to move: fades out, moves, fades back in
     bool needsClear = false, needsSet = true, snap = true;
     bool idle = false, ran = false;
-    int silent = 0;
+    int silent = 0;                       // samples of silence, counted at control ticks
+    float peakIn = 0.0f, peakOut = 0.0f; // since the last control tick
     fx::Ramp mix;
     double cached[kNumFxSlotParams] = {};
 };

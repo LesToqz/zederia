@@ -357,6 +357,7 @@ RenderResult renderOffline(const Patch& patch, std::span<const SeqEvent> events,
 
     std::vector<MidiEvent> block;
     block.reserve(256);
+    std::vector<MidiEvent> midiOut(2048);
     std::size_t next = 0;
     Transport transport;
     transport.bpm = settings.bpm;
@@ -371,7 +372,14 @@ RenderResult renderOffline(const Patch& patch, std::span<const SeqEvent> events,
             ++next;
         }
         transport.ppqPosition = static_cast<double>(pos) / engine.sampleRate() * settings.bpm / 60.0;
-        engine.process({result.left.data() + pos, result.right.data() + pos, frames, block, transport});
+        ProcessArgs args{result.left.data() + pos, result.right.data() + pos, frames, block, transport};
+        args.midiOut = midiOut.data();
+        args.midiOutCapacity = static_cast<int>(midiOut.size());
+        int made = 0;
+        args.midiOutCount = &made;
+        engine.process(args);
+        for (int i = 0; i < made; ++i)
+            result.midiOut.push_back({pos + midiOut[static_cast<std::size_t>(i)].offset, midiOut[static_cast<std::size_t>(i)]});
     }
     return result;
 }

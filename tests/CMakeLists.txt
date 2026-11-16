@@ -25,6 +25,10 @@ add_executable(zederia_tests
     core/test_modulation.cpp
     core/test_voice.cpp
     core/test_patches.cpp
+    core/test_fx.cpp
+    core/test_rack.cpp
+    core/test_output.cpp
+    core/test_play.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE

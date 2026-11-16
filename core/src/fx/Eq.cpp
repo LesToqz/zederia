@@ -165,35 +165,92 @@ flt::Settings filterSettings(const double* v) {
     return s;
 }
 
+// A change of filter type or of quality makes the voice filter start afresh; the effect keeps a
+// second filter, starts it with the new settings, lets it settle and crossfades to it.
 class FilterFx final : public Effect {
 public:
+    static constexpr int kWarmUp = 64, kFade = 256;
+
     void prepare(double sampleRate) override {
         sampleRate_ = sampleRate;
         const int length = flt::delayLengthFor(sampleRate);
-        memory_.assign(static_cast<std::size_t>(2 * length), 0.0f);
-        filter_.prepare(sampleRate, memory_.data(), length);
+        for (int i = 0; i < 2; ++i) {
+            memory_[i].assign(static_cast<std::size_t>(2 * length), 0.0f);
+            filter_[i].prepare(sampleRate, memory_[i].data(), length);
+        }
         clear();
     }
     void clear() noexcept override {
-        filter_.reset();
+        for (auto& f : filter_)
+            f.reset();
         sinceAim_ = 0;
         aimed_ = false;
+        fade_ = 0;
     }
     void set(const double* v, const Context& ctx, bool snap) noexcept override {
         halfBands_ = ctx.halfBands;
+        const flt::Settings s = filterSettings(v);
+        const int oversample = std::clamp(ctx.oversample, 1, 8);
         if (aimed_)
-            filter_.settle();
-        filter_.aim(filterSettings(v), kMaxFrames, std::clamp(ctx.oversample, 1, 8), snap);
+            for (auto& f : filter_)
+                f.settle();
+        const bool restart = s.type != type_ || oversample != oversample_;
+        if (snap || !started_) {
+            filter_[active_].aim(s, kMaxFrames, oversample, true);
+            fade_ = 0;
+        } else if (restart && fade_ == 0) {
+            const int next = 1 - active_;
+            filter_[next].reset();
+            filter_[next].aim(s, kMaxFrames, oversample, true);
+            flt::Settings old = s; // the outgoing filter keeps its type and rate while it fades
+            old.type = type_;
+            filter_[active_].aim(old, kMaxFrames, oversample_, false);
+            fade_ = kWarmUp + kFade;
+        } else {
+            if (fade_ > 0) {
+                flt::Settings old = s;
+                old.type = outgoingType_;
+                filter_[active_].aim(old, kMaxFrames, outgoingRate_, false);
+                filter_[1 - active_].aim(s, kMaxFrames, oversample, false);
+            } else {
+                filter_[active_].aim(s, kMaxFrames, oversample, false);
+            }
+        }
+        if (fade_ > 0 && restart) {
+            outgoingType_ = type_;
+            outgoingRate_ = oversample_;
+        }
+        type_ = s.type;
+        oversample_ = oversample;
+        started_ = true;
         aimed_ = true;
         sinceAim_ = 0;
     }
     void process(float* left, float* right, int frames) noexcept override {
         if (halfBands_ == nullptr)
             return;
-        filter_.process(left, right, frames, nullptr, *halfBands_);
+        if (fade_ > 0) {
+            float l2[kMaxFrames], r2[kMaxFrames];
+            std::copy(left, left + frames, l2);
+            std::copy(right, right + frames, r2);
+            filter_[1 - active_].process(l2, r2, frames, nullptr, *halfBands_);
+            filter_[active_].process(left, right, frames, nullptr, *halfBands_);
+            for (int s = 0; s < frames; ++s) {
+                const int remaining = fade_ - s;
+                const float w = remaining > kFade ? 0.0f : 1.0f - static_cast<float>(std::max(remaining, 0)) / kFade;
+                left[s] += w * (l2[s] - left[s]);
+                right[s] += w * (r2[s] - right[s]);
+            }
+            fade_ = std::max(fade_ - frames, 0);
+            if (fade_ == 0)
+                active_ = 1 - active_;
+        } else {
+            filter_[active_].process(left, right, frames, nullptr, *halfBands_);
+        }
         sinceAim_ += frames;
         if (aimed_ && sinceAim_ >= kMaxFrames) {
-            filter_.settle(); // the ramps have arrived: hold them there until the next change
+            for (auto& f : filter_)
+                f.settle(); // the ramps have arrived: hold them there until the next change
             aimed_ = false;
         }
     }
@@ -201,11 +258,12 @@ public:
 
 private:
     double sampleRate_ = 48000.0;
-    std::vector<float> memory_;
-    flt::VoiceFilter filter_;
+    std::vector<float> memory_[2];
+    flt::VoiceFilter filter_[2];
     const dsp::DecimatorDesign* halfBands_ = nullptr;
-    int sinceAim_ = 0;
-    bool aimed_ = false;
+    int active_ = 0, fade_ = 0, sinceAim_ = 0;
+    int type_ = -1, oversample_ = 0, outgoingType_ = -1, outgoingRate_ = 1;
+    bool aimed_ = false, started_ = false;
 };
 
 } // namespace

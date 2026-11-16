@@ -40,7 +40,7 @@ public:
 
     void prepare(double sampleRate) override {
         sampleRate_ = sampleRate;
-        dcCoef_ = static_cast<float>(1.0 - 2.0 * kPiD * 5.0 / sampleRate);
+        dcCoef_ = static_cast<float>(1.0 - 2.0 * kPiD * 10.0 / sampleRate); // 10 Hz: settles within a quarter second
         clear();
     }
 
@@ -200,7 +200,7 @@ private:
             return 4.0f * std::abs(u - 0.5f) - 1.0f;
         }
         case SineFold: return std::sin(x);
-        case Rectify: return std::abs(x);
+        case Rectify: return std::tanh(std::abs(x)); // full-wave, bounded
         case Asymmetric: return x >= 0.0f ? std::tanh(x) : 2.0f * std::tanh(0.5f * x);
         case SineShaper: return std::sin(std::clamp(x, -1.5707963f, 1.5707963f));
         case Fuzz: {

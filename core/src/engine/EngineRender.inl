@@ -387,6 +387,22 @@
             for (auto& v : voices)
                 if (v.active)
                     renderVoice(v, out, frames, split);
+        if (duckState != 0) {
+            // A change of quality: the voices fade out, the rates switch while they are silent, and
+            // after a short wait for the new filters to settle they fade back in.
+            constexpr float step = 1.0f / 256.0f;
+            const float target = duckState == 1 ? 0.0f : 1.0f;
+            float duck = qualityDuck;
+            for (int s = 0; s < frames; ++s) {
+                duck = duck < target ? std::min(duck + step, target) : std::max(duck - step, target);
+                const float g = std::max(duck, 0.0f);
+                for (int b = 0; b < (split ? 3 : 1); ++b) {
+                    out[b][0][s] *= g;
+                    out[b][1][s] *= g;
+                }
+            }
+            qualityDuck = duck;
+        }
         if (followerUsed) {
             // The envelope follower hears the voices before the effects, or the side chain.
             float level = followerLevel;
@@ -409,6 +425,15 @@
         }
         runRack(out, split, left, right, frames);
         outputStage(left, right, frames);
+        if (duckState == 1 && (qualityDuck <= 0.0f || activeCount == 0)) {
+            appliedQuality = pendingQuality >= 0 ? pendingQuality : appliedQuality;
+            pendingQuality = -1;
+            duckState = 2;
+            qualityDuck = -0.25f; // 64 samples of silence while the new oversampling filters settle
+            refresh();           // the voices switch rates now, while they are silent
+        } else if (duckState == 2 && qualityDuck >= 1.0f) {
+            duckState = 0;
+        }
         for (auto& o : osc)
             o.fadeLeft = std::max(o.fadeLeft - frames, 0);
         texture.fadeLeft = std::max(texture.fadeLeft - frames, 0);

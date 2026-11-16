@@ -60,6 +60,9 @@ struct RenderSettings {
 struct RenderResult {
     std::vector<float> left, right;
     double sampleRate = 48000.0;
+    // The notes the play features made (arpeggiator, chord tools, clips) while global.midi_out is
+    // on, at their absolute sample positions.
+    std::vector<SeqEvent> midiOut;
     std::uint64_t hash() const; // of the sample data
     float peak() const;
 };

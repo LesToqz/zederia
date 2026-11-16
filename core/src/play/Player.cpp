@@ -305,7 +305,7 @@ void Player::arpAdd(int key, float velocity, std::int64_t at) noexcept {
         held_[heldCount_++] = {key, velocity, order_++};
     seqDirty_ = true;
     if (newPhrase && (s_.restart || !running_)) {
-        if (s_.restart || !running_) {
+        if (s_.restart) { // the pattern starts over; without Restart it goes on where it was
             cursor_ = laneStep_ = chordStep_ = 0;
             walkDir_ = 1;
         }
@@ -362,15 +362,8 @@ void Player::arpStep(std::int64_t at, std::int64_t stepLength) noexcept {
         lastStepCount_ = 0;
         return;
     }
-    if (step.state == StepState::Tie) { // the notes of the last step hold on through this one
-        const std::int64_t until = at + gateLength(stepLength);
-        for (int n = 0; n < lastStepCount_; ++n)
-            for (int p = 0; p < pendingCount_; ++p)
-                if (pending_[p].origin == kArp && pending_[p].event.type == MidiEvent::Type::NoteOff &&
-                    pending_[p].event.number == lastStepNotes_[n])
-                    pending_[p].at = std::max(pending_[p].at, until);
+    if (step.state == StepState::Tie) // the note before holds through it (see the lookahead below)
         return;
-    }
     // Which notes this step plays.
     int keys[128];
     float velocities[128];
@@ -421,6 +414,11 @@ void Player::arpStep(std::int64_t at, std::int64_t stepLength) noexcept {
     }
     const int ratchet = std::clamp(step.ratchet, 1, 4);
     const std::int64_t sub = std::max<std::int64_t>(stepLength / ratchet, 1);
+    // Tie steps that follow keep the last note of this step sounding through them.
+    int ties = 0;
+    while (ties < laneLength - 1 &&
+           data_->steps[std::clamp(s_.pattern, 0, kNumArpPatterns - 1)][(laneStep_ + ties) % laneLength].state == StepState::Tie)
+        ++ties;
     lastStepCount_ = 0;
     for (int i = 0; i < count; ++i) {
         const int key = keys[i] + step.transpose;
@@ -429,7 +427,8 @@ void Player::arpStep(std::int64_t at, std::int64_t stepLength) noexcept {
             continue;
         for (int r = 0; r < ratchet; ++r) {
             const std::int64_t on = at + sub * r;
-            startNote(key, velocity, on, on + gateLength(sub), kArp);
+            const std::int64_t held = r == ratchet - 1 ? stepLength * ties : 0;
+            startNote(key, velocity, on, on + held + gateLength(sub), kArp);
         }
         if (lastStepCount_ < static_cast<int>(std::size(lastStepNotes_)))
             lastStepNotes_[lastStepCount_++] = key;
@@ -521,18 +520,22 @@ void Player::runClip(const Transport& transport, std::int64_t a, std::int64_t b)
         beatB = transport.ppqPosition + static_cast<double>(b - now_) / samplesPerBeat;
         origin = now_ - static_cast<std::int64_t>(std::llround(transport.ppqPosition * samplesPerBeat));
     }
-    const double firstPass = std::floor(beatA / length), lastPass = std::floor(beatB / length);
+    // A note belongs to this stretch when its sample position does: a position is computed the same
+    // way in every block, so a note on a block boundary plays exactly once.
+    const double firstPass = std::floor(beatA / length) - 1.0, lastPass = std::floor(beatB / length) + 1.0;
     for (double pass = std::max(firstPass, 0.0); pass <= lastPass; pass += 1.0) {
         if (!s_.clipLoop && pass > 0.0)
             break;
         for (const ClipNote& note : clip.notes) {
+            if (note.start >= length)
+                continue;
             const double start = pass * length + note.start;
-            if (note.start >= length || start < beatA || start >= beatB)
+            const auto at = origin + static_cast<std::int64_t>(std::ceil(start * samplesPerBeat - 1.0e-6));
+            if (at < a || at >= b)
                 continue;
             const int key = note.key + transpose;
             if (key < 0 || key > 127)
                 continue;
-            const auto at = std::clamp(origin + static_cast<std::int64_t>(std::ceil(start * samplesPerBeat - 1.0e-6)), a, b - 1);
             const double end = std::min(note.start + note.length, s_.clipLoop ? note.start + note.length : length);
             const auto off = origin + static_cast<std::int64_t>(std::ceil((pass * length + end) * samplesPerBeat - 1.0e-6));
             startNote(key, static_cast<float>(note.velocity), at, off, kClip);

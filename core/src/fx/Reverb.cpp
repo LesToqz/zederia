@@ -141,10 +141,18 @@ public:
     }
 
     void process(float* left, float* right, int frames) noexcept override {
+        const float erStart = erScale_;
+        float lengthStart[kLines];
+        std::copy(std::begin(length_), std::end(length_), lengthStart);
         // Line lengths glide toward their targets (a change of Size bends the tail, never clicks).
         if (lengthsMoving_) {
             bool moving = false;
             const float k = std::min(1.0f, static_cast<float>(frames) * lengthGlide_);
+            erScale_ += (erTarget_ - erScale_) * k; // early reflections move with the room
+            if (std::abs(erTarget_ - erScale_) > 1.0e-4f)
+                moving = true;
+            else
+                erScale_ = erTarget_;
             for (int i = 0; i < kLines; ++i) {
                 length_[i] += (lengthTarget_[i] - length_[i]) * k;
                 if (std::abs(lengthTarget_[i] - length_[i]) > 0.01f)
@@ -162,23 +170,24 @@ public:
             lfoPhase_[i] += lfoRate_[i] / sampleRate_ * frames;
             lfoPhase_[i] -= std::floor(lfoPhase_[i]);
             const float b = modDepth_ > 0.0 ? static_cast<float>(modDepth_ * std::sin(2.0 * kPiD * lfoPhase_[i])) : 0.0f;
-            readA[i] = length_[i] + a;
-            readStep[i] = (b - a) / static_cast<float>(frames);
+            readA[i] = lengthStart[i] + a; // both the glide of the length and the modulation move per sample
+            readStep[i] = (length_[i] + b - readA[i]) / static_cast<float>(frames);
         }
         const ModeShape& shape = kModes[mode_];
         const float msToSamples = static_cast<float>(sampleRate_ * 0.001);
         for (int s = 0; s < frames; ++s) {
             const float gainIn = input_.next();
             const float pre = predelaySamples_.next();
+            const float er = erStart + (erScale_ - erStart) * static_cast<float>(s) / static_cast<float>(frames);
             float x[2] = {left[s], right[s]};
             float early[2] = {0.0f, 0.0f};
             for (int c = 0; c < 2; ++c) {
-                predelay_[c].push(x[c]);
-                float y = pre >= 1.0f ? predelay_[c].read(pre, false) : x[c];
+                float y = pre >= 1.0f ? predelay_[c].read(pre, false) : x[c]; // read before the push: exact delay
                 y = highCut_[c].lowpass(lowCut_[c].highpass(y));
                 if (shape.earlyLevel > 0.0f)
                     for (int t = 0; t < kTaps; ++t)
-                        early[c] += kEarlyGain[t] * predelay_[c].read(std::max(pre, 1.0f) + shape.earlyMs[c][t] * erScale_ * msToSamples, false);
+                        early[c] += kEarlyGain[t] * predelay_[c].read(std::max(pre, 1.0f) + shape.earlyMs[c][t] * er * msToSamples, false);
+                predelay_[c].push(x[c]);
                 // Input diffusion: Schroeder all-passes.
                 for (int k = 0; k < kDiffusers; ++k) {
                     DelayLine& d = diffusers_[c][k];
@@ -239,7 +248,9 @@ private:
     void updateShape(bool snap) noexcept {
         const ModeShape& shape = kModes[mode_];
         const double scale = std::exp2((std::clamp(size_, 0.0, 1.0) - 0.5) * 2.0); // 0.5x .. 2x
-        erScale_ = static_cast<float>(std::sqrt(scale));
+        erTarget_ = static_cast<float>(std::sqrt(scale));
+        if (snap)
+            erScale_ = erTarget_;
         const double ms = sampleRate_ * 0.001;
         for (int i = 0; i < kLines; ++i) {
             const double t = static_cast<double>(i) / (kLines - 1);
@@ -285,7 +296,7 @@ private:
     DelayLine diffusers_[2][kDiffusers];
     DelayLine predelay_[2];
     int diffLength_[2][kDiffusers] = {};
-    float diffusion_ = 0.65f, erScale_ = 1.0f;
+    float diffusion_ = 0.65f, erScale_ = 1.0f, erTarget_ = 1.0f;
     float length_[kLines] = {}, lengthTarget_[kLines] = {}, lengthGlide_ = 0.0001f;
     float lossB_[kLines] = {}, lossP_[kLines] = {}, absorb_[kLines] = {};
     float outL_[kLines] = {}, outR_[kLines] = {}, inSign_[kLines] = {};

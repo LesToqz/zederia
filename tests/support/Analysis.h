@@ -120,6 +120,18 @@ inline float largestJump(const std::vector<float>& x, std::size_t from, std::siz
     return jump;
 }
 
+// Where the largest sample-to-sample jump in [from, to) is.
+inline std::size_t largestJumpAt(const std::vector<float>& x, std::size_t from, std::size_t to) {
+    std::size_t at = from;
+    float jump = -1.0f;
+    for (std::size_t i = std::max<std::size_t>(from, 1); i < to && i < x.size(); ++i)
+        if (std::abs(x[i] - x[i - 1]) > jump) {
+            jump = std::abs(x[i] - x[i - 1]);
+            at = i;
+        }
+    return at;
+}
+
 inline double rmsOf(const std::vector<float>& x, std::size_t from, std::size_t to) {
     double sum = 0.0;
     std::size_t n = 0;

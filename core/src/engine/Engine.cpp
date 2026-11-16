@@ -74,6 +74,9 @@ struct Engine::Impl {
     bool dirty = true;         // a parameter or a piece of structure changed since refresh() last ran
     bool derivedDirty = true;  // pe changed since derive() last ran
     bool snapSmoothing = true; // no glides for the first block after a reset
+    // A change of quality while notes play: the voices duck around the switch.
+    int appliedQuality = 1, pendingQuality = -1, duckState = 0; // 0 none, 1 fading out, 2 fading in
+    float qualityDuck = 1.0f;
     double smoothing = 0.1;    // control-rate one-pole coefficient of the parameter smoothing
     float controllerSmoothing = 0.1f;
     float warmTilt = 0.4f; // one-pole coefficient of the Warmth tilt (3.5 kHz)
@@ -193,8 +196,9 @@ struct Engine::Impl {
     int protection = 0;
     fx::PeakLimiter outLimiter;
     dsp::DecimatorState clipUp[2], clipDown[2];
-    int clipFactor = 1;
-    const dsp::DecimatorDesign* clipDesign = nullptr;
+    // The protection clipper runs at a fixed 4x in every quality mode, so it never switches rate.
+    int clipFactor = 4;
+    const dsp::DecimatorDesign* clipDesign = &dsp::decimatorDesign(true);
     // For other threads.
     std::atomic<std::uint8_t> fxState[kRackSlots];
     std::atomic<float> fxMeterValue[kRackSlots];
@@ -345,7 +349,18 @@ struct Engine::Impl {
     // Everything that is not a continuous value: switches, choices, counts, the route lists. Runs
     // at the start of a block in which something changed.
     void refresh() {
-        const int quality = std::clamp(choice(offlineSeen ? ids.qualityOffline : ids.quality), 0, 3);
+        int quality = std::clamp(choice(offlineSeen ? ids.qualityOffline : ids.quality), 0, 3);
+        if (quality != appliedQuality && !snapSmoothing && activeCount > 0) {
+            // Notes are playing: their oversampling filters cannot change rate without a click. The
+            // voices fade out first (render() switches when they are silent) and fade back in.
+            pendingQuality = quality;
+            if (duckState != 1)
+                duckState = 1;
+            quality = appliedQuality;
+        } else {
+            appliedQuality = quality;
+            pendingQuality = -1;
+        }
         const int newOversample = 1 << quality; // Draft 1x, Standard 2x, High 4x, Ultra 8x
         decimator = &dsp::decimatorDesign(quality >= 2);
         const bool qualityChanged = newOversample != oversample;
@@ -363,6 +378,11 @@ struct Engine::Impl {
             outLimiter.reset();
         protection = newProtection;
         fxMixTarget = flag(ids.fxOff) ? 0.0f : 1.0f;
+        if (snapSmoothing) { // the first block after a reset: no fades
+            fxMix = fxMixTarget;
+            for (int b = 0; b < 3; ++b)
+                sendRamp[b].aim(static_cast<float>(value(ids.fxBalance[b])), true);
+        }
         requestBRouting(std::clamp(choice(ids.fxBRouting), 0, 1));
 
         bool relayout[kOscCount] = {};
@@ -821,6 +841,9 @@ void Engine::reset() {
         b.aim(b.target, true);
     s.dcX[0] = s.dcX[1] = s.dcY[0] = s.dcY[1] = 0.0f;
     s.outLimiter.reset();
+    s.duckState = 0;
+    s.pendingQuality = -1;
+    s.qualityDuck = 1.0f;
     for (int c = 0; c < 2; ++c) {
         s.clipUp[c].reset();
         s.clipDown[c].reset();

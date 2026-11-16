@@ -50,8 +50,12 @@ public:
     void set(const double* v, const Context& ctx, bool snap) noexcept override {
         voices_ = std::clamp(static_cast<int>(v[Voices]), 2, kMaxVoices);
         rateHz_ = static_cast<int>(v[Sync]) != 0 ? syncedHz(static_cast<int>(v[Division]), ctx.bpm) : v[Rate];
-        delay1_.aim(static_cast<float>(v[Delay1]), snap);
-        delay2_.aim(static_cast<float>(v[Delay2]), snap);
+        delayTarget_[0] = static_cast<float>(v[Delay1]);
+        delayTarget_[1] = static_cast<float>(v[Delay2]);
+        if (snap) {
+            delayNow_[0] = delayTarget_[0];
+            delayNow_[1] = delayTarget_[1];
+        }
         depth_.aim(static_cast<float>(v[Depth]), snap);
         feedback_.aim(static_cast<float>(std::min(v[Feedback], 0.95)), snap);
         highPass_ = static_cast<int>(v[FilterType]) == 1;
@@ -63,14 +67,16 @@ public:
         const int n = voices_;
         const float msToSamples = static_cast<float>(sampleRate_ * 0.001);
         // Each voice's delay at both ends of the call; straight lines in between.
-        const float d1a = delay1_.now, d2a = delay2_.now, deptha = depth_.now, fba = feedback_.now;
+        // The delay times glide slowly (about 60 ms), like tape: a new time bends the pitch, never clicks.
+        const float d1a = delayNow_[0], d2a = delayNow_[1], deptha = depth_.now, fba = feedback_.now;
+        const float glide = 1.0f - std::exp(-static_cast<float>(frames) / static_cast<float>(0.06 * sampleRate_));
+        for (float& d : delayNow_)
+            d += (delayTarget_[&d - delayNow_] - d) * glide;
         for (int s = 0; s < frames; ++s) {
-            delay1_.next();
-            delay2_.next();
             depth_.next();
             feedback_.next();
         }
-        const float d1b = delay1_.now, d2b = delay2_.now, depthb = depth_.now, fbb = feedback_.now;
+        const float d1b = delayNow_[0], d2b = delayNow_[1], depthb = depth_.now, fbb = feedback_.now;
         float delayStart[kMaxVoices], delayStep[kMaxVoices], pan[kMaxVoices][2];
         int side[kMaxVoices];
         int perSide[3] = {0, 0, 0};
@@ -101,8 +107,6 @@ public:
         float fb = fba;
         const float fbStep = (fbb - fba) / static_cast<float>(frames);
         for (int s = 0; s < frames; ++s) {
-            line_[0].push(left[s] + feedbackState_[0]);
-            line_[1].push(right[s] + feedbackState_[1]);
             float out[2] = {0.0f, 0.0f}, loop[2] = {0.0f, 0.0f};
             for (int v = 0; v < n; ++v) {
                 const double d = delayStart[v] + delayStep[v] * static_cast<float>(s);
@@ -118,6 +122,8 @@ public:
                 if (side[v] != 0)
                     loop[1] += x;
             }
+            line_[0].push(left[s] + feedbackState_[0]); // after the reads: the delays are exact
+            line_[1].push(right[s] + feedbackState_[1]);
             for (int c = 0; c < 2; ++c)
                 feedbackState_[c] = damp_[c].lowpass(softSat(loop[c] * fbNorm[c] * fb));
             fb += fbStep;
@@ -136,7 +142,8 @@ private:
     bool highPass_ = false, cubic_ = true;
     DelayLine line_[2];
     double phase_[kMaxVoices] = {};
-    Ramp delay1_, delay2_, depth_, feedback_;
+    float delayNow_[2] = {6.0f, 14.0f}, delayTarget_[2] = {6.0f, 14.0f};
+    Ramp depth_, feedback_;
     float feedbackState_[2] = {};
     OnePole damp_[2];
     Svf wet_[2];
@@ -193,9 +200,8 @@ public:
             float fb = fbStart;
             for (int s = 0; s < frames; ++s) {
                 const float x = io[c][s];
-                line_[c].push(x + fb * last_[c]);
-                const float y = line_[c].read(delayA[c] + step * static_cast<float>(s), cubic_);
-                last_[c] = softSat(y);
+                const float y = line_[c].read(delayA[c] + step * static_cast<float>(s), cubic_); // before the push: exact delay
+                line_[c].push(x + fb * softSat(y));
                 io[c][s] = 0.5f * (x + y);
                 fb += fbStep;
             }
