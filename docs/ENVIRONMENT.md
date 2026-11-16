@@ -41,8 +41,10 @@ The choice is yours and is needed before distribution.
 ## Smoke test (cmake/smoke, built in build/_smoke)
 Plug-in (VST3 and Standalone), console program and Catch2 test all built and ran in Release. Configure 9 s (first run 108 s including the JUCE fetch), build 201 s with 3 jobs.
 
-## Validator
+## Validators
 pluginval v1.0.4 is in `%LOCALAPPDATA%\Programs\Zederia\tools\pluginval\pluginval.exe`; use `--validate-in-process` (`scripts/test.ps1 -Pluginval` does this at strictness 10).
+
+clap-validator 0.4.1 (the Windows build of its release `0.4.1-127-g152b982`, installed in milestone 4) is in `%LOCALAPPDATA%\Programs\Zederia\tools\clap-validator\clap-validator.exe`; `scripts/test.ps1 -ClapValidator` runs `validate` on the built CLAP and writes the log to `build\<preset>\clap-validator.log`. It logs to standard error, so the script starts it with `Start-Process` and redirects both streams.
 
 ## Development install locations (no administrator rights)
 - VST3: `%LOCALAPPDATA%\Programs\Common\VST3\`
