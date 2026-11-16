@@ -1,6 +1,7 @@
 #include "../support/TestUtil.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "zederia/midi/MidiFile.h"
 #include "zederia/rt/AudioThreadGuard.h"
 #include "zederia/util/Math.h"
 
@@ -99,6 +100,8 @@ TEST_CASE("plug-in: state survives a save and restore", "[plugin][state]") {
     {
         ZederiaProcessor first;
         const LoadResult loaded = first.loadPatchJson(example);
+        for (const auto& issue : loaded.issues)
+            UNSCOPED_INFO(issue.path << ": " << issue.message);
         REQUIRE(loaded.ok());
         first.hostParameter(idx("osc1.pan"))->setValueNotifyingHost(0.25f);
         first.setNormalizedFromUi(idx("global.polyphony"), 0.0f);
@@ -411,4 +414,201 @@ TEST_CASE("plug-in: the temporary editor offers the tables and textures", "[plug
     host.run(20);
     CHECK(host.peak(2400) > 0.02f);
     base.reset();
+}
+
+// --- Milestone 4: MIDI out and thru, MIDI learn, programs, the rack, offline quality ---------------
+
+namespace {
+
+// Runs blocks and keeps what the processor leaves in the host's MIDI buffer.
+std::vector<juce::MidiMessage> runCapturing(Host& host, int blocks) {
+    std::vector<juce::MidiMessage> out;
+    for (int b = 0; b < blocks; ++b) {
+        host.buffer.clear();
+        host.processor.processBlock(host.buffer, host.midi);
+        for (const auto metadata : host.midi)
+            out.push_back(metadata.getMessage());
+        host.midi.clear();
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("plug-in: the arpeggiator's notes go to the host; MIDI thru passes the input", "[plugin][midi]") {
+    Host host;
+    REQUIRE(host.processor.loadPatchJson("{\"format\":\"zederia.patch\",\"version\":1,\"arp\":{\"on\":true}}").ok());
+    host.run(1);
+    host.midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+    host.midi.addEvent(juce::MidiMessage::noteOn(1, 67, 0.8f), 0);
+    const auto made = runCapturing(host, 30); // about 0.3 s: three sixteenths at 120 bpm
+    int ons = 0;
+    for (const auto& m : made) {
+        ons += m.isNoteOn() ? 1 : 0;
+        CHECK((m.isNoteOn() || m.isNoteOff()));
+    }
+    CHECK(ons >= 2);
+
+    // Thru: the incoming controller comes back out unchanged.
+    host.processor.setNormalizedFromUi(idx("global.midi_thru"), 1.0f);
+    host.run(1);
+    host.midi.addEvent(juce::MidiMessage::controllerEvent(3, 20, 99), 17);
+    bool found = false;
+    for (const auto& m : runCapturing(host, 1))
+        found = found || (m.isController() && m.getControllerNumber() == 20 && m.getControllerValue() == 99 && m.getChannel() == 3);
+    CHECK(found);
+}
+
+TEST_CASE("plug-in: MIDI learn binds a controller, which then moves the parameter", "[plugin][midi]") {
+    rt::resetViolations();
+    Host host;
+    const int cutoff = idx("filter1.cutoff");
+    host.processor.startMidiLearn(cutoff);
+    host.midi.addEvent(juce::MidiMessage::controllerEvent(2, 74, 64), 5);
+    host.run(1);
+    host.processor.serviceMessageThread();
+    CHECK(host.processor.midiLearnTarget() == -1);
+    REQUIRE(host.processor.ccMap().bindings.size() == 1);
+    CHECK(host.processor.ccMap().bindings[0].controller == 74);
+    CHECK(host.processor.ccMap().bindings[0].param == "filter1.cutoff");
+    host.midi.addEvent(juce::MidiMessage::controllerEvent(1, 74, 127), 0);
+    host.run(1);
+    CHECK(host.processor.plainValue(cutoff) == Approx(host.processor.effectiveDef(cutoff).max).epsilon(1e-6));
+    host.midi.addEvent(juce::MidiMessage::controllerEvent(9, 74, 0), 0);
+    host.run(1);
+    CHECK(host.processor.plainValue(cutoff) == Approx(host.processor.effectiveDef(cutoff).min).epsilon(1e-6));
+    host.processor.serviceMessageThread(); // tells the host
+    CHECK(rt::violationCount() == 0);
+
+    // The map is part of the host project, and saves and loads on its own.
+    juce::MemoryBlock state;
+    host.processor.getStateInformation(state);
+    ZederiaProcessor restored;
+    restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(restored.ccMap() == host.processor.ccMap());
+    CcMap reloaded;
+    std::vector<Issue> issues;
+    REQUIRE(loadCcMap(saveCcMap(host.processor.ccMap()), reloaded, issues));
+    CHECK(reloaded == host.processor.ccMap());
+    CHECK_FALSE(loadCcMap("{\"format\":\"zederia.ccmap\",\"bindings\":[{\"cc\":300,\"param\":\"filter1.cutoff\"}]}", reloaded, issues));
+}
+
+TEST_CASE("plug-in: a program change loads a preset from the program list", "[plugin][programs]") {
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                         .getChildFile("zederia-programs-" + juce::String(juce::Time::currentTimeMillis()) + "-" +
+                                       juce::String(juce::Random::getSystemRandom().nextInt(1000000)));
+    REQUIRE(dir.createDirectory());
+    std::vector<std::string> files;
+    for (const char* name : {"First", "Second"}) {
+        const auto file = dir.getChildFile(juce::String(name) + ".zpreset");
+        Patch p;
+        p.meta.name = name;
+        REQUIRE(file.replaceWithText(savePatch(p)));
+        files.push_back(file.getFullPathName().toStdString());
+    }
+    Host host;
+    host.processor.setProgramList(files);
+    CHECK(host.processor.getNumPrograms() == 2);
+    CHECK(host.processor.getProgramName(1) == "Second");
+    host.midi.addEvent(juce::MidiMessage::programChange(1, 1), 0);
+    host.run(1);
+    host.processor.serviceMessageThread();
+    CHECK(host.processor.getCurrentProgram() == 1);
+    CHECK(loadPatch(host.processor.patchJson()).patch.meta.name == "Second");
+    host.processor.setCurrentProgram(0);
+    CHECK(loadPatch(host.processor.patchJson()).patch.meta.name == "First");
+    dir.deleteRecursively();
+}
+
+TEST_CASE("plug-in: rack edits rename the slot parameters and keep each effect's values", "[plugin][rack]") {
+    Host host;
+    REQUIRE(host.processor.insertEffect(0, 0, "delay"));
+    REQUIRE(host.processor.insertEffect(0, 0, "reverb"));
+    CHECK(host.processor.hostParameter(idx("fx.a1.p3"))->getName(64).contains("Decay"));
+    CHECK(host.processor.hostParameter(idx("fx.a2.p3"))->getName(64).contains("Time L"));
+    host.processor.hostParameter(idx("fx.a2.p10"))->setValueNotifyingHost(0.8f); // the delay's feedback
+    const double feedback = host.processor.plainValue(idx("fx.a2.p10"));
+    host.run(4);
+    REQUIRE(host.processor.moveEffect(0, 1, 2, 0)); // the delay to Master
+    CHECK(host.processor.plainValue(idx("fx.m1.p10")) == Approx(feedback));
+    CHECK(host.processor.hostParameter(idx("fx.m1.p10"))->getName(64).contains("Feedback"));
+    host.run(4);
+    REQUIRE(host.processor.removeEffect(0, 0));
+    CHECK_FALSE(host.processor.insertEffect(0, 9, "eq"));
+    CHECK_FALSE(host.processor.insertEffect(0, 0, "no such effect"));
+    const LoadResult saved = loadPatch(host.processor.patchJson());
+    REQUIRE(saved.ok());
+    CHECK(saved.patch.fxSlotCount(0) == 0);
+    CHECK(saved.patch.fxSlotType(2, 0) == Registry::get().effectIndex("delay"));
+
+    // A locked rack survives a preset change, and the lock is part of the host project.
+    host.processor.setRackLocked(true);
+    REQUIRE(host.processor.loadPatchJson("{\"format\":\"zederia.patch\",\"version\":1}").ok());
+    CHECK(loadPatch(host.processor.patchJson()).patch.fxSlotType(2, 0) == Registry::get().effectIndex("delay"));
+    juce::MemoryBlock state;
+    host.processor.getStateInformation(state);
+    ZederiaProcessor restored;
+    restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(restored.rackLocked());
+    CHECK(loadPatch(restored.patchJson()).patch.fxSlotType(2, 0) == Registry::get().effectIndex("delay"));
+
+    // Rack presets through the processor.
+    const std::string rack = host.processor.rackPresetJson();
+    std::vector<Issue> issues;
+    REQUIRE(restored.loadRackPresetJson(rack, issues));
+    CHECK(restored.rackPresetJson() == rack);
+}
+
+TEST_CASE("plug-in: a host rendering offline gets the offline quality", "[plugin][quality]") {
+    Host host;
+    host.processor.setNormalizedFromUi(idx("filter1.on"), 1.0f);
+    host.run(2);
+    host.processor.setNonRealtime(true);
+    host.run(2);
+    CHECK(host.processor.renderingOffline());
+    CHECK(host.processor.engine().filterView(0).oversample == 4); // the offline quality is High by default
+    host.processor.setNonRealtime(false);
+    CHECK(host.processor.getLatencySamples() == 0);
+}
+
+TEST_CASE("plug-in: clips import from a MIDI file and export again", "[plugin][clip]") {
+    Clip clip;
+    clip.notes = {{0.0, 1.0, 60, 0.5}, {2.0, 0.5, 67, 1.0}};
+    clip.key = "G major";
+    const auto file = midi::clipToFile(clip);
+    ZederiaProcessor processor;
+    CHECK(processor.importClip(3, file).empty());
+    CHECK(processor.clip(3).notes.size() == 2);
+    CHECK(processor.clip(3).key == "G major");
+    CHECK(processor.exportClip(3) == file);
+    CHECK_FALSE(processor.importClip(3, std::vector<std::uint8_t>{1, 2, 3}).empty());
+    CHECK_FALSE(processor.importClip(9, file).empty());
+}
+
+TEST_CASE("plug-in: every host parameter comes back from the host project as it was set", "[plugin][state]") {
+    // What a host's state check does: set every parameter, save, load into a new instance, compare,
+    // and save again. Values the patch has no use for (a route that does not exist, an empty slot)
+    // must come back too.
+    ZederiaProcessor first;
+    Rng rng(17);
+    for (auto* parameter : first.getParameters())
+        parameter->setValueNotifyingHost(static_cast<float>(rng.uniform()));
+    juce::MemoryBlock state;
+    first.getStateInformation(state);
+    ZederiaProcessor second;
+    second.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    int differences = 0;
+    std::string firstDifference;
+    for (int i = 0; i < first.getParameters().size(); ++i) {
+        const float a = first.getParameters()[i]->getValue(), b = second.getParameters()[i]->getValue();
+        if (std::abs(a - b) > 1.0e-6f) {
+            if (differences++ == 0)
+                firstDifference = first.getParameters()[i]->getName(64).toStdString();
+        }
+    }
+    INFO("first difference: " << firstDifference);
+    CHECK(differences == 0);
+    juce::MemoryBlock again;
+    second.getStateInformation(again);
+    CHECK(again == state);
 }

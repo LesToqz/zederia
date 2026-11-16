@@ -7,17 +7,26 @@
 #include "zederia/engine/ModMath.h"
 #include "zederia/engine/OscKernel.h"
 #include "zederia/engine/VoiceAllocator.h"
+#include "zederia/fx/Effect.h"
+#include "zederia/play/Player.h"
 #include "zederia/rt/AudioThreadGuard.h"
 #include "zederia/rt/Denormals.h"
 #include "zederia/rt/Handoff.h"
 #include "zederia/util/Math.h"
+
+#include "../fx/FxDsp.h"
+#include "../fx/FxImpl.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <charconv>
+#include <chrono>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -30,6 +39,9 @@ namespace {
 
 #include "EngineHelpers.inl"
 #include "EngineTypes.inl"
+#include "EngineFxTypes.inl"
+
+constexpr float kLimiterCeiling = 0.96605088f; // output protection: -0.3 dBFS
 
 // What liveValue() finds for a parameter nothing modulates.
 constexpr float kNotModulated = -1.0e30f;
@@ -63,6 +75,19 @@ struct Engine::Impl {
     bool dirty = true;         // a parameter or a piece of structure changed since refresh() last ran
     bool derivedDirty = true;  // pe changed since derive() last ran
     bool snapSmoothing = true; // no glides for the first block after a reset
+    // Profiling: seconds per section while switched on (see Engine::setProfiling).
+    enum ProfSection { kProfSources, kProfFilters, kProfVoiceTick, kProfShared, kProfPlay, kProfOutput, kProfFx, kProfCount = kProfFx + 13 };
+    bool profiling = false;
+    double prof[kProfCount] = {};
+    using ProfClock = std::chrono::steady_clock;
+    ProfClock::time_point profNow() const { return profiling ? ProfClock::now() : ProfClock::time_point{}; }
+    void profAdd(int section, ProfClock::time_point since) {
+        if (profiling)
+            prof[section] += std::chrono::duration<double>(ProfClock::now() - since).count();
+    }
+    // A change of quality while notes play: the voices duck around the switch.
+    int appliedQuality = 1, pendingQuality = -1, duckState = 0; // 0 none, 1 fading out, 2 fading in
+    float qualityDuck = 1.0f;
     double smoothing = 0.1;    // control-rate one-pole coefficient of the parameter smoothing
     float controllerSmoothing = 0.1f;
     float warmTilt = 0.4f; // one-pole coefficient of the Warmth tilt (3.5 kHz)
@@ -96,6 +121,9 @@ struct Engine::Impl {
     rt::Handoff<LfoTable> lfoTables[kNumLfos];
     rt::Handoff<EnvShapeData> envShapes[kNumEnvs];
     rt::Handoff<Tuning> tuningSlot;
+    rt::Handoff<play::PlayData> playData;
+    play::Player player;
+    MidiEvent playEvents[play::Player::kMaxEvents];
     const Tuning* tuningNow = nullptr;
     LfoTable sineTable;
     Tuning equalTuning;
@@ -147,10 +175,54 @@ struct Engine::Impl {
     Rng rng;
     std::uint64_t seed = 1;
 
+    // --- Effects rack (EngineRack.inl) ---------------------------------------------------------
+    std::vector<const ParamDef*> defs; // the definition governing each value: an effect's own for rack slots
+    // Message side: the layout last offered, guarded by rackMutex (never taken by the audio thread).
+    rt::Mutex rackMutex;
+    std::uint32_t rackUid[kRackSlots] = {};
+    std::atomic<int> rackType[kRackSlots]; // read by tailSeconds() from any thread
+    std::uint32_t nextUid = 1;
+    std::atomic<RackPlan*> rackPending{nullptr};
+    RetireBin<fx::Effect, 64> fxBin;
+    RetireBin<RackPlan, 8> planBin;
+    std::atomic<bool> rackLockedFlag{false};
+    // Audio side.
+    FxInstance pool[kFxPool];
+    int chain[kNumFxLanes][kNumFxSlots];
+    int chainCount[kNumFxLanes] = {};
+    RackPlan* staged = nullptr;
+    RackPlan* planHeld = nullptr;
+    fx::Effect* fxHeld[kFxPool] = {};
+    int fxHeldCount = 0;
+    int bRouting = 0, bRoutingWanted = 0;
+    bool bSwitching = false;
+    fx::Context fxCtx;
+    float fxMix = 1.0f, fxMixTarget = 1.0f, fxFadeStep = 0.002f;
+    bool fxCleared = false;
+    fx::Ramp sendRamp[3]; // the three buses' shares into lane B
+    bool rackSplit = false;
+    bool outputSilent = false; // the rack passed exact silence in the current run
+    // Output stage.
+    float dcCoef = 0.9993f, dcX[2] = {}, dcY[2] = {};
+    bool dcOn = true;
+    int protection = 0;
+    fx::PeakLimiter outLimiter;
+    dsp::DecimatorState clipUp[2], clipDown[2];
+    // The protection clipper runs at a fixed 4x in every quality mode, so it never switches rate.
+    int clipFactor = 4;
+    const dsp::DecimatorDesign* clipDesign = &dsp::decimatorDesign(true);
+    // For other threads.
+    std::atomic<std::uint8_t> fxState[kRackSlots];
+    std::atomic<float> fxMeterValue[kRackSlots];
+    std::atomic<int> fxRunning{0};
+
     void updateSmoothing() {
         smoothing = 1.0 - std::exp(-static_cast<double>(kInterval) / (kSmoothingSeconds * sampleRate));
         controllerSmoothing = static_cast<float>(smoothing);
         warmTilt = static_cast<float>(1.0 - std::exp(-2.0 * kPi * 3500.0 / sampleRate));
+        fxFadeStep = static_cast<float>(1.0 / (kFxFadeSeconds * sampleRate));
+        dcCoef = static_cast<float>(1.0 - 2.0 * kPi * 5.0 / sampleRate);
+        outLimiter.setRelease(80.0, sampleRate);
     }
 
     Impl() {
@@ -165,9 +237,19 @@ struct Engine::Impl {
         movingList.assign(count, 0);
         polySlotOf.assign(count, -1);
         globSlotOf.assign(count, -1);
+        defs.assign(count, nullptr);
+        for (auto& t : rackType)
+            t.store(-1, std::memory_order_relaxed);
+        for (auto& lane : chain)
+            std::fill(std::begin(lane), std::end(lane), -1);
+        for (auto& s : fxState)
+            s.store(0, std::memory_order_relaxed);
+        for (auto& m : fxMeterValue)
+            m.store(0.0f, std::memory_order_relaxed);
         live = std::make_unique<std::atomic<float>[]>(count);
         for (const ParamDef& def : reg.params()) {
             const auto i = static_cast<std::size_t>(def.index);
+            defs[i] = &def;
             isFloat[i] = def.type == ParamType::Float ? 1 : 0;
             live[i].store(kNotModulated, std::memory_order_relaxed);
             const std::string& m = def.module;
@@ -228,6 +310,8 @@ struct Engine::Impl {
         }
         sampleSlot.set(SampleData::builtin());
         sampleSlot.take();
+        playData.set(play::PlayData::fromPatch(Patch{}));
+        playData.take();
         texture.sample = sampleSlot.current();
         for (auto& l : lfo)
             l.table = &sineTable;
@@ -257,16 +341,38 @@ struct Engine::Impl {
         }
     }
 
+    ~Impl() {
+        for (FxInstance& x : pool)
+            delete x.effect;
+        delete rackPending.exchange(nullptr);
+        delete staged;
+        delete planHeld;
+        for (int i = 0; i < fxHeldCount; ++i)
+            delete fxHeld[i];
+    }
+
 #include "EngineMod.inl"
 #include "EngineVoice.inl"
 #include "EngineRender.inl"
+#include "EngineRack.inl"
 
     // --- Structure ----------------------------------------------------------------------------
 
     // Everything that is not a continuous value: switches, choices, counts, the route lists. Runs
     // at the start of a block in which something changed.
     void refresh() {
-        const int quality = std::clamp(choice(offlineSeen ? ids.qualityOffline : ids.quality), 0, 3);
+        int quality = std::clamp(choice(offlineSeen ? ids.qualityOffline : ids.quality), 0, 3);
+        if (quality != appliedQuality && !snapSmoothing && activeCount > 0) {
+            // Notes are playing: their oversampling filters cannot change rate without a click. The
+            // voices fade out first (render() switches when they are silent) and fade back in.
+            pendingQuality = quality;
+            if (duckState != 1)
+                duckState = 1;
+            quality = appliedQuality;
+        } else {
+            appliedQuality = quality;
+            pendingQuality = -1;
+        }
         const int newOversample = 1 << quality; // Draft 1x, Standard 2x, High 4x, Ultra 8x
         decimator = &dsp::decimatorDesign(quality >= 2);
         const bool qualityChanged = newOversample != oversample;
@@ -276,6 +382,20 @@ struct Engine::Impl {
         glideLegato = choice(ids.glideMode) == 1;
         glideScaled = flag(ids.glideScaled);
         followerSidechain = choice(ids.followerSource) == 1;
+        dcOn = flag(ids.dcFilter);
+        if (!dcOn)
+            dcX[0] = dcX[1] = dcY[0] = dcY[1] = 0.0f;
+        const int newProtection = std::clamp(choice(ids.limiter), 0, 2);
+        if (newProtection != protection)
+            outLimiter.reset();
+        protection = newProtection;
+        fxMixTarget = flag(ids.fxOff) ? 0.0f : 1.0f;
+        if (snapSmoothing) { // the first block after a reset: no fades
+            fxMix = fxMixTarget;
+            for (int b = 0; b < 3; ++b)
+                sendRamp[b].aim(static_cast<float>(value(ids.fxBalance[b])), true);
+        }
+        requestBRouting(std::clamp(choice(ids.fxBRouting), 0, 1));
 
         bool relayout[kOscCount] = {};
         for (int i = 0; i < kOscCount; ++i) {
@@ -476,6 +596,7 @@ struct Engine::Impl {
             if (swapIn(shape))
                 dirty = true;
         swapIn(tuningSlot);
+        swapIn(playData);
         const Tuning* tuning = tuningSlot.current();
         tuningNow = tuning != nullptr ? tuning : &equalTuning;
         if (envSyncDirty.load(std::memory_order_relaxed))
@@ -538,9 +659,13 @@ struct Engine::Impl {
     void tick() {
         samplesToTick = kInterval;
         master = masterAim;
+        const auto sharedStart = profNow();
         globalTick(kInterval, false);
         masterAim = masterTarget;
         masterStep = (masterAim - master) / kInterval;
+        rackTick();
+        profAdd(kProfShared, sharedStart);
+        const auto voicesStart = profNow();
         for (int slot = 0; slot < kVoiceSlots; ++slot) {
             Voice& v = voices[static_cast<std::size_t>(slot)];
             if (!v.active)
@@ -553,6 +678,35 @@ struct Engine::Impl {
             }
             voiceTick(v, slot);
         }
+        profAdd(kProfVoiceTick, voicesStart);
+    }
+
+    // The play parameters as the player reads them.
+    play::Settings playSettings() const {
+        play::Settings st;
+        st.arpOn = flag(ids.arp.on);
+        st.arpMode = static_cast<play::ArpMode>(std::clamp(choice(ids.arp.mode), 0, 7));
+        st.octaves = std::clamp(choice(ids.arp.octaves), 1, 4);
+        st.stepBeats = divisionBeats[static_cast<std::size_t>(std::clamp(choice(ids.arp.rate), 0, static_cast<int>(divisionBeats.size()) - 1))];
+        st.gate = value(ids.arp.gate);
+        st.swing = value(ids.arp.swing);
+        st.latch = flag(ids.arp.latch);
+        st.restart = flag(ids.arp.restart);
+        st.steps = std::clamp(choice(ids.arp.steps), 1, kMaxArpSteps);
+        st.pattern = std::clamp(choice(ids.arp.pattern) - 1, 0, kNumArpPatterns - 1);
+        st.chordMemory = flag(ids.chord.memory);
+        st.scaleLock = flag(ids.chord.scaleLock);
+        st.key = std::clamp(choice(ids.chord.key), 0, 11);
+        st.scale = choice(ids.chord.scale);
+        st.filter = choice(ids.chord.lockMode) == 1;
+        st.strumMs = value(ids.chord.strum);
+        st.strumDirection = std::clamp(choice(ids.chord.strumDirection), 0, 2);
+        st.clipOn = flag(ids.clip.on);
+        st.clipSlot = std::clamp(choice(ids.clip.slot) - 1, 0, kNumClips - 1);
+        st.clipFromKey = choice(ids.clip.trigger) == 1;
+        st.clipLatch = flag(ids.clip.latch);
+        st.clipLoop = flag(ids.clip.loop);
+        return st;
     }
 
     // Once per block: what other threads may look at.
@@ -596,6 +750,22 @@ struct Engine::Impl {
         }
         viewOversample.store(oversample, std::memory_order_relaxed);
         bpmForOthers.store(bpm, std::memory_order_relaxed);
+
+        int running = 0;
+        for (int k = 0; k < kRackSlots; ++k) {
+            const int lane = k / kNumFxSlots, pos = k % kNumFxSlots;
+            std::uint8_t state = 0;
+            float meter = 0.0f;
+            if (pos < chainCount[lane]) {
+                const FxInstance& x = pool[chain[lane][pos]];
+                state = static_cast<std::uint8_t>(1u | (x.gTarget > 0.0f ? 2u : 0u) | (x.idle ? 4u : 0u) | (x.ran ? 8u : 0u));
+                running += x.ran ? 1 : 0;
+                meter = x.effect->meter();
+            }
+            fxState[k].store(state, std::memory_order_relaxed);
+            fxMeterValue[k].store(meter, std::memory_order_relaxed);
+        }
+        fxRunning.store(running, std::memory_order_relaxed);
     }
 };
 
@@ -609,9 +779,22 @@ Engine::Engine() : impl_(std::make_unique<Impl>()) {
 Engine::~Engine() = default;
 
 void Engine::prepare(double sampleRate) {
-    impl_->sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    impl_->updateSmoothing();
-    impl_->prepareFilters();
+    auto& s = *impl_;
+    const std::lock_guard<rt::Mutex> lock(s.rackMutex);
+    s.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
+    s.updateSmoothing();
+    s.prepareFilters();
+    // Audio is stopped: every effect, running or waiting to be taken, gets memory for the new rate.
+    for (FxInstance& x : s.pool)
+        if (x.effect != nullptr) {
+            x.effect->prepare(s.sampleRate);
+            x.needsSet = x.snap = true;
+        }
+    if (RackPlan* plan = s.rackPending.load(std::memory_order_acquire))
+        for (auto& effect : plan->fresh)
+            if (effect != nullptr)
+                effect->prepare(s.sampleRate);
+    s.player.prepare(s.sampleRate);
     reset();
 }
 
@@ -646,6 +829,7 @@ void Engine::reset() {
     s.alternate = -1.0f;
     s.followerLevel = 0.0f;
     s.rng.seed(s.seed);
+    s.player.reset(s.seed);
     for (int k = 0; k < kNumLfos; ++k) {
         s.lfo[k].state = LfoState{};
         s.lfo[k].state.age = 1.0e12; // a shared LFO that no note has started yet runs without delay
@@ -658,14 +842,45 @@ void Engine::reset() {
     }
     s.snapSmoothing = true;
     s.dirty = true;
+    // The rack: every tail silenced, every fade finished.
+    for (FxInstance& x : s.pool) {
+        if (x.effect == nullptr)
+            continue;
+        x.effect->clear();
+        x.g = x.gTarget;
+        x.idle = false;
+        x.silent = 0;
+        x.needsSet = x.snap = true;
+    }
+    s.fxMix = s.fxMixTarget;
+    for (auto& b : s.sendRamp)
+        b.aim(b.target, true);
+    s.dcX[0] = s.dcX[1] = s.dcY[0] = s.dcY[1] = 0.0f;
+    s.outLimiter.reset();
+    s.duckState = 0;
+    s.pendingQuality = -1;
+    s.qualityDuck = 1.0f;
+    for (int c = 0; c < 2; ++c) {
+        s.clipUp[c].reset();
+        s.clipDown[c].reset();
+    }
 }
 
 void Engine::setSeed(std::uint64_t seed) { impl_->seed = seed; }
 
 void Engine::loadPatch(const Patch& patch) {
-    for (int i = 0; i < impl_->store.size(); ++i)
+    const auto& reg = Registry::get();
+    const bool keepRack = rackLocked();
+    if (!keepRack)
+        setRack(patch);
+    for (int i = 0; i < impl_->store.size(); ++i) {
+        int lane = 0, slot = 0, field = 0;
+        if (keepRack && (reg.fxSlotOf(i, lane, slot, field) || reg.at(i).module == "fx"))
+            continue; // a locked rack keeps its own values
         impl_->store.set(i, patch.get(i));
+    }
     setRoutes(patch.routes);
+    setPlayData(patch);
     for (int k = 0; k < kNumLfos; ++k)
         setLfoShape(k, patch.lfoShapes[static_cast<std::size_t>(k)]);
     for (int k = 0; k < kNumEnvs; ++k) {
@@ -706,11 +921,45 @@ double Engine::sampleRate() const noexcept { return impl_->sampleRate; }
 
 double Engine::tailSeconds() const noexcept {
     const auto& s = *impl_;
+    const auto& reg = Registry::get();
+    const double bpm = std::max(s.bpmForOthers.load(std::memory_order_relaxed), 1.0);
     const double beats = s.envSyncBeats[0][4].load(std::memory_order_relaxed);
-    const double release = beats > 0.0 ? beats * 60.0 / std::max(s.bpmForOthers.load(std::memory_order_relaxed), 1.0)
-                                       : s.store.get(s.ids.env[0].release) / 1000.0;
+    const double release = beats > 0.0 ? beats * 60.0 / bpm : s.store.get(s.ids.env[0].release) / 1000.0;
     // Envelope variance can stretch a note's times to twice their length.
-    return release * (1.0 + s.store.get(s.ids.varEnv)) + kStealFadeSeconds + 0.01;
+    double tail = release * (1.0 + s.store.get(s.ids.varEnv)) + kStealFadeSeconds + 0.01;
+    // The DC filter lets a removed offset fade out after the voices stop (5 Hz: 32 ms per 1/e).
+    if (s.store.get(s.ids.dcFilter) >= 0.5)
+        tail += 0.3;
+    // Effects ring on after the voices: reverbs for their decay, delays until the echoes fall 60 dB.
+    if (s.store.get(s.ids.fxOff) >= 0.5)
+        return tail;
+    double fxTail = 0.0;
+    const auto reverb = reg.effectIndex("reverb"), delay = reg.effectIndex("delay");
+    for (int k = 0; k < kRackSlots; ++k) {
+        const int lane = k / kNumFxSlots, pos = k % kNumFxSlots;
+        const int type = s.rackType[k].load(std::memory_order_relaxed);
+        if (type < 0 || s.store.get(reg.fxSlotOn(lane, pos)) < 0.5)
+            continue;
+        const auto value = [&](int param) { return s.store.get(reg.fxSlotParam(lane, pos, param)); };
+        if (type == reverb) {
+            if (value(9) >= 0.5) // frozen
+                return std::numeric_limits<double>::infinity();
+            fxTail += value(2) / 1000.0 + value(3) / 1000.0;
+        } else if (type == delay) {
+            // The longer side's time (synced: its note length at the tempo, with the fine offset);
+            // echoes fall by the feedback at each repeat until they are 60 dB down.
+            const double feedback = std::clamp(value(9), 0.0, 1.0);
+            double time = std::max(value(2), value(3)) / 1000.0;
+            if (value(1) >= 0.5)
+                time = std::max(fx::divisionBeats(static_cast<int>(value(4))) * std::pow(1.5, std::clamp(value(6), -1.0, 1.0)),
+                                fx::divisionBeats(static_cast<int>(value(5))) * std::pow(1.5, std::clamp(value(7), -1.0, 1.0))) *
+                       60.0 / bpm;
+            fxTail += feedback >= 0.999 ? 60.0 : time * (1.0 + std::log(0.001) / std::log(std::max(feedback, 0.001)));
+        } else {
+            fxTail += 0.05;
+        }
+    }
+    return tail + std::min(fxTail, 120.0);
 }
 
 void Engine::setTable(int osc, std::shared_ptr<const TableData> table) {
@@ -834,6 +1083,133 @@ void Engine::collectGarbage() {
     for (auto& shape : impl_->envShapes)
         shape.collect();
     impl_->tuningSlot.collect();
+    impl_->fxBin.collect();
+    impl_->planBin.collect();
+    impl_->playData.collect();
+}
+
+void Engine::setPlayData(const Patch& patch) { impl_->playData.set(play::PlayData::fromPatch(patch)); }
+
+// --- Effects rack -------------------------------------------------------------------------------
+
+void Engine::setRack(const Patch& patch, const FxMoves* moves) {
+    auto& s = *impl_;
+    const auto& reg = Registry::get();
+    const std::lock_guard<rt::Mutex> lock(s.rackMutex);
+    s.fxBin.collect();
+    s.planBin.collect();
+    auto plan = std::make_unique<RackPlan>();
+    // A plan the audio thread has not taken yet comes back: its new effects can be offered again.
+    std::unique_ptr<RackPlan> untaken(s.rackPending.exchange(nullptr, std::memory_order_acq_rel));
+    bool used[kRackSlots] = {};
+    std::uint32_t uid[kRackSlots] = {};
+    int type[kRackSlots];
+    for (int k = 0; k < kRackSlots; ++k)
+        type[k] = -1;
+    for (int lane = 0; lane < kNumFxLanes; ++lane) {
+        for (int pos = 0; pos < patch.fxSlotCount(lane); ++pos) {
+            const int k = lane * kNumFxSlots + pos;
+            const int t = patch.fxSlotType(lane, pos);
+            const int oldType = s.rackType[k].load(std::memory_order_relaxed);
+            const int from = moves != nullptr ? moves->from[static_cast<std::size_t>(k)] : (oldType == t ? k : -1);
+            if (from >= 0 && from < kRackSlots && !used[from] && s.rackUid[from] != 0 &&
+                s.rackType[from].load(std::memory_order_relaxed) == t) {
+                used[from] = true;
+                uid[k] = s.rackUid[from];
+                if (untaken != nullptr)
+                    for (int j = 0; j < kRackSlots; ++j)
+                        if (untaken->uid[j] == uid[k] && untaken->fresh[j] != nullptr)
+                            plan->fresh[k] = std::move(untaken->fresh[j]);
+            } else {
+                uid[k] = s.nextUid++;
+                plan->fresh[k] = fx::makeEffect(t, s.sampleRate);
+            }
+            type[k] = t;
+            plan->uid[k] = uid[k];
+            plan->type[k] = t;
+            plan->count[lane] = pos + 1;
+            for (int c = 0; c < 2; ++c) {
+                const Shape& shape = patch.fxCurves[static_cast<std::size_t>(lane)][static_cast<std::size_t>(pos)][static_cast<std::size_t>(c)];
+                if (shape.empty())
+                    continue;
+                compileShape(shape, plan->curves[k][c], fx::kCurveSize);
+                for (float& y : plan->curves[k][c])
+                    y = std::clamp(y, 0.0f, 1.0f);
+                plan->hasCurve[k][c] = true;
+            }
+        }
+    }
+    for (int k = 0; k < kRackSlots; ++k) {
+        const int base = reg.fxSlotOn(k / kNumFxSlots, k % kNumFxSlots);
+        for (int f = 0; f < kSlotFields; ++f)
+            plan->values[k][f] = patch.get(base + f);
+        s.rackUid[k] = uid[k];
+        s.rackType[k].store(type[k], std::memory_order_relaxed);
+    }
+    s.rackPending.store(plan.release(), std::memory_order_release);
+    // The values follow the plan into the parameter store (see EngineRack.inl for the order).
+    for (int k = 0; k < kRackSlots; ++k) {
+        const int base = reg.fxSlotOn(k / kNumFxSlots, k % kNumFxSlots);
+        for (int f = 0; f < kSlotFields; ++f)
+            s.store.set(base + f, patch.get(base + f));
+    }
+}
+
+void Engine::setRackLocked(bool locked) { impl_->rackLockedFlag.store(locked, std::memory_order_relaxed); }
+bool Engine::rackLocked() const { return impl_->rackLockedFlag.load(std::memory_order_relaxed); }
+
+FxSlotStatus Engine::fxSlotStatus(int lane, int slot) const noexcept {
+    FxSlotStatus out;
+    if (lane < 0 || lane >= kNumFxLanes || slot < 0 || slot >= kNumFxSlots)
+        return out;
+    const int k = lane * kNumFxSlots + slot;
+    const std::uint8_t state = impl_->fxState[k].load(std::memory_order_relaxed);
+    out.present = (state & 1u) != 0;
+    out.on = (state & 2u) != 0;
+    out.idle = (state & 4u) != 0;
+    out.running = (state & 8u) != 0;
+    out.meter = impl_->fxMeterValue[k].load(std::memory_order_relaxed);
+    return out;
+}
+
+int Engine::fxSlotsRunning() const noexcept { return impl_->fxRunning.load(std::memory_order_relaxed); }
+
+bool Engine::fxResponse(int lane, int slot, std::span<const double> hz, std::span<float> magnitudeDb) const {
+    if (lane < 0 || lane >= kNumFxLanes || slot < 0 || slot >= kNumFxSlots)
+        return false;
+    const auto& reg = Registry::get();
+    const int type = impl_->rackType[lane * kNumFxSlots + slot].load(std::memory_order_relaxed);
+    if (type < 0)
+        return false;
+    double values[kNumFxSlotParams] = {};
+    for (int k = 0; k < kNumFxSlotParams; ++k)
+        values[k] = impl_->store.get(reg.fxSlotParam(lane, slot, k));
+    for (std::size_t i = 0; i < hz.size() && i < magnitudeDb.size(); ++i) {
+        std::complex<double> h;
+        if (!fx::effectResponse(type, values, impl_->sampleRate, hz[i], h))
+            return false;
+        magnitudeDb[i] = static_cast<float>(gainToDb(std::abs(h)));
+    }
+    return true;
+}
+
+// --- Profiling ------------------------------------------------------------------------------------
+
+void Engine::setProfiling(bool on) {
+    impl_->profiling = on;
+    std::fill(std::begin(impl_->prof), std::end(impl_->prof), 0.0);
+}
+
+std::vector<Engine::ProfileEntry> Engine::profile() const {
+    static const char* const names[] = {"voice sources", "voice filters and mix", "voice control ticks", "shared control ticks",
+                                        "play features", "output stage"};
+    std::vector<ProfileEntry> out;
+    for (int i = 0; i < Impl::kProfFx; ++i)
+        out.push_back({names[i], impl_->prof[i]});
+    const auto types = Registry::get().effectTypes();
+    for (std::size_t t = 0; t < types.size() && Impl::kProfFx + static_cast<int>(t) < Impl::kProfCount; ++t)
+        out.push_back({"effect: " + types[t].id, impl_->prof[Impl::kProfFx + static_cast<int>(t)]});
+    return out;
 }
 
 float Engine::sourceValue(int source) const noexcept {
@@ -885,6 +1261,7 @@ void Engine::process(const ProcessArgs& args) noexcept {
     if (args.frames <= 0 || args.left == nullptr || args.right == nullptr)
         return;
 
+    s.rackBlockStart(); // before the drain: a new layout's values must meet its effects
     s.store.drain([&s](int index, double value) { s.setParam(index, value); });
     const bool offline = s.offline.load(std::memory_order_relaxed);
     if (offline != s.offlineSeen) {
@@ -920,7 +1297,19 @@ void Engine::process(const ProcessArgs& args) noexcept {
     }
     s.takeHandoffs();
 
-    const auto& midi = args.midi;
+    // The play features turn the incoming events into the ones the voices play.
+    int generated = 0;
+    const bool sendOut = s.flag(s.ids.midiOut) && args.midiOut != nullptr;
+    const auto playStart = s.profNow();
+    Transport transport = args.transport;
+    transport.bpm = s.bpm; // a host without a tempo plays at 120
+    const int playCount = s.player.process(s.playSettings(), *s.playData.current(), transport, args.frames, args.midi,
+                                           s.playEvents, sendOut ? args.midiOut : nullptr,
+                                           sendOut ? args.midiOutCapacity : 0, generated);
+    if (args.midiOutCount != nullptr)
+        *args.midiOutCount = sendOut ? generated : 0;
+    const std::span<const MidiEvent> midi(s.playEvents, static_cast<std::size_t>(playCount));
+    s.profAdd(Impl::kProfPlay, playStart);
     std::size_t next = 0;
     int pos = 0;
     while (pos < args.frames) {

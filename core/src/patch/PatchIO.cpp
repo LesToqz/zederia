@@ -418,6 +418,141 @@ void readEnvShape(const J& v, const std::string& path, EnvShape& out, Reporter& 
     out = std::move(shape);
 }
 
+// A whole number inside [low, high]; values outside are clamped and fractions rounded, with a warning.
+bool readWhole(const J& v, const std::string& path, const char* what, int low, int high, int& out, Reporter& r) {
+    double number = 0.0;
+    if (!readNumber(v, path, what, low, high, number, r))
+        return false;
+    out = static_cast<int>(std::lround(number));
+    if (static_cast<double>(out) != number)
+        r.warn("rounded", path, std::string(what) + " takes whole numbers; " + num(number) + " was rounded to " +
+                                    std::to_string(out) + ".",
+               "Use a whole number from " + std::to_string(low) + " to " + std::to_string(high) + ".");
+    return true;
+}
+
+// The arpeggiator's pattern slots: [ { "steps": [ { "state": "on", "velocity": 1, "transpose": 0,
+// "ratchet": 1 }, ... ] }, ... ]. Steps that are not listed play at full velocity.
+void readArpPatterns(const J& v, const std::string& path, std::array<ArpPattern, kNumArpPatterns>& out, Reporter& r) {
+    if (!requireArray(v, path, "\"patterns\"", kNumArpPatterns, r))
+        return;
+    static const std::vector<std::string> patternKeys = {"steps"};
+    static const std::vector<std::string> stepKeys = {"state", "velocity", "transpose", "ratchet"};
+    static const std::vector<std::string> states = {"on", "tie", "rest"};
+    std::array<ArpPattern, kNumArpPatterns> patterns;
+    for (std::size_t i = 0; i < v.size() && i < static_cast<std::size_t>(kNumArpPatterns); ++i) {
+        const std::string patternPath = path + "/" + std::to_string(i);
+        if (!requireObject(v[i], patternPath, "A pattern", r))
+            continue;
+        for (const auto& [key, child] : v[i].items()) {
+            const std::string stepsPath = patternPath + "/" + escapeKey(key);
+            if (key != "steps") {
+                r.unknownField(stepsPath, key, closest(key, patternKeys));
+                continue;
+            }
+            if (!requireArray(child, stepsPath, "\"steps\"", kMaxArpSteps, r))
+                continue;
+            for (std::size_t n = 0; n < child.size() && n < static_cast<std::size_t>(kMaxArpSteps); ++n) {
+                const std::string stepPath = stepsPath + "/" + std::to_string(n);
+                ArpStep step;
+                if (requireObject(child[n], stepPath, "A step", r)) {
+                    for (const auto& [name, value] : child[n].items()) {
+                        const std::string valuePath = stepPath + "/" + escapeKey(name);
+                        if (name == "state") {
+                            std::string token;
+                            if (!readString(value, valuePath, "A step's state", kMaxTagLength, token, r))
+                                continue;
+                            const auto it = std::find(states.begin(), states.end(), token);
+                            if (it == states.end())
+                                r.error("unknown_choice", valuePath, inQuotes(token) + " is not a step state.",
+                                        didYouMean(closest(token, states)) + "Use \"on\", \"tie\" or \"rest\".");
+                            else
+                                step.state = static_cast<StepState>(it - states.begin());
+                        } else if (name == "velocity") {
+                            readNumber(value, valuePath, "A step's velocity", 0.0, 1.0, step.velocity, r);
+                        } else if (name == "transpose") {
+                            readWhole(value, valuePath, "A step's transposition", -24, 24, step.transpose, r);
+                        } else if (name == "ratchet") {
+                            readWhole(value, valuePath, "A step's ratchet", 1, 4, step.ratchet, r);
+                        } else {
+                            r.unknownField(valuePath, name, closest(name, stepKeys));
+                        }
+                    }
+                }
+                patterns[i].steps.push_back(step);
+            }
+        }
+    }
+    out = std::move(patterns);
+}
+
+// Chord memory: semitones above the played key, for example [0, 4, 7].
+void readChordNotes(const J& v, const std::string& path, std::vector<int>& out, Reporter& r) {
+    if (!requireArray(v, path, "\"notes\"", kMaxChordNotes, r))
+        return;
+    std::vector<int> notes;
+    for (std::size_t i = 0; i < v.size() && i < static_cast<std::size_t>(kMaxChordNotes); ++i) {
+        int semis = 0;
+        if (readWhole(v[i], path + "/" + std::to_string(i), "A chord note", -48, 48, semis, r))
+            notes.push_back(semis);
+    }
+    out = std::move(notes);
+}
+
+// The clip slots: [ { "name": "...", "bars": 2, "beats_per_bar": 4, "tempo": 120, "key": "A minor",
+// "root": 57, "notes": [ { "start": 0, "length": 0.5, "key": 57, "velocity": 0.8 }, ... ] }, ... ].
+// Times are in quarter notes.
+void readClips(const J& v, const std::string& path, std::array<Clip, kNumClips>& out, Reporter& r) {
+    if (!requireArray(v, path, "\"clips\"", kNumClips, r))
+        return;
+    static const std::vector<std::string> clipKeys = {"name", "bars", "beats_per_bar", "tempo", "key", "root", "notes"};
+    static const std::vector<std::string> noteKeys = {"start", "length", "key", "velocity"};
+    std::array<Clip, kNumClips> clips;
+    for (std::size_t i = 0; i < v.size() && i < static_cast<std::size_t>(kNumClips); ++i) {
+        const std::string clipPath = path + "/" + std::to_string(i);
+        if (!requireObject(v[i], clipPath, "A clip", r))
+            continue;
+        Clip& clip = clips[i];
+        for (const auto& [key, child] : v[i].items()) {
+            const std::string childPath = clipPath + "/" + escapeKey(key);
+            if (key == "name") {
+                readString(child, childPath, "A clip's name", kMaxNameLength, clip.name, r);
+            } else if (key == "bars") {
+                readNumber(child, childPath, "A clip's length in bars", 0.25, 256.0, clip.bars, r);
+            } else if (key == "beats_per_bar") {
+                readWhole(child, childPath, "A clip's beats per bar", 1, 16, clip.beatsPerBar, r);
+            } else if (key == "tempo") {
+                readNumber(child, childPath, "A clip's tempo", 20.0, 999.0, clip.tempo, r);
+            } else if (key == "key") {
+                readString(child, childPath, "A clip's key", kMaxTagLength, clip.key, r);
+            } else if (key == "root") {
+                readWhole(child, childPath, "A clip's root note", 0, 127, clip.root, r);
+            } else if (key == "notes") {
+                if (!requireArray(child, childPath, "\"notes\"", kMaxClipNotes, r))
+                    continue;
+                for (std::size_t n = 0; n < child.size() && n < static_cast<std::size_t>(kMaxClipNotes); ++n) {
+                    const std::string notePath = childPath + "/" + std::to_string(n);
+                    if (!requireObject(child[n], notePath, "A note", r))
+                        continue;
+                    ClipNote note;
+                    for (const auto& [name, value] : child[n].items()) {
+                        const std::string valuePath = notePath + "/" + escapeKey(name);
+                        if (name == "start") readNumber(value, valuePath, "A note's start", 0.0, 4096.0, note.start, r);
+                        else if (name == "length") readNumber(value, valuePath, "A note's length", 1.0 / 128.0, 1024.0, note.length, r);
+                        else if (name == "key") readWhole(value, valuePath, "A note's key", 0, 127, note.key, r);
+                        else if (name == "velocity") readNumber(value, valuePath, "A note's velocity", 0.0, 1.0, note.velocity, r);
+                        else r.unknownField(valuePath, name, closest(name, noteKeys));
+                    }
+                    clip.notes.push_back(note);
+                }
+            } else {
+                r.unknownField(childPath, key, closest(key, clipKeys));
+            }
+        }
+    }
+    out = std::move(clips);
+}
+
 // A microtuning: { "name": "...", "keys": [128 note numbers] }.
 void readTuning(const J& v, PatchTuning& out, Reporter& r) {
     if (!requireObject(v, "/tuning", "\"tuning\"", r))
@@ -450,7 +585,7 @@ void readTuning(const J& v, PatchTuning& out, Reporter& r) {
 // --- Schema tree for the plain modules ---------------------------------------------------------
 
 // Things inside a module's object that are not parameters.
-enum class Extra : std::uint8_t { None, LfoShape, EnvSync, EnvMulti, WarpCurve };
+enum class Extra : std::uint8_t { None, LfoShape, EnvSync, EnvMulti, WarpCurve, ArpPatterns, ChordNotes, Clips };
 
 struct Node {
     std::map<std::string, Node, std::less<>> children;
@@ -512,6 +647,9 @@ const Node& schema() {
             for (int slot = 0; slot < 2; ++slot)
                 extra(tree.children["osc" + std::to_string(i + 1)].children[slot == 0 ? "warp_a" : "warp_b"].children["curve"],
                       Extra::WarpCurve, i, slot);
+        extra(tree.children["arp"].children["patterns"], Extra::ArpPatterns, 0);
+        extra(tree.children["chord"].children["notes"], Extra::ChordNotes, 0);
+        extra(tree.children["clip"].children["clips"], Extra::Clips, 0);
         return tree;
     }();
     return root;
@@ -538,6 +676,9 @@ void walk(const J& v, const Node& node, const std::string& path, Patch& patch, R
     case Extra::WarpCurve:
         return readShape(v, path, 0.0, 1.0,
                          patch.warpCurves[static_cast<std::size_t>(node.extraA)][static_cast<std::size_t>(node.extraB)], r);
+    case Extra::ArpPatterns: return readArpPatterns(v, path, patch.arpPatterns, r);
+    case Extra::ChordNotes: return readChordNotes(v, path, patch.chordNotes, r);
+    case Extra::Clips: return readClips(v, path, patch.clips, r);
     case Extra::None: break;
     }
     if (node.isArray) {
@@ -750,9 +891,14 @@ void readFxLane(const J& v, int lane, Patch& patch, Reporter& r) {
                 readParam(child, reg.fxSlotMix(lane, slot), patch, path, r);
                 continue;
             }
+            if (key == "curve_a" || key == "curve_b") { // Drive's drawn transfer curves
+                readShape(child, path, 0.0, 1.0,
+                          patch.fxCurves[static_cast<std::size_t>(lane)][static_cast<std::size_t>(slot)][key == "curve_a" ? 0u : 1u], r);
+                continue;
+            }
             const auto it = std::find_if(params.begin(), params.end(), [&](const ParamDef& p) { return p.pointer == key; });
             if (it == params.end()) {
-                std::vector<std::string> keys = {"type", "on", "mix"};
+                std::vector<std::string> keys = {"type", "on", "mix", "curve_a", "curve_b"};
                 for (const auto& p : params)
                     keys.push_back(p.pointer);
                 r.unknownField(path, key, closest(key, keys));
@@ -855,6 +1001,75 @@ J shapeToJson(const Shape& shape, bool withLoop) {
     if (withLoop && shape.loopStart != 0.0)
         o["loop_start"] = shape.loopStart;
     return o;
+}
+
+// One rack slot: its type, switch, mix, the effect's parameters by name and any drawn curves.
+J slotToJson(const Patch& patch, int lane, int slot, bool full) {
+    const auto& reg = Registry::get();
+    const auto& effect = reg.effectTypes()[static_cast<std::size_t>(patch.fxSlotType(lane, slot))];
+    J o = J::object();
+    o["type"] = effect.id;
+    const int on = reg.fxSlotOn(lane, slot), mix = reg.fxSlotMix(lane, slot);
+    if (full || patch.get(on) != reg.at(on).def) o["on"] = patch.get(on) >= 0.5;
+    if (full || patch.get(mix) != reg.at(mix).def) o["mix"] = patch.get(mix);
+    for (const auto& p : effect.params) {
+        const double value = patch.get(reg.fxSlotParam(lane, slot, p.index));
+        if (full || value != p.def)
+            o[p.pointer] = valueToJson(p, value);
+    }
+    const auto& curves = patch.fxCurves[static_cast<std::size_t>(lane)][static_cast<std::size_t>(slot)];
+    if (!curves[0].empty())
+        o["curve_a"] = shapeToJson(curves[0], false);
+    if (!curves[1].empty())
+        o["curve_b"] = shapeToJson(curves[1], false);
+    return o;
+}
+
+// The "fx" section: the rack's routing values and the three lanes.
+J fxToJson(const Patch& patch, bool full) {
+    const auto& reg = Registry::get();
+    J fx = J::object();
+    for (const auto& module : reg.modules())
+        if (module.kind == ModuleKind::FxRack)
+            for (int i = module.firstParam; i < module.firstParam + module.numParams; ++i)
+                if (full || patch.get(i) != reg.at(i).def)
+                    fx[reg.at(i).pointer.substr(4)] = valueToJson(reg.at(i), patch.get(i));
+    for (int lane = 0; lane < kNumFxLanes; ++lane) {
+        if (!full && patch.fxSlotCount(lane) == 0)
+            continue;
+        J slots = J::array();
+        for (int slot = 0; slot < patch.fxSlotCount(lane); ++slot)
+            slots.push_back(slotToJson(patch, lane, slot, full));
+        fx[std::string(fxLaneKey(lane))] = std::move(slots);
+    }
+    return fx;
+}
+
+// Opens a rack or effect preset document: parses it and checks its format and version.
+bool openPreset(std::string_view text, std::string_view format, J& doc, Reporter& r) {
+    if (text.size() > kMaxPatchBytes) {
+        r.error("too_large", "", "The document is larger than a preset can be.", "Check that this is a preset file.");
+        return false;
+    }
+    try {
+        doc = J::parse(text);
+    } catch (const J::exception&) {
+        r.error("bad_json", "", "The text is not valid JSON.", "Look for a missing comma, quote or bracket.");
+        return false;
+    }
+    if (!doc.is_object() || doc.find("format") == doc.end() || !doc["format"].is_string() ||
+        doc["format"].get_ref<const std::string&>() != format) {
+        r.error("bad_format", "/format", "This is not a " + std::string(format) + " document.",
+                "Set \"format\" to \"" + std::string(format) + "\", or open a file that is one.");
+        return false;
+    }
+    const auto version = doc.find("version");
+    if (version == doc.end() || !version->is_number_integer() || version->get<int>() != 1) {
+        r.error("bad_version", "/version", "This preset's version is missing or not one this build reads.",
+                "Set \"version\" to 1.");
+        return false;
+    }
+    return true;
 }
 
 bool endsWithIndex(const std::string& pointer) {
@@ -1026,6 +1241,51 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
                 doc["osc" + std::to_string(i + 1)][slot == 0 ? "warp_a" : "warp_b"]["curve"] =
                     shapeToJson(patch.warpCurves[static_cast<std::size_t>(i)][slot], false);
 
+    // Play data: patterns, chord memory and clips.
+    const bool anyPattern = std::any_of(patch.arpPatterns.begin(), patch.arpPatterns.end(),
+                                        [](const ArpPattern& p) { return !p.empty(); });
+    if (anyPattern) {
+        static const char* states[] = {"on", "tie", "rest"};
+        J patterns = J::array();
+        for (const ArpPattern& pattern : patch.arpPatterns) {
+            J steps = J::array();
+            for (const ArpStep& s : pattern.steps) {
+                J o = J::object();
+                o["state"] = states[static_cast<int>(s.state)];
+                if (full || s.velocity != 1.0) o["velocity"] = s.velocity;
+                if (full || s.transpose != 0) o["transpose"] = s.transpose;
+                if (full || s.ratchet != 1) o["ratchet"] = s.ratchet;
+                steps.push_back(std::move(o));
+            }
+            patterns.push_back({{"steps", std::move(steps)}});
+        }
+        doc["arp"]["patterns"] = std::move(patterns);
+    }
+    if (full || patch.chordNotes != Patch().chordNotes)
+        doc["chord"]["notes"] = patch.chordNotes;
+    const bool anyClip = std::any_of(patch.clips.begin(), patch.clips.end(), [](const Clip& c) { return !(c == Clip{}); });
+    if (anyClip) {
+        const Clip clipDefaults;
+        J clips = J::array();
+        for (const Clip& clip : patch.clips) {
+            J o = J::object();
+            if (!(clip == clipDefaults)) {
+                if (full || !clip.name.empty()) o["name"] = clip.name;
+                o["bars"] = clip.bars;
+                if (full || clip.beatsPerBar != clipDefaults.beatsPerBar) o["beats_per_bar"] = clip.beatsPerBar;
+                o["tempo"] = clip.tempo;
+                if (full || !clip.key.empty()) o["key"] = clip.key;
+                o["root"] = clip.root;
+                J notes = J::array();
+                for (const ClipNote& n : clip.notes)
+                    notes.push_back({{"start", n.start}, {"length", n.length}, {"key", n.key}, {"velocity", n.velocity}});
+                o["notes"] = std::move(notes);
+            }
+            clips.push_back(std::move(o));
+        }
+        doc["clip"]["clips"] = std::move(clips);
+    }
+
     const std::size_t routeCount = std::min<std::size_t>(patch.routes.size(), kNumModRoutes);
     if (full || routeCount > 0) {
         static const char* polarities[] = {"bi", "uni"};
@@ -1052,32 +1312,7 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
         doc["mod"] = std::move(routes);
     }
 
-    J fx = J::object();
-    for (const auto& module : reg.modules())
-        if (module.kind == ModuleKind::FxRack)
-            for (int i = module.firstParam; i < module.firstParam + module.numParams; ++i)
-                if (full || patch.get(i) != reg.at(i).def)
-                    fx[reg.at(i).pointer.substr(4)] = valueToJson(reg.at(i), patch.get(i));
-    for (int lane = 0; lane < kNumFxLanes; ++lane) {
-        if (!full && patch.fxSlotCount(lane) == 0)
-            continue;
-        J slots = J::array();
-        for (int slot = 0; slot < patch.fxSlotCount(lane); ++slot) {
-            const auto& effect = reg.effectTypes()[static_cast<std::size_t>(patch.fxSlotType(lane, slot))];
-            J o = J::object();
-            o["type"] = effect.id;
-            const int on = reg.fxSlotOn(lane, slot), mix = reg.fxSlotMix(lane, slot);
-            if (full || patch.get(on) != reg.at(on).def) o["on"] = patch.get(on) >= 0.5;
-            if (full || patch.get(mix) != reg.at(mix).def) o["mix"] = patch.get(mix);
-            for (const auto& p : effect.params) {
-                const double value = patch.get(reg.fxSlotParam(lane, slot, p.index));
-                if (full || value != p.def)
-                    o[p.pointer] = valueToJson(p, value);
-            }
-            slots.push_back(std::move(o));
-        }
-        fx[std::string(fxLaneKey(lane))] = std::move(slots);
-    }
+    J fx = fxToJson(patch, full);
     if (!fx.empty())
         doc["fx"] = std::move(fx);
 
@@ -1109,6 +1344,109 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
     }
 
     return doc.dump(2, ' ', false, J::error_handler_t::replace) + "\n";
+}
+
+// --- Rack and effect presets ---------------------------------------------------------------------
+
+std::string saveRackPreset(const Patch& patch) {
+    J doc = J::object();
+    doc["format"] = kRackFormat;
+    doc["version"] = 1;
+    doc["fx"] = fxToJson(patch, true);
+    return doc.dump(2, ' ', false, J::error_handler_t::replace) + "\n";
+}
+
+bool loadRackPreset(std::string_view text, Patch& into, std::vector<Issue>& issues) {
+    Reporter r{issues};
+    const std::size_t before = issues.size();
+    try {
+        J doc;
+        if (!openPreset(text, kRackFormat, doc, r))
+            return false;
+        Patch rack;
+        for (const auto& [key, child] : doc.items()) {
+            if (key == "format" || key == "version")
+                continue;
+            if (key == "fx")
+                readFx(child, rack, r);
+            else
+                r.unknownField("/" + escapeKey(key), key, "fx");
+        }
+        for (std::size_t i = before; i < issues.size(); ++i)
+            if (issues[i].severity == Severity::Error)
+                return false;
+        into.copyRackFrom(rack);
+        return true;
+    } catch (const std::exception&) {
+        r.error("internal", "", "The rack preset could not be read.", "Check that the file is a complete rack preset.");
+        return false;
+    }
+}
+
+std::string saveSlotPreset(const Patch& patch, int lane, int slot) {
+    J doc = J::object();
+    doc["format"] = kSlotFormat;
+    doc["version"] = 1;
+    if (lane >= 0 && lane < kNumFxLanes && slot >= 0 && slot < patch.fxSlotCount(lane))
+        doc["slot"] = slotToJson(patch, lane, slot, true);
+    return doc.dump(2, ' ', false, J::error_handler_t::replace) + "\n";
+}
+
+bool loadSlotPreset(std::string_view text, Patch& into, int lane, int position, FxMoves* moves,
+                    std::vector<Issue>& issues) {
+    Reporter r{issues};
+    const std::size_t before = issues.size();
+    if (lane < 0 || lane >= kNumFxLanes || position < 0 || position > into.fxSlotCount(lane) ||
+        (position == into.fxSlotCount(lane) && position >= kNumFxSlots)) {
+        r.error("no_slot", "", "There is no such slot to load the effect into.", "Choose a slot of a lane that is not full.");
+        return false;
+    }
+    try {
+        J doc;
+        if (!openPreset(text, kSlotFormat, doc, r))
+            return false;
+        const auto slot = doc.find("slot");
+        if (slot == doc.end()) {
+            r.error("missing_field", "/slot", "The preset has no \"slot\".", "Add \"slot\" with the effect's \"type\" and values.");
+            return false;
+        }
+        Patch single;
+        J lanes = J::array();
+        lanes.push_back(*slot);
+        readFxLane(lanes, 0, single, r);
+        for (std::size_t i = before; i < issues.size(); ++i) { // paths as they are in this document
+            std::string& path = issues[i].path;
+            if (path.rfind("/fx/a/0", 0) == 0)
+                path = "/slot" + path.substr(7);
+        }
+        for (std::size_t i = before; i < issues.size(); ++i)
+            if (issues[i].severity == Severity::Error)
+                return false;
+        if (single.fxSlotCount(0) != 1)
+            return false;
+        // Replace what is there (its routes go with it), then insert the new effect at its place.
+        FxMoves removal, insertion;
+        const bool replacing = position < into.fxSlotCount(lane);
+        if (replacing)
+            into.removeFxSlot(lane, position, &removal);
+        into.insertFxSlot(lane, position, single.fxSlotType(0, 0), &insertion);
+        const auto& reg = Registry::get();
+        for (int f = 0; f < 2 + kNumFxSlotParams; ++f)
+            into.set(reg.fxSlotOn(lane, position) + f, single.get(reg.fxSlotOn(0, 0) + f));
+        into.fxCurves[static_cast<std::size_t>(lane)][static_cast<std::size_t>(position)] = single.fxCurves[0][0];
+        if (moves != nullptr) {
+            FxMoves combined;
+            for (std::size_t k = 0; k < combined.from.size(); ++k) {
+                const int mid = insertion.from[k];
+                combined.from[k] = mid < 0 ? -1 : replacing ? removal.from[static_cast<std::size_t>(mid)] : mid;
+            }
+            *moves = combined;
+        }
+        return true;
+    } catch (const std::exception&) {
+        r.error("internal", "", "The effect preset could not be read.", "Check that the file is a complete effect preset.");
+        return false;
+    }
 }
 
 } // namespace zed

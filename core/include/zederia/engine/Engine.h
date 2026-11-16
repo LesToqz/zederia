@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace zed {
 
@@ -44,6 +46,12 @@ struct ProcessArgs {
     // Optional side-chain input for the envelope follower, `frames` samples each.
     const float* sidechainLeft = nullptr;
     const float* sidechainRight = nullptr;
+    // Optional: room for the notes the play features make (arpeggiator, chord tools, clips), for
+    // the host. While global.midi_out is on the engine writes up to midiOutCapacity of them, with
+    // offsets inside the block, and sets *midiOutCount (0 otherwise).
+    MidiEvent* midiOut = nullptr;
+    int midiOutCapacity = 0;
+    int* midiOutCount = nullptr;
 };
 
 // The sources of a voice, in the order used by the warp slots' "source" parameter.
@@ -56,6 +64,15 @@ struct FilterView {
     bool on = false;
     flt::Settings settings;
     int oversample = 1;
+};
+
+// One rack slot as the audio thread last saw it.
+struct FxSlotStatus {
+    bool present = false; // an effect is loaded
+    bool on = false;      // its power switch
+    bool idle = false;    // its tail has died away: it costs nothing until input returns
+    bool running = false; // it processed audio in the last block
+    float meter = 0.0f;   // the effect's own reading (the Widener's correlation)
 };
 
 class Engine {
@@ -114,9 +131,38 @@ public:
     void setTuningLocked(bool locked);
     bool tuningLocked() const;
 
+    // --- Play (any non-audio thread) -----------------------------------------------------------
+    // The arpeggiator's patterns, the chord memory and the clips of a patch (loadPatch() does this).
+    void setPlayData(const Patch& patch);
+
+    // --- Effects rack (any non-audio thread) --------------------------------------------------
+    // Hands over the patch's rack: the effect in each slot, the slot values and the drawn curves,
+    // and writes the slot values into params(). `moves` (from the Patch rack edits) says which
+    // effects continue where; without it an effect continues when the same type stays in the same
+    // slot. Continuing effects keep their tails; edits fade, so none of them clicks.
+    void setRack(const Patch& patch, const FxMoves* moves = nullptr);
+    // While locked, loadPatch() keeps the current rack and its values.
+    void setRackLocked(bool locked);
+    bool rackLocked() const;
+    FxSlotStatus fxSlotStatus(int lane, int slot) const noexcept;
+    int fxSlotsRunning() const noexcept; // slots that processed audio in the last block
+    // The response of an EQ or Filter slot at its current settings, for the display. False when
+    // the slot holds another kind of effect.
+    bool fxResponse(int lane, int slot, std::span<const double> hz, std::span<float> magnitudeDb) const;
+
     // Frees objects the audio thread has finished with. The setters above do this too; call it
     // now and then when nothing else is being set.
     void collectGarbage();
+
+    // --- Profiling (for the benchmark tool) ----------------------------------------------------
+    // While on, process() times its sections; off it costs one branch per section. Set it while
+    // audio is stopped and read the result the same way.
+    struct ProfileEntry {
+        std::string section;
+        double seconds = 0.0;
+    };
+    void setProfiling(bool on);
+    std::vector<ProfileEntry> profile() const; // time per section since profiling was switched on
 
     void process(const ProcessArgs& args) noexcept;
 
@@ -136,7 +182,8 @@ public:
                         std::span<float> phase) const;
 
     double sampleRate() const noexcept;
-    // The oversampling filters are minimum-delay designs: no quality mode adds latency.
+    // The oversampling filters are minimum-delay designs and no effect looks ahead: no quality
+    // mode and no effect adds latency.
     int latencySamples() const noexcept { return 0; }
     double tailSeconds() const noexcept; // how long sound can continue after the last note-off
 

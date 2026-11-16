@@ -84,9 +84,10 @@ TEST_CASE("render: length follows the events and the tail", "[render]") {
     CHECK(events[1].sample == 72000);
 
     const RenderResult automatic = renderOffline(patch, events, {});
-    // The whole release is there and the file ends in silence.
-    CHECK(automatic.left.size() > 72000u + 12000u);
-    CHECK(automatic.left.size() < 72000u + 14000u);
+    // The whole release is there, then 0.3 s for the output DC filter to settle (14400 samples),
+    // and the file ends in silence.
+    CHECK(automatic.left.size() > 72000u + 12000u + 14400u);
+    CHECK(automatic.left.size() < 72000u + 14000u + 14400u);
     CHECK(zedtest::peakOf(automatic.left, 0, 24000) == 0.0f);
     CHECK(zedtest::peakOf(automatic.left, 72000 + 6000, 72000 + 11000) > 0.0f);
     CHECK(automatic.left.back() == 0.0f);
@@ -293,7 +294,8 @@ TEST_CASE("bench: scenarios run and report a realtime factor", "[bench]") {
         BenchResult result;
         REQUIRE(runBench(s.name, 0.25, 1, result));
         CHECK(result.percent > 0.0);
-        CHECK(result.audioSeconds == Approx(0.25).epsilon(0.05));
+        if (std::string(s.unit) == "%")
+            CHECK(result.audioSeconds == Approx(0.25).epsilon(0.05)); // preset_load measures milliseconds per load instead
     }
     BenchResult result;
     CHECK_FALSE(runBench("no_such_scenario", 0.25, 1, result));

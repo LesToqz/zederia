@@ -27,7 +27,7 @@ struct Args {
 
 // Options that take no value.
 inline bool isFlag(const std::string& name) {
-    static const char* flags[] = {"json", "print", "compact", "list", "update-baseline", "report-only", "help", "normalize", "descending",
+    static const char* flags[] = {"json", "print", "compact", "list", "update-baseline", "report-only", "profile", "help", "normalize", "descending",
                                   "snap", "average", "unipolar", "live-quality"};
     return std::any_of(std::begin(flags), std::end(flags), [&](const char* f) { return name == f; });
 }

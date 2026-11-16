@@ -25,6 +25,11 @@ add_executable(zederia_tests
     core/test_modulation.cpp
     core/test_voice.cpp
     core/test_patches.cpp
+    core/test_fx.cpp
+    core/test_rack.cpp
+    core/test_output.cpp
+    core/test_play.cpp
+    core/test_golden.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE
@@ -52,7 +57,7 @@ add_test(NAME cli.render_is_deterministic
                  -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/glass_pluck.zpreset
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RenderTwice.cmake)
 # The hand-written test patches render through the command-line tool, the same every time.
-foreach(patch bass pad pluck lead)
+foreach(patch bass pad pluck lead arp_fx)
     add_test(NAME cli.render_test_patch_${patch}
              COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/render_${patch}
                      -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/${patch}.zpreset
@@ -62,6 +67,10 @@ foreach(patch bass pad pluck lead)
     set_tests_properties(cli.validate_test_patch_${patch} PROPERTIES FAIL_REGULAR_EXPRESSION "[1-9][0-9]* warning")
 endforeach()
 add_test(NAME cli.bench_runs COMMAND zederia-cli bench --seconds 0.5 --runs 1 --report-only)
+add_test(NAME cli.clip_commands
+         COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/clip_commands
+                 -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/data/patches/arp_fx.zpreset
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ClipCommands.cmake)
 add_test(NAME cli.table_commands
          COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/table_commands
                  -DDATA=${CMAKE_CURRENT_SOURCE_DIR}/data -DCONTENT=${CMAKE_SOURCE_DIR}/content

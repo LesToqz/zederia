@@ -275,7 +275,9 @@ TEST_CASE("engine: pitch bend, level, pan and velocity act as specified", "[engi
 }
 
 TEST_CASE("engine: parameter changes while playing are smooth", "[engine]") {
-    Rig rig;
+    Patch patch;
+    patch.set("global.dc_filter", 0); // the master glide itself; the DC filter's own settling is tested apart
+    Rig rig(patch);
     rig.engine.params().set(idx("osc1.phase_random"), 0.0);
     rig.run(4800, {MidiEvent::noteOn(0, 36, 1.0f)});
     // A 60 dB jump of the master volume, from another "thread", between two blocks.

@@ -88,6 +88,16 @@ struct LaneSet {
     int level[kMaxLanes] = {};     // band-limited level each lane reads
     int levelNext[kMaxLanes] = {}; // level it is fading to (equal to level when not fading)
     bool levelFade = false;
+    // What the lanes were last aimed with: when none of it changed, every lane already holds its
+    // value and the aim is skipped (most ticks of a held note that nothing moves).
+    double aimedBase = -1.0;
+    const void* aimedLanes = nullptr;
+    const void* aimedTable = nullptr;
+    const float* aimedRatio = nullptr;
+    std::uint32_t aimedEpoch = 0;
+    int aimedRate = 0, aimedCount = 0;
+    bool settled = false;   // every ramp has arrived (set at the control tick)
+    bool stepsZero = false; // and every step is zero
 };
 
 void setLaneLevel(LaneSet& s, int lane, const TableData& table, int level, bool second) {
@@ -481,6 +491,17 @@ struct Ids {
     struct {
         int type, rate, sync, division, scope;
     } flux[kNumFlux];
+    // Milestone 4: output, rack routing and play.
+    int dcFilter, limiter, fxOff, midiOut, midiThru, fxBRouting, fxBalance[3];
+    struct {
+        int on, mode, octaves, rate, gate, swing, latch, restart, steps, pattern;
+    } arp;
+    struct {
+        int memory, scaleLock, key, scale, lockMode, strum, strumDirection;
+    } chord;
+    struct {
+        int on, slot, trigger, latch, loop;
+    } clip;
 
     Ids() {
         const auto& r = Registry::get();
@@ -625,5 +646,36 @@ struct Ids {
             f.division = at(p + "division");
             f.scope = at(p + "scope");
         }
+        dcFilter = at("global.dc_filter");
+        limiter = at("global.limiter");
+        fxOff = at("global.fx_off");
+        midiOut = at("global.midi_out");
+        midiThru = at("global.midi_thru");
+        fxBRouting = at("fx.b_routing");
+        fxBalance[0] = at("fx.filter1_balance");
+        fxBalance[1] = at("fx.filter2_balance");
+        fxBalance[2] = at("fx.direct_balance");
+        arp.on = at("arp.on");
+        arp.mode = at("arp.mode");
+        arp.octaves = at("arp.octaves");
+        arp.rate = at("arp.rate");
+        arp.gate = at("arp.gate");
+        arp.swing = at("arp.swing");
+        arp.latch = at("arp.latch");
+        arp.restart = at("arp.restart");
+        arp.steps = at("arp.steps");
+        arp.pattern = at("arp.pattern");
+        chord.memory = at("chord.memory");
+        chord.scaleLock = at("chord.scale_lock");
+        chord.key = at("chord.key");
+        chord.scale = at("chord.scale");
+        chord.lockMode = at("chord.lock_mode");
+        chord.strum = at("chord.strum");
+        chord.strumDirection = at("chord.strum_direction");
+        clip.on = at("clip.on");
+        clip.slot = at("clip.slot");
+        clip.trigger = at("clip.trigger");
+        clip.latch = at("clip.latch");
+        clip.loop = at("clip.loop");
     }
 };

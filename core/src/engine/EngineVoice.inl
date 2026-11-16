@@ -22,6 +22,26 @@ double pitchInc(double note) const { return std::min(noteToHz(note, referenceHz)
 // Points every lane's ramps at the values wanted at the next control tick.
 void aimLanes(LaneSet& s, const OscShared& o, const TableData& table, const LaneTable& t, const float* ratio,
               double baseInc, bool snap) {
+    if (!snap && s.settled && !s.levelFade && s.aimedBase == baseInc && s.aimedLanes == &t && s.aimedEpoch == t.epoch &&
+        s.aimedTable == &table && s.aimedRatio == ratio && s.aimedRate == o.oversample && s.aimedCount == o.padded &&
+        s.lanes.count == o.count) {
+        // The same targets again and every ramp has arrived: the lanes hold where they are.
+        if (!s.stepsZero) {
+            osc::Lanes& H = s.lanes;
+            for (int l = 0; l < o.padded; ++l)
+                H.incStep[l] = H.fposStep[l] = H.dAStep[l] = H.dBStep[l] = H.gLStep[l] = H.gRStep[l] = H.gMStep[l] = 0.0f;
+            s.stepsZero = true;
+        }
+        return;
+    }
+    s.settled = s.stepsZero = false;
+    s.aimedBase = baseInc;
+    s.aimedLanes = &t;
+    s.aimedEpoch = t.epoch;
+    s.aimedTable = &table;
+    s.aimedRatio = ratio;
+    s.aimedRate = o.oversample;
+    s.aimedCount = o.padded;
     osc::Lanes& L = s.lanes;
     L.count = o.count;
     const float maxFrame = static_cast<float>(table.frames() - 1);
@@ -91,6 +111,7 @@ static void settleLanes(LaneSet& s, int padded) {
         L.xf[l] = L.xfStep[l] = 0.0f;
     }
     s.levelFade = false;
+    s.settled = true;
 }
 
 void aimOsc(Voice& v, int i, bool snap) {
@@ -636,6 +657,7 @@ void applyActions() {
             advanceRest(v, samplesToTick, true);
             reaim(v);
             activeCount += wasActive ? 0 : 1;
+            rackNoteOn();
             break;
         }
         case VoiceAction::Kind::Retrigger: {
@@ -657,6 +679,7 @@ void applyActions() {
             retriggerSharedLfos();
             lastStarted = a.slot;
             reaim(v);
+            rackNoteOn();
             break;
         }
         case VoiceAction::Kind::Glide:

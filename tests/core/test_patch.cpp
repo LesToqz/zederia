@@ -465,3 +465,57 @@ TEST_CASE("patch: migration runs step by step", "[patch][migration]") {
     CHECK_FALSE(migratePatch(noVersion, steps, 3, issues));
     CHECK(issues[0].code == "missing_field");
 }
+
+TEST_CASE("patch: patterns, chord notes, clips and drawn effect curves round-trip and are validated", "[patch][play]") {
+    Patch p;
+    p.arpPatterns[3].steps = {ArpStep{}, ArpStep{StepState::Tie, 1.0, 0, 1}, ArpStep{StepState::On, 0.25, -12, 4}};
+    p.chordNotes = {0, 5, 7, 12};
+    p.clips[7].name = "Bass line";
+    p.clips[7].bars = 2;
+    p.clips[7].tempo = 92.5;
+    p.clips[7].key = "E minor";
+    p.clips[7].root = 52;
+    p.clips[7].notes = {{0.0, 0.5, 40, 0.9}, {0.75, 0.25, 43, 0.6}};
+    const int slot = p.addFxSlot(0, Registry::get().effectIndex("drive"));
+    p.fxCurves[0][static_cast<std::size_t>(slot)][1].points = {{0.0, 0.0, 0.0}, {0.5, 0.9, -0.4}, {1.0, 1.0, 0.0}};
+    for (const bool compact : {false, true}) {
+        SaveOptions options;
+        options.compact = compact;
+        const std::string text = savePatch(p, options);
+        const LoadResult r = loadPatch(text);
+        REQUIRE(r.ok());
+        CHECK(r.issues.empty());
+        CHECK(r.patch == p);
+        CHECK(savePatch(r.patch, options) == text);
+    }
+    // The init patch writes none of it in compact form.
+    const std::string init = savePatch(Patch(), SaveOptions{true});
+    CHECK(init.find("patterns") == std::string::npos);
+    CHECK(init.find("clips") == std::string::npos);
+
+    const auto issuesOf = [](const std::string& body) {
+        return loadPatch("{\"format\":\"zederia.patch\",\"version\":1," + body + "}");
+    };
+    const LoadResult badState = issuesOf("\"arp\":{\"patterns\":[{\"steps\":[{\"state\":\"hold\"}]}]}");
+    CHECK_FALSE(badState.ok());
+    CHECK(badState.issues[0].path == "/arp/patterns/0/steps/0/state");
+    CHECK(badState.issues[0].fix.find("\"tie\"") != std::string::npos);
+    const LoadResult clamped = issuesOf("\"chord\":{\"notes\":[0,4,99]}");
+    REQUIRE(clamped.ok());
+    CHECK(clamped.patch.chordNotes == std::vector<int>{0, 4, 48});
+    CHECK(clamped.issues[0].code == "out_of_range");
+    std::string steps;
+    for (int i = 0; i < 33; ++i)
+        steps += std::string(i ? "," : "") + "{\"state\":\"on\"}";
+    const LoadResult longLane = issuesOf("\"arp\":{\"patterns\":[{\"steps\":[" + steps + "]}]}");
+    CHECK_FALSE(longLane.ok());
+    CHECK(longLane.issues[0].code == "too_many_items");
+    const LoadResult clipIssue = issuesOf("\"clip\":{\"clips\":[{\"notes\":[{\"start\":1,\"key\":200,\"speed\":2}]}]}");
+    REQUIRE(clipIssue.ok());
+    CHECK(clipIssue.patch.clips[0].notes[0].key == 127);
+    REQUIRE(clipIssue.issues.size() == 2);
+    CHECK(clipIssue.issues[1].path == "/clip/clips/0/notes/0/speed");
+    const LoadResult curve = issuesOf("\"fx\":{\"a\":[{\"type\":\"drive\",\"curve_a\":{\"points\":[{\"x\":0,\"y\":2}]}}]}");
+    REQUIRE(curve.ok());
+    CHECK(curve.patch.fxCurves[0][0][0].points[0].y == 1.0);
+}

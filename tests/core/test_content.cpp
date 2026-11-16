@@ -338,6 +338,7 @@ TEST_CASE("resynthesis: the warped cycle is what the oscillator plays", "[resynt
         Patch p;
         p.set("osc1.phase_random", 0);
         p.set("osc1.level", 0);
+        p.set("global.dc_filter", 0); // compares the voice with the baked cycle
         p.set("global.master", 0);
         p.set("env1.attack", 0);
         p.set("env1.sustain", 1);
