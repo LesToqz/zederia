@@ -5,6 +5,7 @@
     "idle": 0.0434,
     "idle_rack": 0.0544,
     "one_voice": 0.2086,
+    "one_voice_rack_off": 0.2488,
     "chord8": 2.6712,
     "chord8_mod": 3.2792,
     "full8": 14.3447,

@@ -363,6 +363,7 @@ TEST_CASE("fx: reverb decays at its decay time in every mode", "[fx][reverb]") {
             rig.run(l, r);
             const double t60 = t60Seconds(l, r);
             INFO(mode << ", decay " << decayMs << " ms: measured T60 " << t60 << " s");
+            WARN("reverb " << mode << " decay " << decayMs << " ms: T60 " << t60 << " s");
             CHECK(t60 == Approx(decayMs / 1000.0).epsilon(0.2));
         }
     }
@@ -405,6 +406,7 @@ TEST_CASE("fx: reverb has no metallic ringing and is mono-compatible", "[fx][rev
             worst = std::max(worst, 10.0 * std::log10(power[static_cast<std::size_t>(k)] / around[around.size() / 2]));
         }
         INFO(mode << ": strongest line " << worst << " dB above its neighbourhood");
+        WARN("reverb " << mode << ": strongest line in the tail " << worst << " dB above its neighbourhood");
         CHECK(worst < 10.0);
 
         // Mono compatibility: the two sides are uncorrelated and their sum keeps the energy.
@@ -412,25 +414,29 @@ TEST_CASE("fx: reverb has no metallic ringing and is mono-compatible", "[fx][rev
         wide.choose("mode", mode);
         auto [nl, nr] = wide.runMono(zedtest::noise(3.0, 0.25));
         const std::size_t from = 48000, to = nl.size();
+        WARN("reverb " << mode << ": correlation of the sides " << zedtest::correlation(nl, nr, from, to));
         CHECK(std::abs(zedtest::correlation(nl, nr, from, to)) < 0.5);
         std::vector<float> mono(nl.size());
         for (std::size_t i = 0; i < mono.size(); ++i)
             mono[i] = 0.5f * (nl[i] + nr[i]);
         const double sides = 0.5 * (std::pow(zedtest::rmsOf(nl, from, to), 2) + std::pow(zedtest::rmsOf(nr, from, to), 2));
+        WARN("reverb " << mode << ": mono sum against the sides " << 20.0 * std::log10(zedtest::rmsOf(mono, from, to)) - 10.0 * std::log10(sides) << " dB");
         CHECK(20.0 * std::log10(zedtest::rmsOf(mono, from, to)) - 10.0 * std::log10(sides) > -4.5);
     }
 }
 
 TEST_CASE("fx: reverb freeze holds the tail; size changes do not click", "[fx][reverb]") {
     FxRig rig("reverb");
-    std::vector<float> l = zedtest::withSilence(zedtest::noise(1.0, 0.25), 4.0), r = l;
+    std::vector<float> l = zedtest::withSilence(zedtest::noise(1.0, 0.25), 10.0), r = l;
     std::vector<float> a(l.begin(), l.begin() + 48000), ar = a, b(l.begin() + 48000, l.end()), br = b;
     rig.run(a, ar);
     rig.set("freeze", 1.0, false);
     CHECK_FALSE(rig.effect->mayIdle());
     rig.run(b, br);
-    const double early = levelDb(b, 24000, 48000), late = levelDb(b, 168000, 192000);
-    CHECK(late == Approx(early).margin(1.5));
+    // (the lines take about a second to settle on whole samples; from then on nothing is lost)
+    const double early = levelDb(b, 72000, 96000), late = levelDb(b, 456000, 480000);
+    WARN("reverb freeze: level after 1.5 s " << early << " dB, after 9.5 s " << late << " dB");
+    CHECK(late == Approx(early).margin(0.5)); // frozen, the network loses nothing (the window levels wander a little)
     rig.set("freeze", 0.0, false);
     CHECK(rig.effect->mayIdle());
 
@@ -511,6 +517,7 @@ TEST_CASE("fx: limiter never passes its ceiling", "[fx][dynamics][limiter]") {
     rig.set("ceiling", -6.0);
     auto [l, r] = rig.runMono(zedtest::noise(2.0, 2.0)); // peaks far above full scale
     const float ceiling = static_cast<float>(std::pow(10.0, -6.0 / 20.0));
+    WARN("limiter at -6 dB: highest output " << zedtest::db(std::max(zedtest::peakOf(l, 0, l.size()), zedtest::peakOf(r, 0, r.size()))) << " dBFS");
     CHECK(zedtest::peakOf(l, 0, l.size()) <= ceiling);
     CHECK(zedtest::peakOf(r, 0, r.size()) <= ceiling);
     CHECK(zedtest::peakOf(l, 48000, 96000) > 0.9f * ceiling);

@@ -251,8 +251,10 @@ void rackTick() {
             if (target > 0.0f && x.gTarget <= 0.0f && x.g <= 0.0f)
                 x.needsClear = true; // switched back on: it starts clean, without an old tail
             x.gTarget = target;
-            if (x.idle) // asleep: its values are read again when it wakes
+            if (x.idle || (x.gTarget <= 0.0f && x.g <= 0.0f)) { // asleep or off: values are read again when it runs
+                x.ran = false;
                 continue;
+            }
             x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(on + 1)]), false);
             bool changed = x.needsSet || ctxChanged;
             for (int k = 0; k < x.params; ++k) {
@@ -362,14 +364,16 @@ void idleCheck(FxInstance& x) {
     x.peakIn = x.peakOut = 0.0f;
 }
 
-// True when every effect is idle or switched off and no edit is under way.
-bool rackAsleep() const {
+// True when no effect would change the signal and no edit is under way: every effect is switched
+// off, or (with silence coming in) idle.
+bool rackAsleep(bool silentInput) const {
     if (staged != nullptr || bSwitching || fxMix != fxMixTarget)
         return false;
     for (int lane = 0; lane < kNumFxLanes; ++lane)
         for (int n = 0; n < chainCount[lane]; ++n) {
             const FxInstance& x = pool[chain[lane][n]];
-            if (!(x.idle || (x.g <= 0.0f && x.gTarget <= 0.0f)) || x.g != x.gTarget)
+            const bool off = x.g <= 0.0f && x.gTarget <= 0.0f;
+            if (!(off || (silentInput && x.idle && x.g == x.gTarget)))
                 return false;
         }
     return true;
@@ -390,7 +394,7 @@ void runRack(float (&bus)[3][2][kInterval], bool split, float* left, float* righ
     }
     const bool rackEmpty = chainCount[0] == 0 && chainCount[1] == 0 && chainCount[2] == 0;
     const bool fxGone = fxMix <= 0.0f && fxMixTarget <= 0.0f;
-    if (rackEmpty || fxGone || (activeCount == 0 && rackAsleep())) {
+    if (rackEmpty || fxGone || rackAsleep(activeCount == 0)) {
         outputSilent = activeCount == 0; // no voice and nothing ringing: the output is exact silence
         // Nothing to run: no effects, FX off, or no voice and every effect asleep (its input is
         // silence, so each would pass it unchanged).

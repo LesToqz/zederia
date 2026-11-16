@@ -130,7 +130,10 @@ public:
             lowCut_[c].design(v[LowCut], 0.70710678, sampleRate_);
             highCut_[c].design(v[HighCut], 0.70710678, sampleRate_);
         }
-        modDepth_ = v[Modulation] * 0.0004 * sampleRate_;
+        // Frozen, the lines stop moving: with whole-sample lengths every read is exact and nothing is lost.
+        modTarget_ = frozen_ ? 0.0 : v[Modulation] * 0.0004 * sampleRate_;
+        if (snap)
+            modDepth_ = modTarget_;
         width_.aim(static_cast<float>(v[Width]), snap);
         // Longer decays fill up more: a gentle input trim keeps steady material at a similar level.
         const double trim = std::clamp(std::pow(2000.0 / std::max(decayMs_, 1.0), 0.25), 0.35, 1.0);
@@ -163,11 +166,19 @@ public:
             lengthsMoving_ = moving;
             updateLoss();
         }
+        const double depthStart = modDepth_;
+        if (modDepth_ != modTarget_) { // the depth glides too (freeze fades the movement out)
+            modDepth_ += (modTarget_ - modDepth_) * std::min(1.0, frames * static_cast<double>(lengthGlide_));
+            if (std::abs(modTarget_ - modDepth_) < 1.0e-3)
+                modDepth_ = modTarget_;
+        }
         // Each line's read position at both ends of the call.
         float readA[kLines], readStep[kLines];
         for (int i = 0; i < kLines; ++i) {
-            const float depth = (i & 1) != 0 ? static_cast<float>(modDepth_ * 1.41421356) : 0.0f; // odd lines move
-            const float a = depth > 0.0f ? depth * fastSin(lfoPhase_[i]) : 0.0f;
+            const bool moves = (i & 1) != 0; // odd lines move
+            const auto depthA = static_cast<float>(moves ? depthStart * 1.41421356 : 0.0);
+            const auto depth = static_cast<float>(moves ? modDepth_ * 1.41421356 : 0.0);
+            const float a = depthA > 0.0f ? depthA * fastSin(lfoPhase_[i]) : 0.0f;
             lfoPhase_[i] += lfoRate_[i] / sampleRate_ * frames;
             lfoPhase_[i] -= std::floor(lfoPhase_[i]);
             const float b = depth > 0.0f ? depth * fastSin(lfoPhase_[i]) : 0.0f;
@@ -265,7 +276,7 @@ private:
             const double jitter = 1.0 + 0.06 * std::sin(2.4 * (i + 1));
             const double lineMs = shape.shortestMs * std::pow(shape.longestMs / shape.shortestMs, t) * jitter * scale;
             lengthTarget_[i] = static_cast<float>(std::max(lineMs * ms, 4.0));
-            if ((i & 1) == 0) // a still line ends on a whole sample: its straight-line read is then exact
+            if ((i & 1) == 0 || frozen_) // a still line ends on a whole sample: its read is then exact
                 lengthTarget_[i] = std::round(lengthTarget_[i]);
             if (snap)
                 length_[i] = lengthTarget_[i];
@@ -300,7 +311,7 @@ private:
 
     double sampleRate_ = 48000.0;
     int mode_ = 1, pendingMode_ = 1, modeFade_ = 0;
-    double size_ = 0.5, decayMs_ = 2000.0, damping_ = 0.4, predelay_ms_ = 10.0, modDepth_ = 0.0;
+    double size_ = 0.5, decayMs_ = 2000.0, damping_ = 0.4, predelay_ms_ = 10.0, modDepth_ = 0.0, modTarget_ = 0.0;
     bool frozen_ = false, cubic_ = true, lengthsMoving_ = false;
     DelayLine lines_[kLines];
     DelayLine diffusers_[2][kDiffusers];

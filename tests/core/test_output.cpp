@@ -136,6 +136,7 @@ TEST_CASE("output: switching quality while a note plays does not click", "[outpu
         const double after = zedtest::largestJump(rig.left, at + 12000, at + 24000);
         const double around = zedtest::largestJump(rig.left, at, at + 4800);
         INFO("to quality " << quality << ": " << around << " against " << before << " before and " << after << " after");
+        WARN("quality change to " << quality << ": largest step " << around / std::max(before, after) << " times the steady signal's");
         CHECK(around <= 1.5 * std::max(before, after));
     }
     // The offline switch (a host rendering faster than real time) is the same kind of change.

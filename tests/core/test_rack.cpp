@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <functional>
+#include <stdexcept>
 #include <thread>
 
 using namespace zed;
@@ -28,8 +29,7 @@ int paramOf(int type, const char* name) {
     for (std::size_t k = 0; k < params.size(); ++k)
         if (params[k].id.substr(params[k].id.rfind('.') + 1) == name)
             return static_cast<int>(k);
-    FAIL("no such effect parameter " << name);
-    return -1;
+    throw std::runtime_error(std::string("no such effect parameter: ") + name);
 }
 
 void setFx(Patch& p, int lane, int slot, const char* name, double value) {
@@ -162,6 +162,7 @@ TEST_CASE("rack: inserting, moving, removing and switching effects while a note 
         const double after = zedtest::largestJump(rig.left, at + 12000, at + 24000);
         const double around = zedtest::largestJump(rig.left, at, at + 2400);
         INFO(edit.name << ": " << around << " against " << before << " before and " << after << " after");
+        WARN("rack edit, " << edit.name << ": largest step " << around / std::max(before, after) << " times the steady signal's");
         CHECK(around <= 1.5 * std::max(before, after));
     }
     // Power switches, lane B routing and FX off.
@@ -181,6 +182,7 @@ TEST_CASE("rack: inserting, moving, removing and switching effects while a note 
         const double around = zedtest::largestJump(rig.left, at, at + 2400);
         INFO("largest jump " << zedtest::largestJumpAt(rig.left, at, at + 2400) - at << " samples after the change");
         INFO(name << ": " << around << " against " << before << " before and " << after << " after");
+        WARN("rack switch, " << name << ": largest step " << around / std::max(before, after) << " times the steady signal's");
         CHECK(around <= 1.5 * std::max(before, after));
     }
 }

@@ -1,14 +1,14 @@
 # Architecture
 
-How the pieces fit as of milestone 3, and the rules every later milestone keeps.
+How the pieces fit as of milestone 4, and the rules every later milestone keeps.
 
 ## Targets
 
 | Target | Folder | What it is | Depends on |
 |---|---|---|---|
-| `zederia_core` | `core/` | Static library: parameter registry, patch model, engine (sound sources, filters, modulators, the matrix), tuning files, wavetable model and toolkit, content recipes, offline renderer, benchmarks. No interface code and no plug-in framework | nlohmann/json |
-| `Zederia` | `plugin/` | The plug-in (VST3, Standalone, CLAP): processor and a temporary editor | `zederia_core`, the plug-in framework |
-| `zederia-cli` | `cli/` | `render`, `validate-patch`, `params`, `bench`, `table ...`, `texture build`, `content build` | `zederia_core` |
+| `zederia_core` | `core/` | Static library: parameter registry, patch model, engine (sound sources, filters, modulators, the matrix, the effects rack, the play features, the output stage), effects, MIDI files and controller maps, tuning files, wavetable model and toolkit, content recipes, offline renderer, benchmarks. No interface code and no plug-in framework | nlohmann/json |
+| `Zederia` | `plugin/` | The plug-in (VST3, Standalone, CLAP): processor (MIDI out and thru, MIDI learn, programs, rack edits, clips) and a temporary editor | `zederia_core`, the plug-in framework |
+| `zederia-cli` | `cli/` | `render` (with `--midi-out`), `validate-patch`, `params`, `bench` (with `--profile`), `table ...`, `texture build`, `content build`, `clip import|export` | `zederia_core` |
 | `zederia-mcp` | `mcp/` | The agent server; prints its version until milestone 6 | `zederia_core` |
 | `zederia_tests`, `zederia_plugin_tests` | `tests/` | Core tests; processor and editor tests | the above, Catch2 |
 
@@ -23,15 +23,15 @@ Everything that makes or describes sound lives in `zederia_core`, so the plug-in
     │        ParamStore  ◄── any thread sets values (host, interface, agent link)
     │           │ drained at the start of each block
     ▼           ▼
-          Engine::process ──► VoiceAllocator ──► voices ──► stereo out
-                 ▲
+          Engine::process: Player ──► VoiceAllocator ──► voices ──► rack (A, B, Master) ──► output stage ──► stereo out
+                 ▲            └──► MIDI out (notes the play features made)
      MidiEvent (sample offsets)        OfflineRenderer drives the same Engine block by block
 ```
 
 - **Registry** (`params/`). Every parameter is declared once in `Registry.cpp`: id, range, default, unit, skew, smoothing class, automatable and modulatable flags, scope, description, and the JSON pointer of its value in a patch. Host parameters, the patch schema, `docs/PARAMETERS.md` and the JSON schema dump are generated from it. It is append-only: `tests/data/registry_ids.txt` records the order and a test fails if an existing id moves or disappears. The host's numeric parameter id is a hash of the string id (`hostIdFor`), checked for collisions.
 - **Effect types and slots.** Each rack slot has `on`, `mix` and sixteen generic parameters `p1..p16`. An effect type lists its own parameters in a fixed order; parameter k of the loaded effect is the slot's `p(k+1)`. Values are stored in the effect parameter's own unit, and `Patch::effectiveDef()` returns the definition that governs a value. In a patch the effect's parameters appear under their own names.
-- **Patch** (`patch/`). Parameter values in registry order plus what is not a parameter: meta text, table and sample references, modulation routes (with drawn curves), LFO shapes, multi-segment envelope shapes, tempo-linked envelope times, warp curves, a tuning, rack layout, macro names. Values that belong to something the patch does not have (an empty slot, a missing route) stay at their defaults.
-- **PatchIO.** `loadPatch` never throws and never crashes; it returns the patch plus issues, each with a code, a JSON-pointer path, a message and a fix. Errors fail the load; warnings (unknown fields, clamped values) do not. `savePatch` writes every value by default so a later change of defaults cannot alter saved sounds; `compact` leaves defaults out. Save, load, save is byte-identical. `migratePatch` brings older format versions forward one step at a time.
+- **Patch** (`patch/`). Parameter values in registry order plus what is not a parameter: meta text, table and sample references, modulation routes (with drawn curves), LFO shapes, multi-segment envelope shapes, tempo-linked envelope times, warp curves, a tuning, rack layout, macro names, Drive's drawn curves per slot, the arpeggiator's twelve pattern slots, the chord memory and eight clips. Values that belong to something the patch does not have (an empty slot, a missing route) stay at their defaults. Rack edits (`insertFxSlot`, `removeFxSlot`, `moveFxSlot`, `copyRackFrom`) move a slot's values, curves and the routes onto its parameters with the effect, and report which effect continues where (`FxMoves`) for the engine.
+- **PatchIO.** `loadPatch` never throws and never crashes; it returns the patch plus issues, each with a code, a JSON-pointer path, a message and a fix. Errors fail the load; warnings (unknown fields, clamped values) do not. `savePatch` writes every value by default so a later change of defaults cannot alter saved sounds; `compact` leaves defaults out. Save, load, save is byte-identical. `migratePatch` brings older format versions forward one step at a time. The same file reads and writes rack presets (`zederia.rack`: the whole `fx` section) and single-effect presets (`zederia.fx`: one slot).
 - **Engine** (`engine/`). `process()` splits each block at MIDI event offsets and at control ticks. Ticks fall every 16 samples on a grid fixed in absolute time; between ticks, amplitude and pitch move in straight lines toward the value computed for the next tick. Because nothing depends on where block boundaries fall, the output is bit-identical for any block size (tested, with filters and a full matrix too). The control tick is where envelopes, LFOs and the modulation matrix are evaluated (see Shaping and motion).
 - **VoiceAllocator.** Pure bookkeeping, tested on its own: poly, mono and legato, note priority, sustain pedal, stealing (oldest, quietest, releasing first). It returns actions (start, retrigger, glide, release, kill) that the engine carries out. A stolen voice fades out on a spare slot while its replacement starts.
 - **OfflineRenderer** (`render/`). Patch plus events (from a note list or a Standard MIDI File) to audio, then WAV. Same engine code, fixed seed, bit-identical between runs of the same build. It renders at the patch's offline quality unless told to use the live one, and takes the tables and the texture sample the patch names.
@@ -76,6 +76,44 @@ Everything that makes or describes sound lives in `zederia_core`, so the plug-in
 - **The matrix.** `setRoutes()` resolves the routes of a patch off the audio thread; the audio thread sorts them into four kinds whenever a route or a scope setting changes. *Shared* routes (no per-voice end) add into `pe` once per tick. *Per-voice* routes (a per-voice source or Via, and a destination in a voice module) add into the offsets each voice keeps, and the voice derives its own copy of just the module they reach. *Audio-rate* routes (the audio output of a source, or an audio-rate LFO, onto a filter cutoff; up to four per filter) move the cutoff every sample. *Unison-index* routes act per lane on the position, warp amounts, pan and pitch of an oscillator. A per-voice source on a destination that exists once reads the most recent voice. The arithmetic of a route is in `engine/ModMath.h` and is shared with the tests.
 - **Voice.** Glide moves the key position (time, curve, always or legato-only, per octave when scaled); the tuning turns the key position into pitch, so a glide passes through the tuned pitches. `Tuning` (`tuning/Tuning.h`) holds a pitch per key and is read from Scala `.scl`/`.kbm` or `.tun` files; a patch can carry one, and a lock keeps the current one across patch loads. MPE gives each member channel its own bend, pressure and slide. Character: drift (a slow random wander per oscillator), variance (per-note random offsets of level, pan, cutoff and envelope speed), warmth (a cubic saturation and a slight tilt before the filters) and noise floor.
 
+## Effects
+
+```
+ voices ─► bus F1 (filter 1's parallel share) ┐   each bus is split between lane A and lane B
+         ─► bus F2 (filter 2)                  ├─► by fx.filter1_balance, filter2_balance, direct_balance
+         ─► bus direct                        ┘
+ Lane A ──────────────┐
+ Lane B (parallel) ───┼─► Master lane ─► FX off crossfade with the dry sum ─► output stage
+ Lane B (series: hears Lane A's output as well as its own share)
+```
+
+- **Effects** (`fx/Effect.h`, `src/fx/`). Thirteen classes behind one interface: `prepare` (allocates, off the audio thread), `clear`, `set` (the parameter values in the effect's own units, at a control tick when something changed, ramped over the next interval unless `snap`), `process` (up to one control interval, in place, leaving the wet signal), and `holdSamples` / `mayIdle` for idle detection. `fx::makeEffect(type)` builds one; `effectResponse` gives the EQ's and the Filter's curves to the display from the same coefficients the audio uses. Shared parts are in `src/fx/FxDsp.h` (ramps, delay lines with exact linear and cubic reads, zero-delay-feedback sections).
+- **The rack** (`src/engine/EngineRack.inl`, inside the engine). `Engine::setRack(patch, moves)` builds a `RackPlan` off the audio thread: the instance at every position (a number that follows an effect when it moves), new instances already prepared, the slot values and the compiled curves. The audio thread takes the plan at the start of a block. An effect whose input would change (it moved, or what runs before it changed: everything outside the longest common order of the old and new lane) fades out, the layout switches while it is transparent, and it fades back in; a new effect fades in; a removed one fades out and leaves. Nothing else is touched, and a continuing effect keeps its tail. Each slot's output is `dry + mix * presence * (wet - dry)`, its input scaled by the presence, so every fade is smooth inside the effect too. Retired effects and plans go back through fixed bins that `collectGarbage` empties.
+- **Slots and parameters.** Slot values are positional registry parameters (`fx.a3.p2`); the engine keeps, per value, the definition that governs it (the loaded effect's), so smoothing, routes and `liveValue` work in the effect's own units. While a plan waits for its fades, effects keep the values they have: the parameter store may already hold the new layout's values at the old positions.
+- **Idle.** Every control tick, an effect whose input and output stayed below -140 dB for longer than it can hold sound (its longest delay, its pre-delay) goes idle and costs nothing. It wakes at the exact sample where its input becomes audible. Both decisions follow the signal and the fixed tick grid, never the host's blocks, so renders stay identical for any block size. With no voice and every effect asleep the rack is skipped altogether.
+- **Locks and presets.** `Engine::setRackLocked` makes `loadPatch` keep the current rack and its values; `Patch::copyRackFrom` does the same for documents. Rack and effect presets are JSON (`saveRackPreset`, `loadSlotPreset`).
+
+## Play
+
+`play::Player` (`play/Player.h`) runs first in every block and turns the incoming events into the ones the voices play:
+
+```
+ incoming ─ clip player (Key trigger: a key starts and transposes the clip) ───────────────┐
+          └ scale lock ─ chord memory ─ strum ─┬─ arpeggiator ───────────────────────────┼─► voices
+                                                └─ (arpeggiator off) ─────────────────────┘   └─► MIDI out
+```
+
+- The block is walked in time order: arpeggiator steps, clip notes and scheduled events (strummed notes, note-offs) up to each incoming event, then the event. Everything is placed by absolute sample, so a note on a block boundary plays exactly once. Fixed-size arrays only; output sorted with note-offs before note-ons at the same sample.
+- Arpeggiator steps sit on the song's grid while the host plays (a phrase starts with a step at once), and count from the first key otherwise. A tie step holds the note before it through; ratchets split a step. Random and Walk use the player's seeded generator.
+- With no play feature on, events pass through untouched (MPE channels included). MIDI out carries the note events the player made while a feature is on (`ProcessArgs::midiOut`).
+- `midi/MidiFile.h` reads Standard MIDI Files into clips (format 0 or 1, tempo, time and key signature) and writes clips back; `midi/CcMap.h` is the MIDI learn map and its JSON form.
+
+## Output and quality
+
+- **Output stage** (after the rack): master volume, the DC filter (5 Hz, on by default; its tail ends in exact silence below -100 dB) and output protection: a soft clipper at a fixed 4x oversampling, or a look-ahead-free limiter with its ceiling at -0.3 dBFS. Silence passes without work.
+- **Quality.** Draft, Standard, High and Ultra set the oversampling of the voices' warped and nonlinear paths, Drive and the Filter effect's nonlinear cores, and the interpolation of the delay-based effects (linear in Draft, cubic otherwise). A change while notes play ducks the voices for 5 ms around the switch; Drive and the Filter effect crossfade between two paths. No mode adds latency. The plug-in switches to the offline quality when the host says it renders offline or when blocks arrive at least twice as fast as real time.
+- **Profiling.** `Engine::setProfiling` times the sections of `process()` (sources, filters, control ticks, each effect type, play, output); `zederia-cli bench --profile` prints them.
+
 ## The wavetable toolkit
 
 Library functions on a `Wavetable`, all reachable from `zederia-cli table`:
@@ -89,7 +127,9 @@ Library functions on a `Wavetable`, all reachable from `zederia-cli table`:
 
 ## The plug-in
 
-`ZederiaProcessor` owns one `Engine`. Each automatable registry entry becomes a `ZederiaParameter` whose value lives in the engine's `ParamStore`; a rack slot's generic parameters take the loaded effect's name and range. The non-parameter part of the patch is kept in a document guarded by a lock the audio thread never takes. State in a host project is a 12-byte header (`ZEDS`, version, length) followed by the deflated patch JSON; unreadable state is ignored and leaves the current state in place. The on-screen keyboard reaches the audio thread through a lock-free queue.
+`ZederiaProcessor` owns one `Engine`. Each automatable registry entry becomes a `ZederiaParameter` whose value lives in the engine's `ParamStore`; a rack slot's generic parameters take the loaded effect's name and range. The non-parameter part of the patch is kept in a document guarded by a lock the audio thread never takes. State in a host project is a 12-byte header (`ZEDS`, version, length) followed by the deflated payload: in version 2 the patch JSON, a zero byte, and the instance's own settings as JSON (controller map, program list, rack and tuning locks); version 1 (the patch alone) is still read. Unreadable state is ignored and leaves the current state in place. The on-screen keyboard reaches the audio thread through a lock-free queue.
+
+In `processBlock` a program change sets an atomic for the message thread, a controller bound by MIDI learn sets its parameter in the store and queues the index so the host is told on the message thread, and the notes the play features made are written to the host's MIDI buffer within the 2048 bytes the VST3 and CLAP wrappers reserve. MIDI thru leaves the incoming events in the buffer. `serviceMessageThread()` (a 30 Hz timer) finishes MIDI learn, tells the host about values that controllers moved, loads a requested program and frees what the audio thread retired. Rack edits (`insertEffect`, `removeEffect`, `moveEffect`, presets) change the document, hand the rack and the moved routes to the engine and rename the host's slot parameters. Clips import from and export to Standard MIDI Files.
 
 The processor holds a `ContentLibrary` (factory folder, user folder). Applying a patch, or choosing a table or texture in the temporary editor, loads the file on the calling thread and hands the result to the engine; a reference that cannot be loaded leaves the built-in table or noise in place and is reported, not fatal. The reference, not the audio, is what a patch and the host state store.
 
@@ -105,14 +145,15 @@ The processor holds a `ContentLibrary` (factory folder, user folder). Applying a
 How the rules are kept:
 
 - **Parameter values** cross threads through `ParamStore`: one atomic per value plus a dirty bitmap. Any thread sets; the audio thread drains at block start. No queue can overflow and nothing waits.
-- **Structure** (tables, samples, warp curves, routes, LFO shapes, envelope shapes, the tuning; later the rack layout) is built off the audio thread and handed over through `rt::Handoff<T>`: the newest offered object waits in an atomic slot, the audio thread takes it at the start of a block, and the object it replaces goes into a ring that a non-audio thread empties (`Engine::collectGarbage`). The audio thread never frees. A playing voice crossfades from the old table or sample to the new one over 256 samples, so a swap does not click (tested from a second thread while audio runs).
+- **The rack** is handed over as a `RackPlan` through one atomic pointer; the audio thread moves the new effects into a fixed pool (twice the rack, so a full rack can be replaced while the old one fades) and gives retired effects and plans back through fixed bins of atomic pointers. A plan that was never taken comes back to the next `setRack`, which reuses its effects.
+- **Structure** (tables, samples, warp curves, routes, LFO shapes, envelope shapes, the tuning, the play data) is built off the audio thread and handed over through `rt::Handoff<T>`: the newest offered object waits in an atomic slot, the audio thread takes it at the start of a block, and the object it replaces goes into a ring that a non-audio thread empties (`Engine::collectGarbage`). The audio thread never frees. A playing voice crossfades from the old table or sample to the new one over 256 samples, so a swap does not click (tested from a second thread while audio runs).
 - **Locks.** Core code may lock only through `zed::rt::Mutex`; a test scans `core/` for raw mutexes.
 - **The audio-thread guard.** `process()` (and the plug-in's `processBlock`) open an `rt::AudioThreadScope`. The test programs replace the global allocation functions and report any allocation or free made inside the scope; `rt::Mutex` reports locks. After every test case the count must be zero or the run fails, so the whole test corpus is checked, not only the tests written for it.
 - **Denormals.** Flush-to-zero and denormals-are-zero are set for the duration of the callback.
 
 ## Determinism
 
-Offline renders are reproducible because: all randomness comes from one seeded generator consumed in event order; the control grid is fixed in absolute time; parameter changes apply at defined points; and no code path depends on wall-clock time or thread timing.
+Offline renders are reproducible because: all randomness comes from one seeded generator consumed in event order (the play features and the effects have their own seeded generators, reset with the engine); the control grid is fixed in absolute time; parameter changes apply at defined points; effects go idle at control ticks and wake at the sample their input becomes audible; generated notes are placed by absolute sample; and no code path depends on wall-clock time or thread timing (the plug-in's fast-render detection decides only which quality setting applies). The output is bit-identical for any block size, with effects and an arpeggio too (tested).
 
 ## Adding things
 
@@ -122,4 +163,6 @@ Offline renders are reproducible because: all randomness comes from one seeded g
 - A factory wavetable or texture: add a recipe under `content/wavetables` or `content/textures` (see `content/README.md`); `scripts/install-dev.ps1` rebuilds the factory folder.
 - A warp mode: add the choice to the registry, its derived value in `warpDerive` and its stage in `OscKernel.inl`; the kernel test then checks all three widths against each other.
 - A filter type: append its name to the filter type list in the registry, give it a `TypeInfo` in `Filter.cpp` (the two lists are checked against each other), and a design in `designLinear` or a core of its own; the filter tests then run it through the response and stability checks.
+- An effect type: append it in `declareEffects()` (its parameters in order, at most sixteen), write the class in `core/src/fx/` with its parameter names in the same order, and add it to the table in `fx/Effect.cpp`; `test_fx.cpp` checks the names against the registry. Give it `holdSamples` if it can hold sound with silence at both ends.
+- A golden render: add a reference to `tests/core/test_golden.cpp` and run it once with `ZED_UPDATE_GOLDEN=1`; do the same, after listening and reviewing the diff, when a sound changes on purpose.
 - A modulation source: append it to `declareSources()` and give it a position in `EngineTypes.inl` (the engine checks that the two agree when it is built); fill its value in `globalTick` (shared) or `evalVoice` (per voice).

@@ -28,6 +28,7 @@ struct FxSetup {
     int lane;
     const char* id;
     std::vector<std::pair<const char*, double>> values; // the effect's own parameters, by key
+    bool on = true;
 };
 
 enum class Kind {
@@ -65,15 +66,20 @@ std::vector<FxSetup> sixEffects() {
             {2, "compressor", {{"threshold", -20.0}}}};
 }
 
+std::vector<FxSetup> fullRack(bool on = true);
+
+// The same rack with every slot switched off: it must cost nothing.
+std::vector<FxSetup> rackOff() { return fullRack(false); }
+
 // Every slot of every lane holds an effect: the idle budget must hold even then.
-std::vector<FxSetup> fullRack() {
+std::vector<FxSetup> fullRack(bool on) {
     const char* lanes[3][8] = {{"drive", "compressor", "eq", "filter", "chorus", "flanger", "phaser", "delay"},
                                {"reverb", "swarm", "widener", "utility", "limiter", "reverb", "delay", "chorus"},
                                {"eq", "compressor", "limiter", "utility", "widener", "filter", "phaser", "drive"}};
     std::vector<FxSetup> out;
     for (int lane = 0; lane < 3; ++lane)
         for (const char* id : lanes[lane])
-            out.push_back({lane, id, {}});
+            out.push_back({lane, id, {}, on});
     return out;
 }
 
@@ -83,6 +89,7 @@ const std::vector<Setup>& setups() {
         {{"idle_rack", "Idle instance with all 24 rack slots filled, after its tails have died away", 0.2},
          kChord, {}, {}, fullRack(), Kind::AfterTails},
         {{"one_voice", "One voice, one wavetable oscillator", 0.5}, {48}, {}, {}, {}},
+        {{"one_voice_rack_off", "One voice with all 24 rack slots filled and switched off: as one_voice", 0.5}, {48}, {}, {}, rackOff()},
         {{"chord8", "8-voice chord, one wavetable oscillator at unison 7, one filter", 4.0},
          kChord,
          {{"osc1.unison.voices", 7}, {"filter1.on", 1}},
@@ -113,6 +120,7 @@ Patch patchFor(const Setup& s) {
         const int slot = patch.addFxSlot(fx.lane, type);
         if (slot < 0)
             continue;
+        patch.set(reg.fxSlotOn(fx.lane, slot), fx.on ? 1.0 : 0.0);
         const auto& params = reg.effectTypes()[static_cast<std::size_t>(type)].params;
         for (const auto& [key, value] : fx.values)
             for (const auto& p : params)

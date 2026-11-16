@@ -694,6 +694,21 @@ void ZederiaProcessor::getStateInformation(juce::MemoryBlock& destination) {
         instrument["programs"] = programList();
         instrument["rack_locked"] = engine_.rackLocked();
         instrument["tuning_locked"] = engine_.tuningLocked();
+        // Host parameters the patch has no use for (the amount of a route that does not exist, the
+        // values of an empty rack slot): the patch keeps them at their defaults, but a host expects
+        // back exactly what it set, so they travel here.
+        nlohmann::ordered_json unused = nlohmann::ordered_json::object();
+        {
+            const juce::ScopedLock lock(documentLock_);
+            const auto& reg = zed::Registry::get();
+            for (int i = 0; i < reg.size(); ++i) {
+                const double value = engine_.params().get(i);
+                if (hostParameter(i) != nullptr && !document_.inUse(i) && value != reg.at(i).def)
+                    unused[reg.at(i).id] = value;
+            }
+        }
+        if (!unused.empty())
+            instrument["unused_values"] = std::move(unused);
         payload.push_back('\0');
         payload += instrument.dump();
     }
@@ -768,6 +783,17 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
             engine_.setRackLocked(doc["rack_locked"].get<bool>());
         if (doc.contains("tuning_locked") && doc["tuning_locked"].is_boolean())
             engine_.setTuningLocked(doc["tuning_locked"].get<bool>());
+        if (doc.contains("unused_values") && doc["unused_values"].is_object()) {
+            const juce::ScopedLock lock(documentLock_);
+            const auto& reg = zed::Registry::get();
+            for (const auto& [id, value] : doc["unused_values"].items()) {
+                const int index = reg.indexOf(id);
+                if (index < 0 || hostParameter(index) == nullptr || document_.inUse(index) || !value.is_number())
+                    continue;
+                const auto& def = effectiveDef(index);
+                engine_.params().set(index, std::clamp(value.get<double>(), def.min, def.max));
+            }
+        }
     } catch (const std::exception&) {
     }
 }

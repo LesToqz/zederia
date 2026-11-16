@@ -390,7 +390,7 @@ int cmdBench(const Args& args) {
     const auto scenarios = zed::benchScenarios();
     if (args.has("list")) {
         for (const auto& s : scenarios)
-            std::printf("%-12s %s (budget %.2f %%)\n", s.name.c_str(), s.description.c_str(), s.budgetPercent);
+            std::printf("%-18s %s (budget %.2f %%)\n", s.name.c_str(), s.description.c_str(), s.budgetPercent);
         return kOk;
     }
     double seconds = 20, runs = 5;
@@ -419,7 +419,7 @@ int cmdBench(const Args& args) {
 
     bool found = false, failed = false;
     J measured = J::object();
-    std::printf("%-12s %12s %-2s %8s %10s  %s\n", "scenario", "result", "", "budget", "baseline", "verdict");
+    std::printf("%-18s %12s %-2s %8s %10s  %s\n", "scenario", "result", "", "budget", "baseline", "verdict");
     for (const auto& s : scenarios) {
         if (wanted != "all" && wanted != s.name)
             continue;
@@ -452,14 +452,14 @@ int cmdBench(const Args& args) {
             verdict = "FAIL: late in the tail it costs more than " + std::to_string(s.maxRatio) + " times as much as early";
             failed = true;
         }
-        std::printf("%-12s %12.4f %-2s %8.2f %10s  %s\n", s.name.c_str(), result.percent, s.unit.c_str(), s.budgetPercent,
+        std::printf("%-18s %12.4f %-2s %8.2f %10s  %s\n", s.name.c_str(), result.percent, s.unit.c_str(), s.budgetPercent,
                     baselineText.c_str(), verdict.c_str());
         if (result.ratio > 0.0)
-            std::printf("%-12s late tail / early tail cost: %.2f (limit %.2f)\n", "", result.ratio, s.maxRatio);
+            std::printf("%-18s late tail / early tail cost: %.2f (limit %.2f)\n", "", result.ratio, s.maxRatio);
         auto sections = result.profile;
         std::sort(sections.begin(), sections.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
         for (const auto& [section, share] : sections)
-            std::printf("%-12s   %8.3f %s  %s\n", "", share, s.unit == "ms" ? "  " : "%", section.c_str());
+            std::printf("%-18s   %8.3f %s  %s\n", "", share, s.unit == "ms" ? "  " : "%", section.c_str());
     }
     if (!found) {
         std::fprintf(stderr, "error: unknown scenario \"%s\"; --list shows the scenarios\n", wanted.c_str());

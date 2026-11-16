@@ -584,3 +584,31 @@ TEST_CASE("plug-in: clips import from a MIDI file and export again", "[plugin][c
     CHECK_FALSE(processor.importClip(3, std::vector<std::uint8_t>{1, 2, 3}).empty());
     CHECK_FALSE(processor.importClip(9, file).empty());
 }
+
+TEST_CASE("plug-in: every host parameter comes back from the host project as it was set", "[plugin][state]") {
+    // What a host's state check does: set every parameter, save, load into a new instance, compare,
+    // and save again. Values the patch has no use for (a route that does not exist, an empty slot)
+    // must come back too.
+    ZederiaProcessor first;
+    Rng rng(17);
+    for (auto* parameter : first.getParameters())
+        parameter->setValueNotifyingHost(static_cast<float>(rng.uniform()));
+    juce::MemoryBlock state;
+    first.getStateInformation(state);
+    ZederiaProcessor second;
+    second.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    int differences = 0;
+    std::string firstDifference;
+    for (int i = 0; i < first.getParameters().size(); ++i) {
+        const float a = first.getParameters()[i]->getValue(), b = second.getParameters()[i]->getValue();
+        if (std::abs(a - b) > 1.0e-6f) {
+            if (differences++ == 0)
+                firstDifference = first.getParameters()[i]->getName(64).toStdString();
+        }
+    }
+    INFO("first difference: " << firstDifference);
+    CHECK(differences == 0);
+    juce::MemoryBlock again;
+    second.getStateInformation(again);
+    CHECK(again == state);
+}
