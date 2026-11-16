@@ -214,7 +214,9 @@ inline F classicWave(F p, F inc, const ClassicMix& mix, float pulseWidth) {
 }
 
 // Reads the wavetable at phase `p`, blending the frame at `frame` with the next by `blend`.
-inline F tableRead(const float* table, F p, F frame, F blend, F off, F stride, F size) {
+// `blendFrames` false: every lane sits exactly on a frame (blend is 0), so the next frame is not
+// read; the result is the same to the bit (x + 0 * (y - x) is x).
+inline F tableRead(const float* table, F p, F frame, F blend, F off, F stride, F size, bool blendFrames) {
     const F at = S::mul(p, size);
     const I index = S::toInt(at);
     const F whole = S::toFloat(index);
@@ -252,6 +254,8 @@ inline F tableRead(const float* table, F p, F frame, F blend, F off, F stride, F
     const I b = S::toInt(S::add(baseF, stride));
     const auto tap = [&](int n) {
         const F x = S::gather(table + n, a);
+        if (!blendFrames)
+            return x;
         const F y = S::gather(table + n, b);
         return S::add(x, S::mul(blend, S::sub(y, x)));
     };
@@ -294,6 +298,12 @@ void renderImpl(zed::osc::Lanes& L, const zed::osc::Block& B) {
         const F off = S::load(L.tabOff + o), stride = S::load(L.tabStride + o), size = S::load(L.tabSize + o);
         const F off2 = S::load(L.tabOff2 + o), stride2 = S::load(L.tabStride2 + o), size2 = S::load(L.tabSize2 + o);
         const F maxFrame = k(B.maxFrame);
+        // Lanes that rest exactly on a frame for the whole run read one frame instead of two.
+        bool blendFrames = false;
+        for (int l = 0; l < W; ++l) {
+            const float fp = std::min(std::max(L.fpos[o + l], 0.0f), B.maxFrame);
+            blendFrames = blendFrames || L.fposStep[o + l] != 0.0f || fp != static_cast<float>(static_cast<int>(fp));
+        }
 
         for (int s = 0; s < samples; ++s) {
             F p = S::mul(S::toFloat(S::shiftRight(phase, 8)), k(1.0f / 16777216.0f));
@@ -312,9 +322,9 @@ void renderImpl(zed::osc::Lanes& L, const zed::osc::Block& B) {
                 const F fp = S::min(S::max(fpos, k(0.0f)), maxFrame);
                 const F frame = S::toFloat(S::toInt(fp));
                 const F blend = S::sub(fp, frame);
-                y = tableRead(B.table, p, frame, blend, off, stride, size);
+                y = tableRead(B.table, p, frame, blend, off, stride, size, blendFrames);
                 if (B.levelFade) {
-                    const F other = tableRead(B.table, p, frame, blend, off2, stride2, size2);
+                    const F other = tableRead(B.table, p, frame, blend, off2, stride2, size2, blendFrames);
                     y = S::add(y, S::mul(xf, S::sub(other, y)));
                 }
             }

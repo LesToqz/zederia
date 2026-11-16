@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cassert>
 #include <charconv>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -74,6 +75,16 @@ struct Engine::Impl {
     bool dirty = true;         // a parameter or a piece of structure changed since refresh() last ran
     bool derivedDirty = true;  // pe changed since derive() last ran
     bool snapSmoothing = true; // no glides for the first block after a reset
+    // Profiling: seconds per section while switched on (see Engine::setProfiling).
+    enum ProfSection { kProfSources, kProfFilters, kProfVoiceTick, kProfShared, kProfPlay, kProfOutput, kProfFx, kProfCount = kProfFx + 13 };
+    bool profiling = false;
+    double prof[kProfCount] = {};
+    using ProfClock = std::chrono::steady_clock;
+    ProfClock::time_point profNow() const { return profiling ? ProfClock::now() : ProfClock::time_point{}; }
+    void profAdd(int section, ProfClock::time_point since) {
+        if (profiling)
+            prof[section] += std::chrono::duration<double>(ProfClock::now() - since).count();
+    }
     // A change of quality while notes play: the voices duck around the switch.
     int appliedQuality = 1, pendingQuality = -1, duckState = 0; // 0 none, 1 fading out, 2 fading in
     float qualityDuck = 1.0f;
@@ -190,6 +201,7 @@ struct Engine::Impl {
     bool fxCleared = false;
     fx::Ramp sendRamp[3]; // the three buses' shares into lane B
     bool rackSplit = false;
+    bool outputSilent = false; // the rack passed exact silence in the current run
     // Output stage.
     float dcCoef = 0.9993f, dcX[2] = {}, dcY[2] = {};
     bool dcOn = true;
@@ -647,10 +659,13 @@ struct Engine::Impl {
     void tick() {
         samplesToTick = kInterval;
         master = masterAim;
+        const auto sharedStart = profNow();
         globalTick(kInterval, false);
         masterAim = masterTarget;
         masterStep = (masterAim - master) / kInterval;
         rackTick();
+        profAdd(kProfShared, sharedStart);
+        const auto voicesStart = profNow();
         for (int slot = 0; slot < kVoiceSlots; ++slot) {
             Voice& v = voices[static_cast<std::size_t>(slot)];
             if (!v.active)
@@ -663,6 +678,7 @@ struct Engine::Impl {
             }
             voiceTick(v, slot);
         }
+        profAdd(kProfVoiceTick, voicesStart);
     }
 
     // The play parameters as the player reads them.
@@ -1177,6 +1193,25 @@ bool Engine::fxResponse(int lane, int slot, std::span<const double> hz, std::spa
     return true;
 }
 
+// --- Profiling ------------------------------------------------------------------------------------
+
+void Engine::setProfiling(bool on) {
+    impl_->profiling = on;
+    std::fill(std::begin(impl_->prof), std::end(impl_->prof), 0.0);
+}
+
+std::vector<Engine::ProfileEntry> Engine::profile() const {
+    static const char* const names[] = {"voice sources", "voice filters and mix", "voice control ticks", "shared control ticks",
+                                        "play features", "output stage"};
+    std::vector<ProfileEntry> out;
+    for (int i = 0; i < Impl::kProfFx; ++i)
+        out.push_back({names[i], impl_->prof[i]});
+    const auto types = Registry::get().effectTypes();
+    for (std::size_t t = 0; t < types.size() && Impl::kProfFx + static_cast<int>(t) < Impl::kProfCount; ++t)
+        out.push_back({"effect: " + types[t].id, impl_->prof[Impl::kProfFx + static_cast<int>(t)]});
+    return out;
+}
+
 float Engine::sourceValue(int source) const noexcept {
     return source >= 0 && source < kSrcCount ? impl_->liveSrc[source].load(std::memory_order_relaxed) : 0.0f;
 }
@@ -1265,6 +1300,7 @@ void Engine::process(const ProcessArgs& args) noexcept {
     // The play features turn the incoming events into the ones the voices play.
     int generated = 0;
     const bool sendOut = s.flag(s.ids.midiOut) && args.midiOut != nullptr;
+    const auto playStart = s.profNow();
     Transport transport = args.transport;
     transport.bpm = s.bpm; // a host without a tempo plays at 120
     const int playCount = s.player.process(s.playSettings(), *s.playData.current(), transport, args.frames, args.midi,
@@ -1273,6 +1309,7 @@ void Engine::process(const ProcessArgs& args) noexcept {
     if (args.midiOutCount != nullptr)
         *args.midiOutCount = sendOut ? generated : 0;
     const std::span<const MidiEvent> midi(s.playEvents, static_cast<std::size_t>(playCount));
+    s.profAdd(Impl::kProfPlay, playStart);
     std::size_t next = 0;
     int pos = 0;
     while (pos < args.frames) {

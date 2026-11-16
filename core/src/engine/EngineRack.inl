@@ -247,7 +247,10 @@ void rackTick() {
             if (frozen || x.moving || x.leaving)
                 continue;
             const int on = reg.fxSlotOn(lane, x.pos);
-            x.gTarget = flag(on) ? 1.0f : 0.0f;
+            const float target = flag(on) ? 1.0f : 0.0f;
+            if (target > 0.0f && x.gTarget <= 0.0f && x.g <= 0.0f)
+                x.needsClear = true; // switched back on: it starts clean, without an old tail
+            x.gTarget = target;
             x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(on + 1)]), false);
             bool changed = x.needsSet || ctxChanged;
             for (int k = 0; k < x.params; ++k) {
@@ -323,7 +326,9 @@ void runInstance(FxInstance& x, float* left, float* right, int frames) {
     }
     x.g = g;
     x.peakIn = peakIn;
+    const auto fxStart = profNow();
     x.effect->process(wetL, wetR, frames);
+    profAdd(kProfFx + std::clamp(x.type, 0, 12), fxStart);
     float peakOut = x.peakOut;
     for (int s = 0; s < frames; ++s) {
         const float m = x.mix.next() * presence[s];
@@ -344,12 +349,26 @@ void idleCheck(FxInstance& x) {
         x.silent += kInterval;
         if (x.silent > x.effect->holdSamples() + kInterval) {
             x.idle = true;
+            x.ran = false;
             x.silent = 0;
         }
     } else {
         x.silent = 0;
     }
     x.peakIn = x.peakOut = 0.0f;
+}
+
+// True when every effect is idle or switched off and no edit is under way.
+bool rackAsleep() const {
+    if (staged != nullptr || bSwitching || fxMix != fxMixTarget)
+        return false;
+    for (int lane = 0; lane < kNumFxLanes; ++lane)
+        for (int n = 0; n < chainCount[lane]; ++n) {
+            const FxInstance& x = pool[chain[lane][n]];
+            if (!(x.idle || (x.g <= 0.0f && x.gTarget <= 0.0f)) || x.g != x.gTarget)
+                return false;
+        }
+    return true;
 }
 
 void runLane(int lane, float* left, float* right, int frames) {
@@ -367,11 +386,13 @@ void runRack(float (&bus)[3][2][kInterval], bool split, float* left, float* righ
     }
     const bool rackEmpty = chainCount[0] == 0 && chainCount[1] == 0 && chainCount[2] == 0;
     const bool fxGone = fxMix <= 0.0f && fxMixTarget <= 0.0f;
-    if (rackEmpty || fxGone) {
+    if (rackEmpty || fxGone || (activeCount == 0 && rackAsleep())) {
+        outputSilent = activeCount == 0; // no voice and nothing ringing: the output is exact silence
+        // Nothing to run: no effects, FX off, or no voice and every effect asleep (its input is
+        // silence, so each would pass it unchanged).
         if (fxGone && !fxCleared) {
             for (FxInstance& x : pool)
-                if (x.effect != nullptr)
- {
+                if (x.effect != nullptr) {
                     x.needsClear = true; // silent and transparent: they fade back in when FX return
                     x.g = 0.0f;
                 }
@@ -385,6 +406,7 @@ void runRack(float (&bus)[3][2][kInterval], bool split, float* left, float* righ
         return;
     }
     fxCleared = false;
+    outputSilent = false;
     float aL[kInterval], aR[kInterval], bL[kInterval], bR[kInterval];
     for (int s = 0; s < frames; ++s) {
         const float b0 = sendRamp[0].next(), b1 = sendRamp[1].next(), b2 = sendRamp[2].next();
@@ -428,6 +450,18 @@ void runRack(float (&bus)[3][2][kInterval], bool split, float* left, float* righ
 
 // After the rack: master volume, DC filter, output protection.
 void outputStage(float* left, float* right, int frames) {
+    const auto outputStart = profNow();
+    struct Done {
+        Impl& s;
+        ProfClock::time_point t;
+        ~Done() { s.profAdd(kProfOutput, t); }
+    } done{*this, outputStart};
+    if (outputSilent && dcX[0] == 0.0f && dcX[1] == 0.0f && dcY[0] == 0.0f && dcY[1] == 0.0f &&
+        (protection == 0 || (protection == 2 && outLimiter.env == 0.0f))) {
+        for (int s = 0; s < frames; ++s) // silence stays silence: only the master volume moves on
+            master += masterStep;
+        return;
+    }
     for (int s = 0; s < frames; ++s) {
         const auto gain = static_cast<float>(master);
         left[s] *= gain;

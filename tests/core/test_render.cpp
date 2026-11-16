@@ -294,7 +294,8 @@ TEST_CASE("bench: scenarios run and report a realtime factor", "[bench]") {
         BenchResult result;
         REQUIRE(runBench(s.name, 0.25, 1, result));
         CHECK(result.percent > 0.0);
-        CHECK(result.audioSeconds == Approx(0.25).epsilon(0.05));
+        if (std::string(s.unit) == "%")
+            CHECK(result.audioSeconds == Approx(0.25).epsilon(0.05)); // preset_load measures milliseconds per load instead
     }
     BenchResult result;
     CHECK_FALSE(runBench("no_such_scenario", 0.25, 1, result));

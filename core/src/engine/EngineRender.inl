@@ -317,6 +317,7 @@
             // A modulation loop needs each source's previous sample: go one sample at a time.
             const int run = routing.loop ? 1 : frames - done;
             float bus[3][2][kInterval] = {}; // to filter 1, to filter 2, direct
+            const auto sourcesStart = profNow();
             for (const int source : routing.order) {
                 if (source < kOscCount) {
                     if (osc[source].on)
@@ -332,6 +333,8 @@
                 warm(v, bus, run);
             if (v.noise.now != 0.0f || v.noise.target != 0.0f)
                 addNoise(v, bus, run);
+            profAdd(kProfSources, sourcesStart);
+            const auto filtersStart = profNow();
 
             // The two filter slots: in series at 0 %, in parallel at 100 % (plan 3.5).
             float movement[kInterval];
@@ -372,6 +375,7 @@
             v.amp[0] = ampL;
             v.amp[1] = ampR;
             v.routing.now = parallel;
+            profAdd(kProfFilters, filtersStart);
             done += run;
         }
     }

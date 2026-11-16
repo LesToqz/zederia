@@ -88,6 +88,16 @@ struct LaneSet {
     int level[kMaxLanes] = {};     // band-limited level each lane reads
     int levelNext[kMaxLanes] = {}; // level it is fading to (equal to level when not fading)
     bool levelFade = false;
+    // What the lanes were last aimed with: when none of it changed, every lane already holds its
+    // value and the aim is skipped (most ticks of a held note that nothing moves).
+    double aimedBase = -1.0;
+    const void* aimedLanes = nullptr;
+    const void* aimedTable = nullptr;
+    const float* aimedRatio = nullptr;
+    std::uint32_t aimedEpoch = 0;
+    int aimedRate = 0, aimedCount = 0;
+    bool settled = false;   // every ramp has arrived (set at the control tick)
+    bool stepsZero = false; // and every step is zero
 };
 
 void setLaneLevel(LaneSet& s, int lane, const TableData& table, int level, bool second) {

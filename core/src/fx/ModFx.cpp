@@ -19,7 +19,7 @@
 namespace zed::fx {
 namespace {
 
-inline float lfoSin(double phase) noexcept { return static_cast<float>(std::sin(2.0 * kPiD * phase)); }
+inline float lfoSin(double phase) noexcept { return fastSin(phase); }
 
 // --- Chorus -------------------------------------------------------------------------------------
 

@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace zed {
 
@@ -151,6 +153,16 @@ public:
     // Frees objects the audio thread has finished with. The setters above do this too; call it
     // now and then when nothing else is being set.
     void collectGarbage();
+
+    // --- Profiling (for the benchmark tool) ----------------------------------------------------
+    // While on, process() times its sections; off it costs one branch per section. Set it while
+    // audio is stopped and read the result the same way.
+    struct ProfileEntry {
+        std::string section;
+        double seconds = 0.0;
+    };
+    void setProfiling(bool on);
+    std::vector<ProfileEntry> profile() const; // time per section since profiling was switched on
 
     void process(const ProcessArgs& args) noexcept;
 

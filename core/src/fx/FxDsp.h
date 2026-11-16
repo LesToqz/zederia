@@ -155,6 +155,15 @@ inline float smoothingCoef(double ms, double sampleRate) noexcept {
 
 inline float softSat(float x) noexcept { return std::tanh(x); }
 
+// sin(2 pi phase) for slow modulators: a corrected parabola, within 0.1 % of full scale and
+// smooth, at a fraction of the library sine's cost.
+inline float fastSin(double phase) noexcept {
+    const double p = phase - std::floor(phase);
+    const auto q = static_cast<float>(p >= 0.5 ? p - 1.0 : p); // the phase as -0.5..0.5 of a cycle
+    const float y = 8.0f * q * (1.0f - 2.0f * std::abs(q));    // a parabola through the sine's peaks
+    return 0.225f * (y * std::abs(y) - y) + y;                 // bent toward the sine
+}
+
 // Smooth random wander in -1..1 (for drift): a value that glides to a new random target every
 // period. Deterministic for a given seed.
 struct Wander {

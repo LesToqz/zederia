@@ -2,8 +2,8 @@
 //
 //  input -> pre-delay -> low cut, high cut -> four all-pass diffusers per side -> FDN
 //                     \-> early reflections (Room, Hall)
-//  FDN: sixteen lines of incommensurate lengths, each read at a slowly moving position (cubic
-//  reads; linear in Draft), each followed by a one-pole absorption filter that sets its loss at
+//  FDN: sixteen lines of incommensurate lengths, half of them read at a slowly moving position (cubic
+//  reads; linear in Draft) and half still, each followed by a one-pole absorption filter that sets its loss at
 //  low and at high frequencies from Decay and Damping, mixed by a 16 x 16 Hadamard matrix.
 //
 // The diffusers turn a click into a dense burst before it enters the network, and the moving
@@ -166,10 +166,11 @@ public:
         // Each line's read position at both ends of the call.
         float readA[kLines], readStep[kLines];
         for (int i = 0; i < kLines; ++i) {
-            const float a = modDepth_ > 0.0 ? static_cast<float>(modDepth_ * std::sin(2.0 * kPiD * lfoPhase_[i])) : 0.0f;
+            const float depth = (i & 1) != 0 ? static_cast<float>(modDepth_ * 1.41421356) : 0.0f; // odd lines move
+            const float a = depth > 0.0f ? depth * fastSin(lfoPhase_[i]) : 0.0f;
             lfoPhase_[i] += lfoRate_[i] / sampleRate_ * frames;
             lfoPhase_[i] -= std::floor(lfoPhase_[i]);
-            const float b = modDepth_ > 0.0 ? static_cast<float>(modDepth_ * std::sin(2.0 * kPiD * lfoPhase_[i])) : 0.0f;
+            const float b = depth > 0.0f ? depth * fastSin(lfoPhase_[i]) : 0.0f;
             readA[i] = lengthStart[i] + a; // both the glide of the length and the modulation move per sample
             readStep[i] = (length_[i] + b - readA[i]) / static_cast<float>(frames);
         }
@@ -199,9 +200,16 @@ public:
                 x[c] = y * gainIn;
             }
             float z[kLines];
+            // Odd lines move and are read with the cubic; even lines stay still and a straight
+            // line between two samples reads them exactly enough. Half the lines moving is plenty
+            // to keep the modes from standing, at a fraction of the cost.
+            const auto fs = static_cast<float>(s);
+            for (int i = 0; i < kLines; i += 2)
+                z[i] = lines_[i].read(readA[i] + readStep[i] * fs, false);
+            for (int i = 1; i < kLines; i += 2)
+                z[i] = lines_[i].read(readA[i] + readStep[i] * fs, cubic_);
             for (int i = 0; i < kLines; ++i) {
-                const float y = lines_[i].read(readA[i] + readStep[i] * static_cast<float>(s), cubic_);
-                absorb_[i] = lossB_[i] * y + lossP_[i] * absorb_[i];
+                absorb_[i] = lossB_[i] * z[i] + lossP_[i] * absorb_[i];
                 z[i] = absorb_[i];
             }
             float outL = 0.0f, outR = 0.0f;
@@ -257,6 +265,8 @@ private:
             const double jitter = 1.0 + 0.06 * std::sin(2.4 * (i + 1));
             const double lineMs = shape.shortestMs * std::pow(shape.longestMs / shape.shortestMs, t) * jitter * scale;
             lengthTarget_[i] = static_cast<float>(std::max(lineMs * ms, 4.0));
+            if ((i & 1) == 0) // a still line ends on a whole sample: its straight-line read is then exact
+                lengthTarget_[i] = std::round(lengthTarget_[i]);
             if (snap)
                 length_[i] = lengthTarget_[i];
         }
