@@ -1,12 +1,15 @@
 {
-  "about": "Realtime factor in percent: one core, 48 kHz, 512-sample blocks, Release build. Written by zederia-cli bench --update-baseline.",
+  "about": "Realtime factor in percent (preset_load: milliseconds): one core, 48 kHz, 512-sample blocks, Release build. Milestone 4: the slower of two full runs of zederia-cli bench (5 runs of 20 s each), because this virtual machine's speed varies by about 10 % between runs.",
   "zederia_version": "0.1.0",
   "scenarios": {
-    "idle": 0.0263,
-    "one_voice": 0.1952,
-    "chord8": 3.0905,
-    "chord8_mod": 3.0989,
-    "full8": 15.1097,
-    "full8_draft": 15.167
+    "idle": 0.0434,
+    "idle_rack": 0.0544,
+    "one_voice": 0.2086,
+    "chord8": 2.6712,
+    "chord8_mod": 3.2792,
+    "full8": 14.3447,
+    "full8_draft": 15.9748,
+    "fx_tail": 1.1,
+    "preset_load": 28.2636
   }
 }

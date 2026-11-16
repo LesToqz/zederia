@@ -251,6 +251,8 @@ void rackTick() {
             if (target > 0.0f && x.gTarget <= 0.0f && x.g <= 0.0f)
                 x.needsClear = true; // switched back on: it starts clean, without an old tail
             x.gTarget = target;
+            if (x.idle) // asleep: its values are read again when it wakes
+                continue;
             x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(on + 1)]), false);
             bool changed = x.needsSet || ctxChanged;
             for (int k = 0; k < x.params; ++k) {
@@ -304,6 +306,8 @@ void runInstance(FxInstance& x, float* left, float* right, int frames) {
         x.idle = false;
         x.silent = 0;
         x.peakIn = x.peakOut = 0.0f;
+        x.needsSet = true; // values may have moved while it slept
+        x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(reg.fxSlotMix(x.lane, x.pos))]), false);
     }
     if (x.needsClear) {
         x.effect->clear();
