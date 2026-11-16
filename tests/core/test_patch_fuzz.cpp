@@ -147,6 +147,15 @@ TEST_CASE("patch fuzz: ten thousand damaged documents load without a crash", "[p
     Patch busy = loadPatch(example).patch;
     busy.addFxSlot(1, Registry::get().effectIndex("delay"));
     busy.addFxSlot(1, Registry::get().effectIndex("compressor"));
+    // Milestone 4's structure: a drawn drive curve, a pattern, chord notes and a clip.
+    const int drive = busy.addFxSlot(2, Registry::get().effectIndex("drive"));
+    REQUIRE(drive >= 0);
+    busy.fxCurves[2][static_cast<std::size_t>(drive)][0].points = {{0.0, 0.0, 0.3}, {1.0, 1.0, 0.0}};
+    busy.arpPatterns[0].steps = {ArpStep{}, ArpStep{StepState::Tie}, ArpStep{StepState::Rest, 0.5, 3, 2}};
+    busy.chordNotes = {0, 3, 7, 10};
+    busy.clips[0].name = "Riff";
+    busy.clips[0].key = "C minor";
+    busy.clips[0].notes = {{0.0, 1.0, 60, 0.8}, {1.5, 0.5, 63, 0.5}};
     const std::string full = savePatch(busy); // every field present
     const J exampleTree = J::parse(example);
     const J fullTree = J::parse(full);

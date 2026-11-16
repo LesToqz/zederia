@@ -1,0 +1,33 @@
+{
+  "format": "zederia.patch",
+  "version": 1,
+  "meta": { "name": "Test Arp Echo", "author": "", "type": "sequence", "tags": ["arpeggio", "echo"] },
+  "global": { "mode": "poly", "polyphony": 16, "master_db": -8.0, "limiter": "limiter" },
+  "osc1": {
+    "on": true, "position": 0.35, "level_db": -6.0,
+    "unison": { "voices": 3, "detune": 0.15, "width": 0.8 }
+  },
+  "sub": { "on": true, "level_db": -14.0 },
+  "filter1": { "on": true, "type": "ladder_lp24", "cutoff_hz": 1400, "resonance": 0.35, "keytrack": 0.5 },
+  "env1": { "attack_ms": 2, "decay_ms": 260, "sustain": 0.3, "release_ms": 180 },
+  "env2": { "attack_ms": 1, "decay_ms": 180, "sustain": 0.0, "release_ms": 120 },
+  "arp": { "on": true, "mode": "up_down", "octaves": 2, "rate": "1/16", "gate": 0.6, "swing": 0.2, "steps": 8, "pattern": 1,
+           "patterns": [ { "steps": [ { "state": "on" }, { "state": "on", "velocity": 0.6 }, { "state": "tie" },
+                                      { "state": "on", "transpose": 12 }, { "state": "rest" }, { "state": "on", "ratchet": 2 },
+                                      { "state": "on", "velocity": 0.7 }, { "state": "on" } ] } ] },
+  "fx": {
+    "a": [
+      { "type": "drive", "mode": "tube", "amount": 0.25 },
+      { "type": "chorus", "mix": 0.4 },
+      { "type": "delay", "mode": "ping_pong", "division_l": "1/8D", "feedback": 0.4, "band_center_hz": 1800, "band_width": 0.5, "mix": 0.3 }
+    ],
+    "master": [
+      { "type": "reverb", "mode": "hall", "decay_ms": 2200, "mix": 0.25 },
+      { "type": "eq", "low_type": "high_pass", "low_freq_hz": 60 }
+    ]
+  },
+  "mod": [
+    { "source": "env2", "dest": "filter1.cutoff", "amount": 0.35, "polarity": "uni" },
+    { "source": "velocity", "dest": "filter1.cutoff", "amount": 0.15, "polarity": "uni" }
+  ]
+}

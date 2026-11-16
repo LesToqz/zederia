@@ -930,8 +930,14 @@ double Engine::tailSeconds() const noexcept {
                 return std::numeric_limits<double>::infinity();
             fxTail += value(2) / 1000.0 + value(3) / 1000.0;
         } else if (type == delay) {
+            // The longer side's time (synced: its note length at the tempo, with the fine offset);
+            // echoes fall by the feedback at each repeat until they are 60 dB down.
             const double feedback = std::clamp(value(9), 0.0, 1.0);
-            const double time = std::max(value(2), value(3)) / 1000.0 * (value(1) >= 0.5 ? 2.0 : 1.0);
+            double time = std::max(value(2), value(3)) / 1000.0;
+            if (value(1) >= 0.5)
+                time = std::max(fx::divisionBeats(static_cast<int>(value(4))) * std::pow(1.5, std::clamp(value(6), -1.0, 1.0)),
+                                fx::divisionBeats(static_cast<int>(value(5))) * std::pow(1.5, std::clamp(value(7), -1.0, 1.0))) *
+                       60.0 / bpm;
             fxTail += feedback >= 0.999 ? 60.0 : time * (1.0 + std::log(0.001) / std::log(std::max(feedback, 0.001)));
         } else {
             fxTail += 0.05;
