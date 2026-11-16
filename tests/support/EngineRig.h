@@ -93,9 +93,12 @@ inline std::shared_ptr<const zed::TableData> sineTableData() {
     return zed::TableData::build(table);
 }
 
-// A flat envelope, full level, fixed phase, and no source unless a test switches one on.
+// A flat envelope, full level, fixed phase, and no source unless a test switches one on. The
+// output DC filter is off: tests built on this patch measure the voices' exact waveforms (the
+// output stage has its own tests in test_output.cpp).
 inline zed::Patch flatPatch() {
     zed::Patch p;
+    p.set("global.dc_filter", 0);
     p.set("osc1.on", 0);
     p.set("global.master", 0);
     p.set("env1.attack", 0);

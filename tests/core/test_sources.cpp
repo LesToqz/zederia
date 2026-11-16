@@ -25,6 +25,7 @@ int choiceOf(const char* id, const char* token) { return Registry::get().find(id
 // A flat envelope, full level, fixed phase, and no oscillator unless a test switches one on.
 Patch quietPatch() {
     Patch p;
+    p.set("global.dc_filter", 0); // these tests measure the voices themselves
     p.set("osc1.on", 0);
     p.set("global.master", 0);
     p.set("env1.attack", 0);

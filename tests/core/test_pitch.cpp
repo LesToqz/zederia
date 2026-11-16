@@ -23,6 +23,7 @@ double measuredCents(const Patch& patch, int note, double expectedHz, double sam
 
 TEST_CASE("tuning: within 0.1 cent from C0 to C8", "[tuning]") {
     Patch patch;
+    patch.set("global.dc_filter", 0); // the oscillator itself, not the output stage
     patch.set("osc1.phase_random", 0);
     double worst = 0.0;
     for (const double sampleRate : {44100.0, 48000.0, 96000.0}) {

@@ -50,6 +50,66 @@ struct PatchTuning {
 // Names of the five envelope times that can follow the tempo, in the order of Patch::envSync.
 inline constexpr const char* kEnvSyncKeys[5] = {"delay", "attack", "hold", "decay", "release"};
 
+// --- Play data (plan 3.9) -------------------------------------------------------------------------
+
+inline constexpr int kNumArpPatterns = 12;
+inline constexpr int kMaxArpSteps = 32;
+inline constexpr int kNumClips = 8;
+inline constexpr int kMaxClipNotes = 4096;
+inline constexpr int kMaxChordNotes = 12;
+
+enum class StepState : std::uint8_t { On, Tie, Rest };
+
+// One step of the arpeggiator's step lane.
+struct ArpStep {
+    StepState state = StepState::On;
+    double velocity = 1.0; // 0..1, scales the played velocity
+    int transpose = 0;     // semitones, -24..24
+    int ratchet = 1;       // 1..4 notes in the step
+    bool operator==(const ArpStep&) const = default;
+};
+
+// A pattern slot. Steps it does not list are On at full velocity.
+struct ArpPattern {
+    std::vector<ArpStep> steps; // at most kMaxArpSteps
+    bool empty() const { return steps.empty(); }
+    ArpStep step(int i) const {
+        return i >= 0 && i < static_cast<int>(steps.size()) ? steps[static_cast<std::size_t>(i)] : ArpStep{};
+    }
+    bool operator==(const ArpPattern&) const = default;
+};
+
+// One note of a clip. Times are in quarter notes from the start of the clip.
+struct ClipNote {
+    double start = 0.0;
+    double length = 0.25;
+    int key = 60;
+    double velocity = 0.8; // 0..1
+    bool operator==(const ClipNote&) const = default;
+};
+
+// A clip (plan 3.9): a note list with its length and the tempo and key it was written in.
+struct Clip {
+    std::string name;
+    double bars = 1.0;
+    int beatsPerBar = 4;  // quarter notes per bar
+    double tempo = 120.0; // hint: the clip plays at the host's tempo
+    std::string key;      // hint, for example "C minor"; may be empty
+    int root = 60;        // the key that plays the clip untransposed when a key starts it
+    std::vector<ClipNote> notes;
+    bool empty() const { return notes.empty(); }
+    double lengthBeats() const { return bars * beatsPerBar; }
+    bool operator==(const Clip&) const = default;
+};
+
+// Rack edits: for each slot of the new layout (lane * kNumFxSlots + slot), the slot of the old
+// layout whose effect continues there, or -1 for a new effect. The engine keeps a continuing
+// effect's state (its tail) and fades only what has to move.
+struct FxMoves {
+    std::array<int, kNumFxLanes * kNumFxSlots> from;
+    FxMoves() { from.fill(-1); }
+};
+
 class Patch {
 public:
     Patch(); // the init patch: every parameter at its default
@@ -78,6 +138,16 @@ public:
     // Removes a route and moves the amounts of the routes after it down by one.
     void removeRoute(int route);
 
+    // Rack editing. Values, drawn curves and routes onto a slot's parameters move with its effect;
+    // routes onto a removed effect are removed. Each returns false when the edit is not possible
+    // and otherwise fills `moves` (when given) for Engine::setRack.
+    bool insertFxSlot(int lane, int position, int effectIndex, FxMoves* moves = nullptr);
+    bool removeFxSlot(int lane, int position, FxMoves* moves = nullptr);
+    bool moveFxSlot(int fromLane, int fromPosition, int toLane, int toPosition, FxMoves* moves = nullptr);
+    // Takes the whole rack (lanes, slot values, drawn curves and the rack's routing values) from
+    // another patch, for "lock rack" across preset changes. Routes onto slot parameters are dropped.
+    void copyRackFrom(const Patch& other);
+
     PatchMeta meta;
     std::array<std::string, kNumOscs> tables;       // wavetable reference per oscillator; empty = built-in
     std::string textureSample;                      // sample reference for the texture player
@@ -92,6 +162,12 @@ public:
     std::array<std::array<std::string, 5>, kNumEnvs> envSync;
     std::array<std::array<Shape, 2>, kNumOscs> warpCurves;     // drawn phase curves of warp A and B; y from 0 to 1
     PatchTuning tuning;                                        // empty = equal temperament
+
+    // Milestone 4: effects and play.
+    std::array<std::array<std::array<Shape, 2>, kNumFxSlots>, kNumFxLanes> fxCurves; // Drive's curves A and B; y 0..1
+    std::array<ArpPattern, kNumArpPatterns> arpPatterns;
+    std::vector<int> chordNotes = {0, 4, 7}; // chord memory: semitones above the played key
+    std::array<Clip, kNumClips> clips;
 
     bool operator==(const Patch&) const = default;
 

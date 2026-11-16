@@ -21,7 +21,7 @@ double vval(const Voice& v, int index) const {
         return pe[static_cast<std::size_t>(index)];
     const int g = globSlotOf[static_cast<std::size_t>(index)];
     const double n = nb[static_cast<std::size_t>(index)] + (g >= 0 ? gOff[g] : 0.0f) + v.off[slot];
-    return reg.at(index).fromNormalized(std::clamp(n, 0.0, 1.0));
+    return defOf(index).fromNormalized(std::clamp(n, 0.0, 1.0));
 }
 
 // Recomputes pe for one parameter from its smoothed base and its global routes.
@@ -32,7 +32,7 @@ void applyParam(int index) {
         pe[i] = p[i];
         return;
     }
-    pe[i] = reg.at(index).fromNormalized(std::clamp(nb[i] + (g >= 0 ? gOff[g] : 0.0f), 0.0, 1.0));
+    pe[i] = defOf(index).fromNormalized(std::clamp(nb[i] + (g >= 0 ? gOff[g] : 0.0f), 0.0, 1.0));
 }
 
 // A value arrived from the parameter store.
@@ -44,7 +44,7 @@ void setParam(int index, double v) {
         pe[i] = v;
         return;
     }
-    nt[i] = reg.at(index).toNormalized(v);
+    nt[i] = defOf(index).toNormalized(v);
     if (moving[i] == 0) {
         moving[i] = 1;
         movingList[static_cast<std::size_t>(movingCount++)] = index;
@@ -56,7 +56,7 @@ void snapParams() {
     for (int index = 0; index < reg.size(); ++index) {
         const auto i = static_cast<std::size_t>(index);
         if (isFloat[i] != 0)
-            nb[i] = nt[i] = reg.at(index).toNormalized(p[i]);
+            nb[i] = nt[i] = defOf(index).toNormalized(p[i]);
         moving[i] = 0;
         pe[i] = p[i];
     }
@@ -187,6 +187,8 @@ void classify() {
         const RouteDef& d = table->route[i];
         if (!d.active)
             continue;
+        if (isFloat[static_cast<std::size_t>(d.dest)] == 0 && defs[static_cast<std::size_t>(d.dest)] != &reg.at(d.dest))
+            continue; // an effect's switch or choice in a rack slot is not moved by routes
         markUsed(d.source);
         if (d.via >= 0)
             markUsed(d.via);

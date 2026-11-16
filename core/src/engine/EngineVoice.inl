@@ -636,6 +636,7 @@ void applyActions() {
             advanceRest(v, samplesToTick, true);
             reaim(v);
             activeCount += wasActive ? 0 : 1;
+            rackNoteOn();
             break;
         }
         case VoiceAction::Kind::Retrigger: {
@@ -657,6 +658,7 @@ void applyActions() {
             retriggerSharedLfos();
             lastStarted = a.slot;
             reaim(v);
+            rackNoteOn();
             break;
         }
         case VoiceAction::Kind::Glide:

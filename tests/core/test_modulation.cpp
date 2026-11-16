@@ -142,7 +142,7 @@ TEST_CASE("envelopes: times given as note lengths follow the tempo", "[modulatio
     EngineRig linked(tail);
     linked.transport.bpm = 120.0;
     linked.run(512);
-    CHECK(linked.engine.tailSeconds() == Approx(1.0).margin(0.05));
+    CHECK(linked.engine.tailSeconds() == Approx(1.0 + 0.3).margin(0.05)); // plus the DC filter's settling
 }
 
 TEST_CASE("envelopes: multi-segment mode with a sustain point and a loop", "[modulation][envelope]") {

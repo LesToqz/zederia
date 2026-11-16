@@ -23,6 +23,7 @@ int choiceOf(const char* id, const char* token) { return Registry::get().find(id
 // Nothing but oscillator 1 at full level with a flat envelope and a fixed start phase.
 Patch basePatch() {
     Patch p;
+    p.set("global.dc_filter", 0); // these tests measure the voices themselves
     p.set("osc1.phase_random", 0);
     p.set("osc1.level", 0);
     p.set("global.master", 0);

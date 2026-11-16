@@ -308,7 +308,9 @@
         return out;
     }
 
-    void renderVoice(Voice& v, float* outL, float* outR, int frames) {
+    // Adds the voice to the engine's buses: filter 1's parallel share, filter 2 and direct apart
+    // when `split`, all into out[0] otherwise.
+    void renderVoice(Voice& v, float (&out)[3][2][kInterval], int frames, bool split) {
         const int tickPos = kInterval - samplesToTick;
         int done = 0;
         while (done < frames) {
@@ -346,12 +348,26 @@
             if (v.filter[1].running)
                 v.filter[1].filter.process(bus[1][0], bus[1][1], run, cutoffMod(v, 1, tickPos + done, run, movement), *decimator);
             float ampL = v.amp[0], ampR = v.amp[1], parallel = routingStart;
-            for (int s = 0; s < run; ++s) {
-                outL[done + s] += (parallel * bus[0][0][s] + bus[1][0][s] + bus[2][0][s]) * ampL;
-                outR[done + s] += (parallel * bus[0][1][s] + bus[1][1][s] + bus[2][1][s]) * ampR;
-                ampL += v.ampStep[0];
-                ampR += v.ampStep[1];
-                parallel += v.routing.step;
+            if (split) {
+                for (int s = 0; s < run; ++s) {
+                    out[0][0][done + s] += parallel * bus[0][0][s] * ampL;
+                    out[0][1][done + s] += parallel * bus[0][1][s] * ampR;
+                    out[1][0][done + s] += bus[1][0][s] * ampL;
+                    out[1][1][done + s] += bus[1][1][s] * ampR;
+                    out[2][0][done + s] += bus[2][0][s] * ampL;
+                    out[2][1][done + s] += bus[2][1][s] * ampR;
+                    ampL += v.ampStep[0];
+                    ampR += v.ampStep[1];
+                    parallel += v.routing.step;
+                }
+            } else {
+                for (int s = 0; s < run; ++s) {
+                    out[0][0][done + s] += (parallel * bus[0][0][s] + bus[1][0][s] + bus[2][0][s]) * ampL;
+                    out[0][1][done + s] += (parallel * bus[0][1][s] + bus[1][1][s] + bus[2][1][s]) * ampR;
+                    ampL += v.ampStep[0];
+                    ampR += v.ampStep[1];
+                    parallel += v.routing.step;
+                }
             }
             v.amp[0] = ampL;
             v.amp[1] = ampR;
@@ -361,34 +377,38 @@
     }
 
     void render(float* left, float* right, int frames) {
-        std::fill(left, left + frames, 0.0f);
-        std::fill(right, right + frames, 0.0f);
+        float out[3][2][kInterval];
+        const bool split = rackSplit;
+        for (int b = 0; b < (split ? 3 : 1); ++b) {
+            std::fill(out[b][0], out[b][0] + frames, 0.0f);
+            std::fill(out[b][1], out[b][1] + frames, 0.0f);
+        }
         if (activeCount > 0)
             for (auto& v : voices)
                 if (v.active)
-                    renderVoice(v, left, right, frames);
+                    renderVoice(v, out, frames, split);
         if (followerUsed) {
-            // The envelope follower hears the voices before the master volume, or the side chain.
-            const float* inL = followerSidechain ? sidechain[0] : left;
-            const float* inR = followerSidechain ? sidechain[1] : right;
+            // The envelope follower hears the voices before the effects, or the side chain.
             float level = followerLevel;
             for (int i = 0; i < frames; ++i) {
-                const float x = std::max(inL != nullptr ? std::abs(inL[i]) : 0.0f, inR != nullptr ? std::abs(inR[i]) : 0.0f);
+                float x;
+                if (followerSidechain) {
+                    x = std::max(sidechain[0] != nullptr ? std::abs(sidechain[0][i]) : 0.0f,
+                                 sidechain[1] != nullptr ? std::abs(sidechain[1][i]) : 0.0f);
+                } else {
+                    float l = out[0][0][i], r = out[0][1][i];
+                    if (split) {
+                        l += out[1][0][i] + out[2][0][i];
+                        r += out[1][1][i] + out[2][1][i];
+                    }
+                    x = std::max(std::abs(l), std::abs(r));
+                }
                 level += (x - level) * (x > level ? followerAttack : followerRelease);
             }
             followerLevel = level;
         }
-        if (activeCount > 0) {
-            for (int i = 0; i < frames; ++i) {
-                const auto gain = static_cast<float>(master);
-                left[i] *= gain;
-                right[i] *= gain;
-                master += masterStep;
-            }
-        } else {
-            for (int i = 0; i < frames; ++i)
-                master += masterStep;
-        }
+        runRack(out, split, left, right, frames);
+        outputStage(left, right, frames);
         for (auto& o : osc)
             o.fadeLeft = std::max(o.fadeLeft - frames, 0);
         texture.fadeLeft = std::max(texture.fadeLeft - frames, 0);

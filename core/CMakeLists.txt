@@ -33,6 +33,14 @@ add_library(zederia_core STATIC
     src/engine/Filter.cpp
     src/engine/Lfo.cpp
     src/engine/Engine.cpp
+    src/fx/Effect.cpp
+    src/fx/Drive.cpp
+    src/fx/Dynamics.cpp
+    src/fx/Eq.cpp
+    src/fx/ModFx.cpp
+    src/fx/Delay.cpp
+    src/fx/Reverb.cpp
+    src/fx/Stereo.cpp
     src/render/OfflineRenderer.cpp
     src/bench/Bench.cpp
 )

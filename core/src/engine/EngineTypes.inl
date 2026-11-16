@@ -481,6 +481,17 @@ struct Ids {
     struct {
         int type, rate, sync, division, scope;
     } flux[kNumFlux];
+    // Milestone 4: output, rack routing and play.
+    int dcFilter, limiter, fxOff, midiOut, midiThru, fxBRouting, fxBalance[3];
+    struct {
+        int on, mode, octaves, rate, gate, swing, latch, restart, steps, pattern;
+    } arp;
+    struct {
+        int memory, scaleLock, key, scale, lockMode, strum, strumDirection;
+    } chord;
+    struct {
+        int on, slot, trigger, latch, loop;
+    } clip;
 
     Ids() {
         const auto& r = Registry::get();
@@ -625,5 +636,36 @@ struct Ids {
             f.division = at(p + "division");
             f.scope = at(p + "scope");
         }
+        dcFilter = at("global.dc_filter");
+        limiter = at("global.limiter");
+        fxOff = at("global.fx_off");
+        midiOut = at("global.midi_out");
+        midiThru = at("global.midi_thru");
+        fxBRouting = at("fx.b_routing");
+        fxBalance[0] = at("fx.filter1_balance");
+        fxBalance[1] = at("fx.filter2_balance");
+        fxBalance[2] = at("fx.direct_balance");
+        arp.on = at("arp.on");
+        arp.mode = at("arp.mode");
+        arp.octaves = at("arp.octaves");
+        arp.rate = at("arp.rate");
+        arp.gate = at("arp.gate");
+        arp.swing = at("arp.swing");
+        arp.latch = at("arp.latch");
+        arp.restart = at("arp.restart");
+        arp.steps = at("arp.steps");
+        arp.pattern = at("arp.pattern");
+        chord.memory = at("chord.memory");
+        chord.scaleLock = at("chord.scale_lock");
+        chord.key = at("chord.key");
+        chord.scale = at("chord.scale");
+        chord.lockMode = at("chord.lock_mode");
+        chord.strum = at("chord.strum");
+        chord.strumDirection = at("chord.strum_direction");
+        clip.on = at("clip.on");
+        clip.slot = at("clip.slot");
+        clip.trigger = at("clip.trigger");
+        clip.latch = at("clip.latch");
+        clip.loop = at("clip.loop");
     }
 };
