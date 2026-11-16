@@ -99,6 +99,8 @@ TEST_CASE("plug-in: state survives a save and restore", "[plugin][state]") {
     {
         ZederiaProcessor first;
         const LoadResult loaded = first.loadPatchJson(example);
+        for (const auto& issue : loaded.issues)
+            UNSCOPED_INFO(issue.path << ": " << issue.message);
         REQUIRE(loaded.ok());
         first.hostParameter(idx("osc1.pan"))->setValueNotifyingHost(0.25f);
         first.setNormalizedFromUi(idx("global.polyphony"), 0.0f);

@@ -43,6 +43,7 @@ add_library(zederia_core STATIC
     src/fx/Stereo.cpp
     src/play/Player.cpp
     src/midi/MidiFile.cpp
+    src/midi/CcMap.cpp
     src/render/OfflineRenderer.cpp
     src/bench/Bench.cpp
 )

@@ -4,12 +4,16 @@
 
 #include "zederia/content/Library.h"
 #include "zederia/engine/Engine.h"
+#include "zederia/midi/CcMap.h"
 #include "zederia/patch/PatchIO.h"
+#include "zederia/rt/Handoff.h"
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,7 +45,8 @@ private:
 
 class ZederiaProcessor final : public juce::AudioProcessor,
                                private juce::MidiKeyboardState::Listener,
-                               private juce::AsyncUpdater {
+                               private juce::AsyncUpdater,
+                               private juce::Timer {
 public:
     ZederiaProcessor();
     ~ZederiaProcessor() override;
@@ -57,12 +62,13 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; } // MIDI out arrives with the play features
+    bool producesMidi() const override { return true; } // notes from the arpeggiator, chords and clips; MIDI thru
     double getTailLengthSeconds() const override { return engine_.tailSeconds(); }
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return "Default"; }
+    // Programs are the presets of the program list (setProgramList); a program change selects one.
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock& destination) override;
     void setStateInformation(const void* data, int size) override;
@@ -101,6 +107,45 @@ public:
     // What could not be loaded when the current patch was applied.
     std::vector<std::string> assetProblems() const;
 
+    // --- Effects rack (message thread) ---
+    // Edits fade in the engine, so none of them clicks; values, curves and routes move with their
+    // effect. Each returns false when the edit is not possible.
+    bool insertEffect(int lane, int position, const std::string& effectId);
+    bool removeEffect(int lane, int position);
+    bool moveEffect(int fromLane, int fromPosition, int toLane, int toPosition);
+    // While locked, loading a patch keeps the current rack.
+    void setRackLocked(bool locked);
+    bool rackLocked() const { return engine_.rackLocked(); }
+    std::string rackPresetJson();
+    bool loadRackPresetJson(std::string_view json, std::vector<zed::Issue>& issues);
+    std::string slotPresetJson(int lane, int slot);
+    bool loadSlotPresetJson(std::string_view json, int lane, int position, std::vector<zed::Issue>& issues);
+
+    // --- Clips (message thread) ---
+    // Reads a Standard MIDI File into clip slot 0..7. Returns "" or what went wrong.
+    std::string importClip(int slot, std::span<const std::uint8_t> midiFile);
+    std::vector<std::uint8_t> exportClip(int slot);
+    zed::Clip clip(int slot) const;
+
+    // --- MIDI learn (message thread) ---
+    // The next controller that arrives is bound to the parameter (any channel).
+    void startMidiLearn(int paramIndex);
+    void cancelMidiLearn() { learnTarget_.store(-1, std::memory_order_relaxed); }
+    int midiLearnTarget() const { return learnTarget_.load(std::memory_order_relaxed); }
+    zed::CcMap ccMap() const;
+    void setCcMap(const zed::CcMap& map);
+
+    // --- Programs (message thread) ---
+    void setProgramList(std::vector<std::string> presetFiles);
+    std::vector<std::string> programList() const;
+
+    // Message-thread housekeeping: finishes MIDI learn, tells the host about values that MIDI
+    // controllers moved, loads a program that a program change asked for, frees what the audio
+    // thread retired. A timer calls it; tests call it directly.
+    void serviceMessageThread();
+    // True while the engine renders with the offline quality (the host renders faster than real time).
+    bool renderingOffline() const { return offlineNow_.load(std::memory_order_relaxed); }
+
     // --- For the editor ---
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
     float meterPeak(int channel) { return meter_[static_cast<std::size_t>(channel)].exchange(0.0f, std::memory_order_relaxed); }
@@ -111,10 +156,18 @@ private:
     void handleNoteOff(juce::MidiKeyboardState*, int channel, int note, float velocity) override;
     void pushKeyboardEvent(const zed::MidiEvent& event);
     void handleAsyncUpdate() override;
+    void timerCallback() override { serviceMessageThread(); }
     void applyPatch(const zed::Patch& patch);
+    void syncDocumentValues(); // documentLock_ held: the document takes the engine's current values
+    void rackEdited(const zed::FxMoves& moves); // documentLock_ held: hand the edited rack over
+    void publishSlotTypes();
+    bool loadProgramFile(const std::string& file);
+    bool detectFastRender(int frames) noexcept;
 
     static constexpr int kMaxEventsPerBlock = 2048;
     static constexpr int kKeyboardQueue = 256;
+    static constexpr int kNotifyQueue = 512;
+    static constexpr int kMaxMidiOut = 1024;
 
     zed::Engine engine_;
     std::vector<ZederiaParameter*> hostParams_; // by registry index; null when not automatable
@@ -135,6 +188,25 @@ private:
 
     std::array<zed::MidiEvent, kMaxEventsPerBlock> blockEvents_{};
     std::array<std::atomic<float>, 2> meter_{};
+
+    // MIDI out, MIDI learn and program change.
+    std::array<zed::MidiEvent, kMaxMidiOut> midiOut_{};
+    zed::CcMap ccMap_;                       // documentLock_
+    zed::rt::Handoff<zed::CcTable> ccTable_; // what the audio thread reads
+    std::atomic<int> learnTarget_{-1};
+    std::atomic<int> learned_{-1}; // (channel << 8) | controller, from the audio thread
+    juce::AbstractFifo notifyFifo_{kNotifyQueue};
+    std::array<int, kNotifyQueue> notifyParams_{};
+    std::atomic<int> pendingProgram_{-1};
+    std::vector<std::string> programs_; // documentLock_
+    int currentProgram_ = 0;
+    int midiThruIndex_ = 0;
+
+    // Offline quality: the host says it renders offline, or blocks arrive faster than real time.
+    std::chrono::steady_clock::time_point lastBlock_{};
+    bool haveLastBlock_ = false, fastRender_ = false;
+    double windowWall_ = 0.0, windowAudio_ = 0.0, sampleRate_ = 48000.0;
+    std::atomic<bool> offlineNow_{false};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaProcessor)
 };

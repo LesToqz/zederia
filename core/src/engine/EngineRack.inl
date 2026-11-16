@@ -418,8 +418,8 @@ void outputStage(float* left, float* right, int frames) {
             for (int s = 0; s < frames; ++s) {
                 const float x = io[c][s];
                 float y = x - x1 + dcCoef * y1;
-                if (x == 0.0f && x1 == 0.0f && std::abs(y) < 1.0e-6f)
-                    y = 0.0f; // the tail of a removed offset ends in true silence (-120 dB)
+                if (x == 0.0f && x1 == 0.0f && std::abs(y) < 1.0e-5f)
+                    y = 0.0f; // the tail of a removed offset ends in true silence (below -100 dB)
                 x1 = x;
                 y1 = y;
                 io[c][s] = y;
