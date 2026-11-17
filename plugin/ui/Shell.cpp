@@ -84,16 +84,21 @@ void TopBar::refresh() {
     repaint();
 }
 
+// The CPU readout changes at most twice a second, and only when the number it shows changes: a
+// figure that changes every frame cannot be read.
 bool TopBar::tick() {
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - cpuShownAt_ < 500.0)
+        return false;
     const float cpu = ctx_.processor.cpuAverage();
-    if (std::abs(cpu - cpuShown_) > 0.05f) {
-        cpuShown_ = cpu;
-        const float peak = ctx_.processor.cpuPeak();
-        cpuText.setText("CPU " + juce::String(cpu, 1) + " %");
-        cpuText.setTooltip("Audio callback time against real time: " + juce::String(cpu, 1) + " % average, " + juce::String(peak, 1) + " % peak");
-        return true;
-    }
-    return false;
+    const juce::String text = "CPU " + juce::String(cpu, 1) + " %";
+    if (text == cpuText.text())
+        return false;
+    cpuShownAt_ = now;
+    const float peak = ctx_.processor.cpuPeak();
+    cpuText.setText(text);
+    cpuText.setTooltip("Audio callback time against real time: " + juce::String(cpu, 1) + " % average, " + juce::String(peak, 1) + " % peak");
+    return true;
 }
 
 void TopBar::resized() {

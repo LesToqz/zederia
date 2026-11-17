@@ -137,7 +137,7 @@ int cmdUiSnapshot(const Args& args) {
     int findings = 0;
     std::vector<zui::Finding> themeFindings;
     for (const auto& themeName : themes) {
-        zui::Theme::setCurrent(themeName);
+        editor->context().prefs.theme = themeName; // the editor takes its theme from the preferences (not saved here)
         editor->applyTheme();
         if (check)
             for (auto& f : zui::checkTheme(zui::Theme::current()))

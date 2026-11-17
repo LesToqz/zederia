@@ -53,7 +53,7 @@ public:
 
 private:
     Context& ctx_;
-    float cpuShown_ = -1.0f;
+    double cpuShownAt_ = -1.0e9; // when the CPU readout last changed
 };
 
 // Eight macros, visible on every page (plan 3.7): knob, editable name, drag chip.

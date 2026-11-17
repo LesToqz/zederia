@@ -576,7 +576,7 @@ void LibraryPage::resized() {
     toolbar.removeFromLeft(8);
     placeRow(toolbar, {{&audition_, 100}, {&load_, 70}, {&importButton_, 118}, {&rescan_, 76}, {&duplicates_, 120}, {&modules_, 130}}, 6);
     area.removeFromTop(8);
-    facetView_.setBounds(area.removeFromLeft(226));
+    facetView_.setBounds(area.removeFromLeft(226).reduced(2)); // its panel (2 px around it) lines up with the results
     area.removeFromLeft(8);
     auto right = area.removeFromRight(300);
     area.removeFromRight(8);

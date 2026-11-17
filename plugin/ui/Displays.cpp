@@ -411,9 +411,9 @@ void FilterResponseView::draw(juce::Graphics& g) {
     const float lo = showPhase ? -3.2f : -36.0f, hi = showPhase ? 3.2f : 24.0f;
     const auto xOf = [&](std::size_t i) { return plot.getX() + plot.getWidth() * static_cast<float>(i) / static_cast<float>(hz_.size() - 1); };
     const auto yOf = [&](float v) { return plot.getBottom() - plot.getHeight() * (juce::jlimit(lo, hi, v) - lo) / (hi - lo); };
-    g.setColour(t.displayGrid);
     for (const double f : {100.0, 1000.0, 10000.0}) {
         const float x = plot.getX() + plot.getWidth() * static_cast<float>(std::log(f / 20.0) / std::log(1000.0));
+        g.setColour(t.displayGrid); // each time: the label below sets its own colour
         g.fillRect(x, plot.getY(), 1.0f, plot.getHeight());
         drawText(g, formatHz(f), juce::Rectangle<float>(x - 20.0f, plot.getBottom() + 1.0f, 40.0f, 12.0f), kTextSmall, t.textDim, juce::Justification::centred);
     }
@@ -650,9 +650,9 @@ void SpectrumView::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat();
     drawWell(g, area);
     const auto plot = area.reduced(8.0f, 8.0f).withTrimmedBottom(12.0f);
-    g.setColour(t.displayGrid);
     for (const double f : {100.0, 1000.0, 10000.0}) {
         const float x = plot.getX() + plot.getWidth() * static_cast<float>(std::log(f / 20.0) / std::log(1000.0));
+        g.setColour(t.displayGrid); // each time: the label below sets its own colour
         g.fillRect(x, plot.getY(), 1.0f, plot.getHeight());
         drawText(g, formatHz(f), juce::Rectangle<float>(x - 20.0f, plot.getBottom() + 1.0f, 40.0f, 12.0f), kTextSmall, t.textDim, juce::Justification::centred);
     }

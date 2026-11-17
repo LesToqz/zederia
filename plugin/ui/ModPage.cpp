@@ -403,11 +403,11 @@ void ModPage::resized() {
     area.removeFromTop(8);
     auto right = area.removeFromRight(360);
     area.removeFromRight(8);
-    count_.setBounds(area.removeFromTop(16));
+    count_.setBounds(area.removeFromTop(16).withTrimmedLeft(8)); // inside the list's panel, in line with the column titles
     area.removeFromTop(22); // column titles
     viewport_.setBounds(area);
     layoutRows();
-    right.removeFromTop(4);
+    right = right.reduced(10, 0).withTrimmedTop(6); // inside its panel
     detailTitle_.setBounds(right.removeFromTop(20));
     detailText_.setBounds(right.removeFromTop(18));
     right.removeFromTop(8);
@@ -418,7 +418,8 @@ void ModPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
     g.fillAll(t.bg);
     const auto list = viewport_.getBounds();
-    drawPanel(g, list.toFloat().expanded(4.0f, 28.0f).withBottom(static_cast<float>(list.getBottom()) + 4.0f), t.sunken);
+    // The list's panel holds the count and the column titles, its top in line with the detail panel's.
+    drawPanel(g, list.toFloat().expanded(4.0f, 0.0f).withTop(static_cast<float>(count_.getY()) - 4.0f).withBottom(static_cast<float>(list.getBottom()) + 4.0f), t.sunken);
     auto header = juce::Rectangle<int>(list.getX() + 8, list.getY() - 22, list.getWidth(), 18);
     for (const auto& [title, w] : std::initializer_list<std::pair<const char*, int>>{
              {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", 190}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},

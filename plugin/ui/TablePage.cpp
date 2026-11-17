@@ -289,13 +289,26 @@ public:
             h_ = zed::analyzeFrame(table.frames[static_cast<std::size_t>(page_.frame())]);
         repaint();
     }
+    // Each half has a strip for its label above its bars, so no bar covers a label.
+    struct Layout {
+        juce::Rectangle<float> levelLabel, level, phaseLabel, phase;
+    };
+    Layout layout() const {
+        auto inner = getLocalBounds().toFloat().reduced(8.0f);
+        Layout l;
+        l.level = inner.removeFromTop(inner.getHeight() * 0.62f);
+        l.levelLabel = l.level.removeFromTop(16.0f);
+        inner.removeFromTop(6.0f);
+        l.phaseLabel = inner.removeFromTop(16.0f);
+        l.phase = inner;
+        return l;
+    }
     void draw(juce::Graphics& g) override {
         const Theme& t = theme();
         const auto area = getLocalBounds().toFloat();
         drawWell(g, area);
-        auto inner = area.reduced(8.0f);
-        auto top = inner.removeFromTop(inner.getHeight() * 0.62f);
-        inner.removeFromTop(6.0f);
+        const Layout l = layout();
+        const auto top = l.level, inner = l.phase;
         const float w = top.getWidth() / static_cast<float>(count);
         double peak = 1e-9;
         for (int k = 1; k <= count; ++k)
@@ -313,10 +326,10 @@ public:
         }
         g.setColour(t.lineStrong);
         g.fillRect(inner.getX(), inner.getCentreY(), inner.getWidth(), 1.0f);
-        drawText(g, "LEVEL", top.withHeight(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight, true);
-        drawText(g, "PHASE", inner.withHeight(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight, true);
+        drawText(g, "LEVEL", l.levelLabel, kTextSmall, t.textDim, juce::Justification::centredRight, true);
+        drawText(g, "PHASE", l.phaseLabel, kTextSmall, t.textDim, juce::Justification::centredRight, true);
         drawText(g, juce::String(count) + " harmonics" + (parity == 1 ? ", odd only" : parity == 2 ? ", even only" : ""),
-                 juce::Rectangle<float>(top.getX(), top.getY(), 220.0f, 14.0f), kTextSmall, t.textDim);
+                 l.levelLabel.withWidth(220.0f), kTextSmall, t.textDim);
         drawFocus(g, area);
     }
     void mouseDown(const juce::MouseEvent& e) override {
@@ -329,8 +342,8 @@ public:
     }
     void mouseDrag(const juce::MouseEvent& e) override {
         const auto area = getLocalBounds().toFloat().reduced(8.0f);
-        auto top = area.withHeight(area.getHeight() * 0.62f);
-        const auto bottom = area.withTrimmedTop(top.getHeight() + 6.0f);
+        const Layout l = layout();
+        const auto top = l.level, bottom = l.phase;
         const int k = juce::jlimit(1, count, static_cast<int>((e.position.x - area.getX()) / (area.getWidth() / static_cast<float>(count))) + 1);
         if ((parity == 1 && k % 2 == 0) || (parity == 2 && k % 2 == 1))
             return;
@@ -339,7 +352,7 @@ public:
             peak = std::max(peak, h_.magnitude[static_cast<std::size_t>(i)]);
         if (peak < 1e-6)
             peak = 0.5;
-        if (e.position.y < top.getBottom() || (!dragPhase_ && e.getMouseDownY() < static_cast<int>(top.getBottom()))) {
+        if (e.position.y < l.phaseLabel.getY() || (!dragPhase_ && e.getMouseDownY() < static_cast<int>(l.phaseLabel.getY()))) {
             dragPhase_ = false;
             const double level = juce::jlimit(0.0, 1.0, static_cast<double>((top.getBottom() - e.position.y) / top.getHeight()));
             h_.magnitude[static_cast<std::size_t>(k)] = level * peak;

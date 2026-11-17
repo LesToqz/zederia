@@ -139,8 +139,9 @@ TEST_CASE("editor: every page renders at 100, 150 and 200 % without clipped, ove
     static const char* const names[] = {"synth", "fx", "mod", "table", "play", "library", "agent"};
     int total = 0;
     for (const auto& themeName : zui::Theme::names()) {
-        zui::Theme::setCurrent(themeName);
+        rig.ctx().prefs.theme = themeName; // the editor takes its theme from the preferences
         rig.editor->applyTheme();
+        REQUIRE(zui::Theme::current().name == themeName);
         const std::vector<int> scales = themeName == "Graphite" ? std::vector<int>{100, 150, 200} : std::vector<int>{100};
         for (int page = 0; page < 7; ++page) {
             for (const int scale : scales) {
@@ -163,7 +164,8 @@ TEST_CASE("editor: every page renders at 100, 150 and 200 % without clipped, ove
             }
         }
     }
-    zui::Theme::setCurrent("Graphite");
+    rig.ctx().prefs.theme = "Graphite";
+    rig.editor->applyTheme();
     // Open overlays are checked too: the palette, preferences, history, the hover list and the mod map.
     rig.editor->setScalePercent(100);
     rig.editor->showPage(ZederiaEditor::Synth);
@@ -590,12 +592,15 @@ TEST_CASE("editor: the frame clock repaints only what changes, nothing when idle
     Rig rig;
     rig.editor->showPage(ZederiaEditor::Synth);
     rig.frames(30); // settle
+    // The CPU readout is the one exception: it shows measured time, which moves on its own (it
+    // changes at most twice a second, and only when the figure it shows changes).
+    const auto cpuArea = rig.editor->getLocalArea(&rig.editor->topBar().cpuText, rig.editor->topBar().cpuText.getLocalBounds());
     for (int i = 0; i < 10; ++i) {
         rig.run(1);
-        const auto dirty = rig.editor->tickFrame();
-        if (!dirty.empty())
-            for (const auto& r : dirty)
-                UNSCOPED_INFO("repainted " << r.toString());
+        auto dirty = rig.editor->tickFrame();
+        std::erase(dirty, cpuArea);
+        for (const auto& r : dirty)
+            UNSCOPED_INFO("repainted " << r.toString());
         CHECK(dirty.empty());
     }
     // A value change repaints its control, not the page.
