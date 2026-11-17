@@ -1,5 +1,8 @@
 #include "zederia/patch/PatchIO.h"
 
+#include "zederia/util/Compress.h"
+#include "zederia/util/Image.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -263,6 +266,108 @@ void readRef(const J& v, const std::string& path, const char* what, std::string&
     if (!found && v.find("ref") == v.end())
         r.error("missing_field", path, std::string(what) + " has no \"ref\".",
                 "Add \"ref\" with the name of the item, for example { \"ref\": \"factory:Basics/Saw\" }.");
+}
+
+// A wavetable reference with an optional embedded table:
+//   { "ref": "factory:Basics/Saw", "data": { "name": "...", "frames": 4, "morph": "spectral",
+//     "stepped": false, "encoding": "f32-planes-zlib-base64", "samples": "eJz..." } }
+constexpr std::string_view kTableEncoding = "f32-planes-zlib-base64";
+
+void readEmbeddedTable(const J& v, const std::string& path, EmbeddedTable& out, Reporter& r) {
+    if (!requireObject(v, path, "The embedded table", r))
+        return;
+    auto table = std::make_shared<Wavetable>();
+    int frames = -1;
+    std::string encoding, samples;
+    bool stepped = false;
+    for (const auto& [key, child] : v.items()) {
+        const std::string p = path + "/" + escapeKey(key);
+        if (key == "name") {
+            readString(child, p, "The table name", kMaxNameLength, table->name, r);
+        } else if (key == "frames") {
+            if (!child.is_number_integer() || child.get<long long>() < 1 || child.get<long long>() > kMaxFrames) {
+                r.error("out_of_range", p, "The frame count must be a whole number from 1 to 256.", "Give the number of frames the data holds.");
+                return;
+            }
+            frames = static_cast<int>(child.get<long long>());
+        } else if (key == "morph") {
+            std::string name;
+            if (readString(child, p, "The morph mode", kMaxTagLength, name, r) && !morphModeFromName(name, table->morph))
+                r.error("unknown_choice", p, inQuotes(name) + " is not a morph mode.",
+                        "Use none, crossfade, spectral, spectral_aligned or spectral_zero.");
+        } else if (key == "stepped") {
+            readBool(child, p, "\"stepped\"", stepped, r);
+        } else if (key == "encoding") {
+            readString(child, p, "The encoding", kMaxTagLength, encoding, r);
+        } else if (key == "samples") {
+            if (!child.is_string()) {
+                r.error("wrong_type", p, "The samples must be text (base64).", "Write the table again from Zederia.");
+                return;
+            }
+            samples = child.get<std::string>();
+        } else {
+            r.unknownField(p, key, closest(key, std::vector<std::string>{"name", "frames", "morph", "stepped", "encoding", "samples"}));
+        }
+    }
+    if (frames < 0 || samples.empty()) {
+        r.error("missing_field", path, "The embedded table needs \"frames\" and \"samples\".", "Write the table again from Zederia.");
+        return;
+    }
+    if (encoding != kTableEncoding) {
+        r.error("unknown_choice", path + "/encoding", inQuotes(encoding) + " is not a known table encoding.",
+                "Use \"" + std::string(kTableEncoding) + "\".");
+        return;
+    }
+    std::vector<std::uint8_t> packed, planes;
+    std::vector<float> values;
+    const std::size_t expected = static_cast<std::size_t>(frames) * kFrameSize * 4;
+    if (!base64Decode(samples, packed) || !inflateZlib(packed, planes, expected) || planes.size() != expected ||
+        !unshuffleFloats(planes, values)) {
+        r.error("damaged_data", path + "/samples", "The embedded table's samples are damaged.",
+                "Load the table again from its file, or remove \"data\".");
+        return;
+    }
+    table->stepped = stepped;
+    table->frames.resize(static_cast<std::size_t>(frames));
+    for (int f = 0; f < frames; ++f)
+        for (int i = 0; i < kFrameSize; ++i) {
+            const float s = values[static_cast<std::size_t>(f) * kFrameSize + static_cast<std::size_t>(i)];
+            table->frames[static_cast<std::size_t>(f)][static_cast<std::size_t>(i)] = std::isfinite(s) ? std::clamp(s, -4.0f, 4.0f) : 0.0f;
+        }
+    out.table = std::move(table);
+}
+
+J embeddedTableToJson(const Wavetable& table) {
+    J o = J::object();
+    o["name"] = table.name;
+    o["frames"] = table.size();
+    o["morph"] = std::string(morphModeName(table.morph));
+    o["stepped"] = table.stepped;
+    o["encoding"] = kTableEncoding;
+    std::vector<float> values;
+    values.reserve(static_cast<std::size_t>(table.size()) * kFrameSize);
+    for (const Frame& f : table.frames)
+        values.insert(values.end(), f.begin(), f.end());
+    o["samples"] = base64Encode(deflateZlib(shuffleFloats(values)));
+    return o;
+}
+
+void readTableRef(const J& v, const std::string& path, std::string& ref, EmbeddedTable& data, Reporter& r) {
+    if (!requireObject(v, path, "A wavetable reference", r))
+        return;
+    bool found = false;
+    for (const auto& [key, child] : v.items()) {
+        if (key == "ref")
+            found = readString(child, path + "/ref", "A reference", kMaxRefLength, ref, r) || found;
+        else if (key == "data") {
+            readEmbeddedTable(child, path + "/data", data, r);
+            found = true;
+        } else
+            r.unknownField(path + "/" + escapeKey(key), key, key.size() < 5 ? "ref" : "data");
+    }
+    if (!found && v.find("ref") == v.end())
+        r.error("missing_field", path, "A wavetable reference has no \"ref\".",
+                "Add \"ref\" with the name of the table, for example { \"ref\": \"factory:Basics/Saw\" }.");
 }
 
 // A finite number inside [low, high]; values outside are clamped with a warning.
@@ -666,7 +771,8 @@ void walk(const J& v, const Node& node, const std::string& path, Patch& patch, R
     if (node.param >= 0)
         return readParam(v, node.param, patch, path, r);
     if (node.tableOsc >= 0)
-        return readRef(v, path, "A wavetable reference", patch.tables[static_cast<std::size_t>(node.tableOsc)], r);
+        return readTableRef(v, path, patch.tables[static_cast<std::size_t>(node.tableOsc)],
+                            patch.tableData[static_cast<std::size_t>(node.tableOsc)], r);
     if (node.sample)
         return readRef(v, path, "A sample reference", patch.textureSample, r);
     switch (node.extra) {
@@ -706,7 +812,7 @@ void readMeta(const J& v, PatchMeta& meta, Reporter& r) {
     if (!requireObject(v, "/meta", "\"meta\"", r))
         return;
     static const std::vector<std::string> known = {"name", "author", "pack", "type", "tags", "genres",
-                                                   "rating", "notes", "created", "modified"};
+                                                   "rating", "favourite", "notes", "created", "modified"};
     for (const auto& [key, child] : v.items()) {
         const std::string path = "/meta/" + escapeKey(key);
         if (key == "name") readString(child, path, "The name", kMaxNameLength, meta.name, r);
@@ -718,6 +824,7 @@ void readMeta(const J& v, PatchMeta& meta, Reporter& r) {
         else if (key == "modified") readString(child, path, "The modification date", kMaxTagLength, meta.modified, r);
         else if (key == "tags") readStringList(child, path, "\"tags\"", meta.tags, r);
         else if (key == "genres") readStringList(child, path, "\"genres\"", meta.genres, r);
+        else if (key == "favourite") readBool(child, path, "\"favourite\"", meta.favourite, r);
         else if (key == "rating") {
             if (!child.is_number() || !std::isfinite(child.get<double>())) {
                 r.error("wrong_type", path, std::string("The rating must be a number, but this is ") + kindOf(child) + ".",
@@ -1177,6 +1284,7 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
     if (full || !patch.meta.tags.empty()) meta["tags"] = patch.meta.tags;
     if (!patch.meta.genres.empty()) meta["genres"] = patch.meta.genres;
     if (patch.meta.rating != 0) meta["rating"] = patch.meta.rating;
+    if (patch.meta.favourite) meta["favourite"] = true;
     putText("notes", patch.meta.notes, defaults.notes, false);
     putText("created", patch.meta.created, defaults.created, false);
     putText("modified", patch.meta.modified, defaults.modified, false);
@@ -1196,8 +1304,13 @@ std::string savePatch(const Patch& patch, const SaveOptions& options) {
             const std::string& id = reg.at(i).id;
             for (int osc = 0; osc < kNumOscs; ++osc) {
                 const auto& ref = patch.tables[static_cast<std::size_t>(osc)];
-                if (!ref.empty() && id == "osc" + std::to_string(osc + 1) + ".engine")
-                    doc["osc" + std::to_string(osc + 1)]["table"]["ref"] = ref;
+                const auto& data = patch.tableData[static_cast<std::size_t>(osc)];
+                if ((!ref.empty() || data) && id == "osc" + std::to_string(osc + 1) + ".engine") {
+                    J& table = doc["osc" + std::to_string(osc + 1)]["table"];
+                    table["ref"] = ref;
+                    if (data)
+                        table["data"] = embeddedTableToJson(*data.table);
+                }
             }
             if (!patch.textureSample.empty() && id == "texture.mode")
                 doc["texture"]["sample"]["ref"] = patch.textureSample;

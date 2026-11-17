@@ -119,7 +119,9 @@ std::shared_ptr<const TableData> TableData::builtin() {
     return table;
 }
 
-std::shared_ptr<const TableData> TableData::build(const Wavetable& source) {
+std::shared_ptr<const TableData> TableData::build(const Wavetable& source) { return build(source, nullptr); }
+
+std::shared_ptr<const TableData> TableData::build(const Wavetable& source, const TableData* previous) {
     Wavetable table = source;
     if (table.frames.empty())
         table.frames.push_back(Frame{});
@@ -161,9 +163,28 @@ std::shared_ptr<const TableData> TableData::build(const Wavetable& source) {
     }
     out->data_.assign(static_cast<std::size_t>(offset) + 16, 0.0f);
 
+    out->frameHashes_.resize(static_cast<std::size_t>(count));
+    for (int f = 0; f < count; ++f)
+        out->frameHashes_[static_cast<std::size_t>(f)] = fnv1a(frames[static_cast<std::size_t>(f)].data(), sizeof(Frame));
+    const bool reuse = previous != nullptr && previous->data_.size() > 16 && !previous->frameHashes_.empty();
+
     std::array<Complex, kMaxHarmonics + 1> bins;
     std::vector<Complex> work(4096);
     for (int f = 0; f < count; ++f) {
+        if (reuse && f < static_cast<int>(previous->frameHashes_.size()) &&
+            previous->frameHashes_[static_cast<std::size_t>(f)] == out->frameHashes_[static_cast<std::size_t>(f)]) {
+            // Unchanged frame: its levels are copied (the level layout is the same for every table).
+            for (int l = 0; l < kNumLevels; ++l) {
+                const Level& level = out->levels_[static_cast<std::size_t>(l)];
+                const Level& old = previous->levels_[static_cast<std::size_t>(l)];
+                const float* from = previous->data_.data() + old.offset + f * old.stride;
+                float* dest = out->data_.data() + level.offset + f * level.stride;
+                std::copy(from, from + level.stride, dest);
+                if (f == count - 1)
+                    std::copy(dest, dest + level.stride, dest + level.stride);
+            }
+            continue;
+        }
         frameToBins(frames[static_cast<std::size_t>(f)], bins);
         for (int l = 0; l < kNumLevels; ++l) {
             const Level& level = out->levels_[static_cast<std::size_t>(l)];

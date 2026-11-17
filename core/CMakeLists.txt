@@ -7,9 +7,13 @@ add_library(zederia_core STATIC
     src/params/ParamDef.cpp
     src/params/Registry.cpp
     src/params/ParamDocs.cpp
+    src/params/ValueText.cpp
     src/patch/Patch.cpp
     src/patch/PatchIO.cpp
     src/patch/Shape.cpp
+    src/patch/History.cpp
+    src/patch/Variation.cpp
+    src/patch/Modules.cpp
     src/tuning/Tuning.cpp
     src/rt/AudioThreadGuard.cpp
     src/dsp/Fft.cpp
@@ -23,8 +27,10 @@ add_library(zederia_core STATIC
     src/table/Import.cpp
     src/table/Resynth.cpp
     src/util/Image.cpp
+    src/util/Compress.cpp
     src/content/Recipe.cpp
     src/content/Library.cpp
+    src/content/PresetIndex.cpp
     src/engine/VoiceAllocator.cpp
     src/engine/SampleData.cpp
     src/engine/OscKernelScalar.cpp

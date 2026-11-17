@@ -30,6 +30,7 @@ add_executable(zederia_tests
     core/test_output.cpp
     core/test_play.cpp
     core/test_golden.cpp
+    core/test_editing.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE

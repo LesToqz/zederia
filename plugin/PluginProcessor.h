@@ -6,6 +6,7 @@
 #include "zederia/engine/Engine.h"
 #include "zederia/midi/CcMap.h"
 #include "zederia/patch/PatchIO.h"
+#include "zederia/render/OfflineRenderer.h"
 #include "zederia/rt/Handoff.h"
 
 #include <array>
@@ -13,11 +14,13 @@
 #include <chrono>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
 
 class ZederiaProcessor;
+class Session;
 
 // A host parameter backed by one registry entry. Values live in the engine's parameter store in
 // plain units; the host sees them normalized through the entry's range and skew.
@@ -150,6 +153,68 @@ public:
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
     float meterPeak(int channel) { return meter_[static_cast<std::size_t>(channel)].exchange(0.0f, std::memory_order_relaxed); }
     int activeVoices() const { return engine_.activeVoices(); }
+    // Events from the interface (wheels, audition): played at the start of the next block.
+    void pushUiEvent(const zed::MidiEvent& event) { pushKeyboardEvent(event); }
+
+    // --- Whole states: undo, A/B, presets (message thread; ProcessorEditing.cpp) -------------------
+    // The current patch: the document with the engine's current values.
+    zed::Patch snapshot();
+    // Makes the instrument match `state`, changing only what differs (values, routes, shapes, the
+    // rack, tables, play data, text). Locks are ignored: an undo restores exactly.
+    void restore(const zed::Patch& state);
+    // A preset load: like restore, but locked parameters keep their values and a locked rack or
+    // tuning stays (plan 3.11). Tables load by reference (or from the patch's own data).
+    void loadPresetPatch(const zed::Patch& patch);
+    // A table edited in the workshop, while the pointer moves: kept in the document at once and
+    // built on a worker thread, which hands it to the engine (plan 5.8: audio within 50 ms).
+    void setTableLive(int osc, std::shared_ptr<const zed::Wavetable> table);
+    // Milliseconds from the last setTableLive() to the engine having the new table; -1 while building.
+    double lastTableLatencyMs() const { return tableLatencyMs_.load(std::memory_order_relaxed); }
+    bool tableBuildPending() const;
+    // The patch's text (name, tags ...) and the routes, without copying the whole patch.
+    zed::PatchMeta meta() const;
+    void setMeta(const zed::PatchMeta& meta); // text only: not an undo step
+    std::vector<zed::ModRoute> routes() const;
+    std::array<std::string, zed::kNumMacros> macroNames() const;
+    // Reads the document's structure (shapes, clips, rack layout ...) under its lock. Parameter
+    // values in it may be older than the engine's; use plainValue() for those.
+    void readDocument(const std::function<void(const zed::Patch&)>& reader) const;
+    // Live edits while the pointer moves (the editor records the undo step when it is released):
+    // the document and the engine take the new structure at once.
+    void setLfoShapeLive(int lfo, const zed::Shape& shape);
+    void setEnvShapeLive(int env, const zed::EnvShape& shape);
+    void setWarpCurveLive(int osc, int slot, const zed::Shape& shape);
+    void setFxCurveLive(int lane, int slot, int curve, const zed::Shape& shape);
+    void setRouteCurveLive(int route, const zed::Shape& shape);
+    void setArpPatternLive(int pattern, const zed::ArpPattern& steps);
+    void setClipLive(int slot, const zed::Clip& clip);
+    void setChordNotesLive(const std::vector<int>& notes);
+    // The editable form of an oscillator's table: the patch's own data, the file it names, or the built-in table.
+    std::shared_ptr<const zed::Wavetable> editableTable(int osc);
+
+    // --- Locks (plan 3.11): survive preset changes ----------------------------------------------
+    void setParamLocked(int index, bool locked);
+    bool paramLocked(int index) const;
+    std::vector<bool> lockMask() const;
+
+    // --- What the interface shows ----------------------------------------------------------------
+    // The newest `count` samples of the output (mono), oldest first; fewer when not enough exist.
+    int readOutput(float* dest, int count) const;
+    // Audio callback time against real time, in percent: smoothed average, and the peak since the last call.
+    float cpuAverage() const { return cpuAverage_.load(std::memory_order_relaxed); }
+    float cpuPeak() { return cpuPeak_.exchange(0.0f, std::memory_order_relaxed); }
+    double hostBpm() const { return hostBpm_.load(std::memory_order_relaxed); }
+    bool hostPlaying() const { return hostPlaying_.load(std::memory_order_relaxed); }
+    double currentSampleRate() const { return sampleRate_; }
+    // Plays a short phrase through the instrument (library audition). Note times in seconds.
+    void audition(const std::vector<zed::NoteSpec>& notes);
+    void stopAudition();
+    bool auditioning() const { return auditionLeft_.load(std::memory_order_relaxed) > 0; }
+
+    // The instance's interface state (open page, selections), kept in the host project.
+    std::string uiState() const;
+    void setUiState(std::string state);
+    Session& session() { return *session_; }
 
 private:
     void handleNoteOn(juce::MidiKeyboardState*, int channel, int note, float velocity) override;
@@ -207,6 +272,30 @@ private:
     bool haveLastBlock_ = false, fastRender_ = false;
     double windowWall_ = 0.0, windowAudio_ = 0.0, sampleRate_ = 48000.0;
     std::atomic<bool> offlineNow_{false};
+
+    // Milestone 5: the interface's view of the audio, locks, audition, table builds, the session.
+    void applyLoaded(const zed::Patch& state, bool honourLocks); // documentLock_ not held
+    void buildTables();                                          // the table builder thread's work
+    static constexpr int kOutputRing = 8192;
+    std::array<float, kOutputRing> outputRing_{};
+    std::atomic<int> outputWrite_{0};
+    std::atomic<float> cpuAverage_{0.0f}, cpuPeak_{0.0f};
+    std::atomic<double> hostBpm_{120.0};
+    std::atomic<bool> hostPlaying_{false};
+    struct AuditionPlan {
+        std::vector<zed::MidiEvent> events; // offsets in samples from the start of the plan
+    };
+    zed::rt::Handoff<AuditionPlan> auditionPlan_;
+    std::int64_t auditionPos_ = 0; // audio thread
+    std::size_t auditionNext_ = 0; // audio thread
+    std::atomic<std::int64_t> auditionLeft_{0};
+    std::vector<bool> locked_;           // documentLock_
+    std::string uiState_;                // documentLock_
+    // Workshop table builds: the newest request per oscillator, built off the message thread.
+    class TableBuilder;
+    std::unique_ptr<TableBuilder> tableBuilder_;
+    std::atomic<double> tableLatencyMs_{0.0};
+    std::unique_ptr<Session> session_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaProcessor)
 };

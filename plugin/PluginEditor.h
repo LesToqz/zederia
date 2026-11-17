@@ -1,53 +1,106 @@
-// Temporary generic editor: a searchable list of every parameter, pickers for the wavetable of
-// each oscillator and for the texture sample, an on-screen keyboard and a level meter. The real
-// interface is milestone 5.
+// The editor (plan 3.13): a 1320 x 820 vector interface scaled freely from 70 % to 300 %, with the
+// top bar, the seven pages, the macro strip, the help strip and the overlays (hover lists, the
+// mod map, the command palette, preferences, history). Animation runs on one frame clock capped
+// by the preferences (15, 30 or 60 per second) and stops while the window is hidden; rendering is
+// in software unless the preferences allow the graphics card.
 #pragma once
 
 #include "PluginProcessor.h"
+#include "ui/ModOverlay.h"
+#include "ui/Palette.h"
+#include "ui/Shell.h"
 
-#include <juce_gui_basics/juce_gui_basics.h>
-#include <vector>
+#include <array>
 
-class ZederiaEditor final : public juce::AudioProcessorEditor, private juce::ListBoxModel, private juce::Timer {
+class ZederiaEditor final : public juce::AudioProcessorEditor,
+                            public juce::DragAndDropContainer,
+                            private juce::Timer,
+                            private juce::ChangeListener {
 public:
+    enum PageId { Synth, Fx, Mod, Table, Play, Library, Agent, Kit, NumPages };
+    static juce::StringArray pageNames(); // the seven pages the tabs show (Kit is the component gallery)
+
     explicit ZederiaEditor(ZederiaProcessor& processor);
     ~ZederiaEditor() override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    bool keyPressed(const juce::KeyPress& key) override;
+    void parentHierarchyChanged() override;
+    void visibilityChanged() override;
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override { mouseMove(e); }
 
-    // For tests.
-    int visibleParameterCount() const { return static_cast<int>(rows_.size()); }
-    void setSearchText(const juce::String& text);
-    juce::MidiKeyboardComponent& keyboard() { return keyboard_; }
-    // Slot 0..2 is an oscillator's table, slot 3 the texture sample; item 0 is the built-in one.
-    int assetChoiceCount(int slot) const { return assetBox_[slot].getNumItems(); }
-    void chooseAsset(int slot, int item) { assetBox_[slot].setSelectedItemIndex(item, juce::sendNotificationSync); }
-    juce::String chosenAsset(int slot) const { return assetBox_[slot].getText(); }
+    // --- Navigation -------------------------------------------------------------------------------
+    void showPage(int page);
+    int currentPage() const { return current_; }
+    zui::Page& page(int page); // built on first use
+    bool revealModule(const juce::String& module);
+    bool revealParam(int index);
+    void setScalePercent(int percent);
+    float scale() const { return static_cast<float>(getWidth()) / static_cast<float>(zui::kBaseWidth); }
+
+    // --- Overlays ---------------------------------------------------------------------------------
+    void showPalette();
+    void showPrefs();
+    void toggleHistory();
+    void setModMap(bool shown);
+    bool modMapShown() const { return modMap_.isVisible(); }
+    void openParamMenu(zui::ParamWidget& widget);
+    void showMainMenu();
+    void savePresetAs();
+    void closeOverlays();
+
+    // --- Frame clock --------------------------------------------------------------------------------
+    // One frame: refreshes what changed and repaints only that. Returns the areas it repainted
+    // (editor coordinates); tests measure the interface's cost with it.
+    std::vector<juce::Rectangle<int>> tickFrame();
+    bool animating() const { return isTimerRunning() && getTimerInterval() < 200; }
+
+    // --- For tests and tools --------------------------------------------------------------------------
+    zui::Context& context() { return ctx_; }
+    juce::Component& content();
+    zui::TopBar& topBar() { return *topBar_; }
+    zui::HelpStrip& helpStrip() { return *help_; }
+    zui::CommandPalette& palette() { return *palette_; }
+    zui::ModHoverList& hoverList() { return *hoverList_; }
+    zui::ModMapOverlay& modMap() { return modMap_; }
+    void applyLayout();      // after preferences change
+    void applyTheme();
+    void saveUiState();
+    void loadUiState();
+    std::vector<zui::CommandPalette::Entry> paletteEntries();
 
 private:
-    class Row;
-    class Meter;
-
-    int getNumRows() override { return static_cast<int>(rows_.size()); }
-    void paintListBoxItem(int, juce::Graphics&, int, int, bool) override {}
-    juce::Component* refreshComponentForRow(int row, bool selected, juce::Component* existing) override;
+    class Root;
     void timerCallback() override;
-    void rebuildRows();
-    void refreshAssetBoxes();
+    void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    void tickTree(juce::Component& c, std::vector<juce::Rectangle<int>>& dirty);
+    void updateHover();
+    void applyRenderer();
+    void stepPreset(int direction);
 
     ZederiaProcessor& processor_;
-    std::vector<int> rows_; // registry indices that match the search
-    juce::Label title_, status_;
-    juce::TextEditor search_;
-    juce::Label assetLabel_[4];
-    juce::ComboBox assetBox_[4];
-    std::vector<std::string> assetRefs_[4]; // the reference behind each item of a box
-    bool fillingBoxes_ = false;
-    juce::ListBox list_;
-    std::unique_ptr<Meter> meter_;
-    juce::MidiKeyboardComponent keyboard_;
-    int seenGeneration_ = -1;
+    zui::LookAndFeel lnf_;
+    zui::Context ctx_;
+    std::unique_ptr<Root> root_;
+    std::unique_ptr<zui::TopBar> topBar_;
+    std::unique_ptr<zui::TabStrip> tabs_;
+    zui::Button simpleButton_{"Simple"}, mapButton_{"Mod map", zui::Glyph::Map}, findButton_{"Find", zui::Glyph::Search},
+        prefsButton_{"", zui::Glyph::Gear};
+    std::array<std::unique_ptr<zui::Page>, NumPages> pages_;
+    int current_ = Synth;
+    std::unique_ptr<zui::MacroStrip> macros_;
+    std::unique_ptr<zui::HelpStrip> help_;
+    std::unique_ptr<zui::ModHoverList> hoverList_;
+    zui::ModMapOverlay modMap_;
+    std::unique_ptr<zui::CommandPalette> palette_;
+    std::unique_ptr<zui::PrefsPanel> prefs_;
+    std::unique_ptr<zui::HistoryPanel> history_;
+    juce::Component::SafePointer<zui::ParamWidget> hoverCandidate_;
+    double hoverSince_ = 0.0, hoverLeft_ = 0.0;
+    int seenGeneration_ = -1, seenSession_ = -1;
+    bool layingOut_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaEditor)
 };

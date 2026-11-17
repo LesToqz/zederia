@@ -69,6 +69,17 @@ Usage: zederia-cli <command> [options]
       --profile                also show where the time goes, section by section
       --report-only            print the verdicts but always exit with code 0
 
+  ui-snapshot                  Render editor pages offscreen to PNG and check them (plan 6.1)
+      --page NAME|all          synth fx mod table play library agent kit, or all (default all)
+      --scale LIST             percentages, comma separated (default 100,150,200)
+      --theme NAME|all         Graphite (default), Paper, Contrast, or all
+      --out DIR                folder for the images (default ui-snapshots)
+      --patch FILE             a patch to load first
+      --content DIR            factory content folder
+      --play NOTES             hold these keys (for example 48,52,55) so the displays move
+      --check                  check clipping, overlap, truncated and small text, unlabeled
+                               controls and theme contrast; exit code 1 on any finding
+
   table SUBCOMMAND             The wavetable toolkit. Tables are WAV files of 2048-sample frames.
                                Frame numbers start at 0; --scope is all, a frame, or a range such as 2-7.
       info FILE [--json]       name, frames, morph mode, level and size
@@ -176,6 +187,10 @@ int cmdRender(const Args& args) {
     if (args.has("content"))
         library.setFactoryDir(args.get("content"));
     for (int i = 0; i < zed::kNumOscs; ++i) {
+        if (const auto& data = patch.tableData[static_cast<std::size_t>(i)]) { // a table kept in the patch
+            settings.tables[static_cast<std::size_t>(i)] = zed::TableData::build(*data.table);
+            continue;
+        }
         std::string problem;
         settings.tables[static_cast<std::size_t>(i)] = library.loadTable(patch.tables[static_cast<std::size_t>(i)], problem, presetDir);
         if (settings.tables[static_cast<std::size_t>(i)] == nullptr)
@@ -504,6 +519,7 @@ int main(int argc, char** argv) {
         if (command == "texture") return cmdTexture(args);
         if (command == "content") return cmdContent(args);
         if (command == "clip") return cmdClip(args);
+        if (command == "ui-snapshot") return cmdUiSnapshot(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return kFailed;
