@@ -5,8 +5,10 @@
 
 #include "zederia/params/Registry.h"
 #include "zederia/patch/Shape.h"
+#include "zederia/table/Wavetable.h"
 
 #include <array>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -19,7 +21,19 @@ struct PatchMeta {
     std::string author, pack, type, notes, created, modified;
     std::vector<std::string> tags, genres;
     int rating = 0; // 0..5
+    bool favourite = false;
     bool operator==(const PatchMeta&) const = default;
+};
+
+// A wavetable kept inside the patch instead of being loaded by reference: a table edited in the
+// workshop or imported and not yet saved as a file. Written into a preset as deflated base64
+// data (plan 5.6). Two embedded tables are equal when their contents are.
+struct EmbeddedTable {
+    std::shared_ptr<const Wavetable> table; // null: the oscillator loads its reference
+    explicit operator bool() const { return table != nullptr; }
+    bool operator==(const EmbeddedTable& other) const {
+        return table == other.table || (table != nullptr && other.table != nullptr && *table == *other.table);
+    }
 };
 
 enum class Polarity : std::uint8_t { Bi, Uni };
@@ -150,6 +164,9 @@ public:
 
     PatchMeta meta;
     std::array<std::string, kNumOscs> tables;       // wavetable reference per oscillator; empty = built-in
+    // A table kept in the patch replaces the reference's file; the reference stays as the table's
+    // origin (shown as its name, flagged as modified).
+    std::array<EmbeddedTable, kNumOscs> tableData;
     std::string textureSample;                      // sample reference for the texture player
     std::array<std::string, kNumMacros> macroNames; // empty = "Macro N"
     std::vector<ModRoute> routes;                   // at most kNumModRoutes; route i uses mod.(i+1).amount

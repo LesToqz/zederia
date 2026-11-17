@@ -1,6 +1,7 @@
 #include "../support/TestUtil.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "Session.h"
 #include "zederia/midi/MidiFile.h"
 #include "zederia/rt/AudioThreadGuard.h"
 #include "zederia/util/Math.h"
@@ -251,21 +252,16 @@ TEST_CASE("plug-in: a rack slot's generic parameters take the loaded effect's na
     CHECK(saved.patch.get(idx("fx.a1.p3")) == Approx(4000.0));
 }
 
-TEST_CASE("plug-in: the temporary editor opens, lists parameters and follows the processor", "[plugin][editor]") {
+TEST_CASE("plug-in: the editor opens at its default size and follows the processor", "[plugin][editor]") {
     Host host;
     std::unique_ptr<juce::AudioProcessorEditor> base(host.processor.createEditor());
     auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
     REQUIRE(editor != nullptr);
-    CHECK(editor->getWidth() >= 640);
-    CHECK(editor->visibleParameterCount() == Registry::get().size());
-    editor->setSearchText("cutoff");
-    CHECK(editor->visibleParameterCount() >= 2);
-    CHECK(editor->visibleParameterCount() < 40);
-    editor->setSearchText("no such parameter anywhere");
-    CHECK(editor->visibleParameterCount() == 0);
-    editor->setSearchText("");
-    editor->setSize(700, 450);
-    editor->setSize(1500, 1000);
+    CHECK(editor->getWidth() == 1320);
+    CHECK(editor->getHeight() == 820);
+    editor->setSize(700, 450); // the constrainer is the host's business; the content scales with any size
+    editor->setScalePercent(150);
+    CHECK(editor->getWidth() == 1980);
 
     // The keyboard component drives the same state the processor listens to.
     host.processor.keyboardState().noteOn(1, 64, 0.9f);
@@ -384,32 +380,33 @@ TEST_CASE("plug-in: tables and the texture load by reference, change while playi
     CHECK(zed::rt::violationCount() == 0);
 }
 
-TEST_CASE("plug-in: the temporary editor offers the tables and textures", "[plugin][editor][sources]") {
+TEST_CASE("plug-in: tables and textures chosen as the editor does play", "[plugin][editor][sources]") {
     Host host;
     host.processor.setContentFolders(factoryFolder(), "");
     std::unique_ptr<juce::AudioProcessorEditor> base(host.processor.createEditor());
-    auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
-    REQUIRE(editor != nullptr);
-    for (int slot = 0; slot < 3; ++slot)
-        CHECK(editor->assetChoiceCount(slot) == 13); // the built-in table and the twelve of the starter set
-    CHECK(editor->assetChoiceCount(3) == 7);
-    CHECK(editor->chosenAsset(0).startsWith("(built-in"));
-
-    editor->chooseAsset(1, 3);
-    const std::string chosen = editor->chosenAsset(1).toStdString();
-    CHECK(chosen.rfind("factory:", 0) == 0);
-    CHECK(host.processor.tableReference(1) == chosen);
-    editor->chooseAsset(3, 1);
-    CHECK(host.processor.textureReference() == editor->chosenAsset(3).toStdString());
-    editor->chooseAsset(1, 0); // back to the built-in table
+    REQUIRE(dynamic_cast<ZederiaEditor*>(base.get()) != nullptr);
+    const auto tables = host.processor.library().listTables();
+    const auto textures = host.processor.library().listTextures();
+    CHECK(tables.size() == 12);
+    CHECK(textures.size() == 6);
+    // The source cards change tables and samples through the session, as one undo step each.
+    host.processor.session().edit("Osc 2 table", [&](zed::Patch& p) {
+        p.tables[1] = tables[3];
+        return true;
+    });
+    CHECK(host.processor.tableReference(1) == tables[3]);
+    host.processor.session().edit("Texture sample", [&](zed::Patch& p) {
+        p.textureSample = textures[1];
+        return true;
+    });
+    CHECK(host.processor.textureReference() == textures[1]);
+    host.processor.session().undo();
+    CHECK(host.processor.textureReference().empty());
+    host.processor.session().undo();
     CHECK(host.processor.tableReference(1).empty());
 
-    // Every source can be switched on from the parameter list and heard.
-    for (const char* id : {"osc2.on", "osc3.on", "sub.on", "texture.on"}) {
-        editor->setSearchText(id);
-        CHECK(editor->visibleParameterCount() == 1);
-        host.processor.setNormalizedFromUi(idx(id), 1.0f);
-    }
+    for (const char* id : {"osc2.on", "osc3.on", "sub.on", "texture.on"})
+        host.processor.session().setValue(idx(id), 1.0);
     host.processor.keyboardState().noteOn(1, 52, 0.9f);
     host.run(20);
     CHECK(host.peak(2400) > 0.02f);

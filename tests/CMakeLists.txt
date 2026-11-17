@@ -30,6 +30,7 @@ add_executable(zederia_tests
     core/test_output.cpp
     core/test_play.cpp
     core/test_golden.cpp
+    core/test_editing.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE
@@ -80,4 +81,7 @@ add_test(NAME core.no_raw_locks
 
 if(ZED_BUILD_PLUGIN)
     add_subdirectory(plugin)
+    # The snapshot tool end to end: one page at one scale, with the interface checks.
+    add_test(NAME cli.ui_snapshot_audit
+             COMMAND zederia-cli ui-snapshot --page synth --scale 100 --audit --out ${CMAKE_CURRENT_BINARY_DIR}/ui_snapshot)
 endif()

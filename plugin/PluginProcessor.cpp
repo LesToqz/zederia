@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 
 #include "PluginEditor.h"
+#include "ProcessorParts.h"
+#include "Session.h"
 #include "zederia/midi/MidiFile.h"
 #include "zederia/render/OfflineRenderer.h"
 #include "zederia/rt/AudioThreadGuard.h"
@@ -126,12 +128,17 @@ ZederiaProcessor::ZederiaProcessor()
     setLatencySamples(engine_.latencySamples());
     ccTable_.set(std::make_shared<const zed::CcTable>(zed::CcTable::build(ccMap_)));
     midiThruIndex_ = reg.indexOf("global.midi_thru");
+    locked_.assign(static_cast<std::size_t>(reg.size()), false);
     keyboard_.addListener(this);
+    tableBuilder_ = std::make_unique<TableBuilder>(*this);
+    session_ = std::make_unique<Session>(*this);
     startTimerHz(30);
 }
 
 ZederiaProcessor::~ZederiaProcessor() {
     stopTimer();
+    session_.reset();
+    tableBuilder_.reset(); // stops its thread before anything it touches goes away
     keyboard_.removeListener(this);
     cancelPendingUpdate();
 }
@@ -179,6 +186,7 @@ bool ZederiaProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const 
 void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     const zed::rt::AudioThreadScope audioThread;
     const zed::rt::ScopedNoDenormals noDenormals;
+    const auto started = std::chrono::steady_clock::now();
     const int frames = buffer.getNumSamples();
     if (buffer.getNumChannels() < 2 || frames <= 0) {
         buffer.clear();
@@ -205,6 +213,26 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         };
         take(scope.startIndex1, scope.blockSize1);
         take(scope.startIndex2, scope.blockSize2);
+    }
+    // An audition phrase from the library: its events at their own samples.
+    auditionPlan_.retirePrevious();
+    if (auditionPlan_.take()) {
+        auditionPlan_.retirePrevious();
+        auditionPos_ = 0;
+        auditionNext_ = 0;
+    }
+    if (const AuditionPlan* plan = auditionPlan_.current()) {
+        while (auditionNext_ < plan->events.size() && count < kMaxEventsPerBlock) {
+            const zed::MidiEvent& e = plan->events[auditionNext_];
+            if (e.offset >= auditionPos_ + frames)
+                break;
+            zed::MidiEvent placed = e;
+            placed.offset = static_cast<int>(std::max<std::int64_t>(0, e.offset - auditionPos_));
+            blockEvents_[static_cast<std::size_t>(count++)] = placed;
+            ++auditionNext_;
+        }
+        auditionPos_ += frames;
+        auditionLeft_.store(static_cast<std::int64_t>(plan->events.size() - auditionNext_), std::memory_order_relaxed);
     }
     for (const auto metadata : midi) {
         if (count >= kMaxEventsPerBlock)
@@ -247,6 +275,17 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     args.left = buffer.getWritePointer(0);
     args.right = buffer.getWritePointer(1);
     args.frames = frames;
+    // Audition events sit between the keyboard's and the host's: put everything in time order
+    // (insertion sort, in place: stable and allocation-free; nearly sorted already).
+    for (int i = 1; i < count; ++i) {
+        const zed::MidiEvent e = blockEvents_[static_cast<std::size_t>(i)];
+        int j = i;
+        while (j > 0 && blockEvents_[static_cast<std::size_t>(j - 1)].offset > e.offset) {
+            blockEvents_[static_cast<std::size_t>(j)] = blockEvents_[static_cast<std::size_t>(j - 1)];
+            --j;
+        }
+        blockEvents_[static_cast<std::size_t>(j)] = e;
+    }
     args.midi = {blockEvents_.data(), static_cast<std::size_t>(count)};
     if (auto* head = getPlayHead()) {
         if (const auto position = head->getPosition()) {
@@ -289,6 +328,24 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         if (peak > held.load(std::memory_order_relaxed))
             held.store(peak, std::memory_order_relaxed);
     }
+    // The newest output for the spectrum display (mono), and the callback's cost.
+    {
+        const float* l = buffer.getReadPointer(0);
+        const float* r = buffer.getReadPointer(1);
+        int write = outputWrite_.load(std::memory_order_relaxed);
+        for (int i = 0; i < frames; ++i) {
+            outputRing_[static_cast<std::size_t>(write)] = 0.5f * (l[i] + r[i]);
+            write = (write + 1) & (kOutputRing - 1);
+        }
+        outputWrite_.store(write, std::memory_order_release);
+    }
+    hostBpm_.store(args.transport.bpm, std::memory_order_relaxed);
+    hostPlaying_.store(args.transport.playing, std::memory_order_relaxed);
+    const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    const float load = static_cast<float>(100.0 * spent * sampleRate_ / frames);
+    cpuAverage_.store(cpuAverage_.load(std::memory_order_relaxed) * 0.95f + load * 0.05f, std::memory_order_relaxed);
+    if (load > cpuPeak_.load(std::memory_order_relaxed))
+        cpuPeak_.store(load, std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* ZederiaProcessor::createEditor() { return new ZederiaEditor(*this); }
@@ -709,6 +766,26 @@ void ZederiaProcessor::getStateInformation(juce::MemoryBlock& destination) {
         }
         if (!unused.empty())
             instrument["unused_values"] = std::move(unused);
+        // Milestone 5: locks, the interface's state and the other side of A/B.
+        {
+            nlohmann::ordered_json locks = nlohmann::ordered_json::array();
+            std::string ui;
+            {
+                const juce::ScopedLock lock(documentLock_);
+                const auto& reg = zed::Registry::get();
+                for (int i = 0; i < reg.size(); ++i)
+                    if (locked_[static_cast<std::size_t>(i)])
+                        locks.push_back(reg.at(i).id);
+                ui = uiState_;
+            }
+            if (!locks.empty())
+                instrument["locks"] = std::move(locks);
+            if (!ui.empty())
+                instrument["ui"] = ui;
+            const std::string ab = session_->abStateJson();
+            if (!ab.empty())
+                instrument["ab"] = nlohmann::ordered_json::parse(ab);
+        }
         payload.push_back('\0');
         payload += instrument.dump();
     }
@@ -759,6 +836,7 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
         engine_.setTuningLocked(tuningWasLocked);
         return;
     }
+    session_->resetHistory("Project opened");
     if (instrument.empty())
         return;
     // The instrument's settings: anything unreadable is skipped, the patch stays loaded.
@@ -794,6 +872,20 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
                 engine_.params().set(index, std::clamp(value.get<double>(), def.min, def.max));
             }
         }
+        if (doc.contains("locks") && doc["locks"].is_array()) {
+            const juce::ScopedLock lock(documentLock_);
+            std::fill(locked_.begin(), locked_.end(), false);
+            for (const auto& id : doc["locks"])
+                if (id.is_string())
+                    if (const int index = zed::Registry::get().indexOf(id.get<std::string>()); index >= 0)
+                        locked_[static_cast<std::size_t>(index)] = true;
+        }
+        if (doc.contains("ui") && doc["ui"].is_string()) {
+            setUiState(doc["ui"].get<std::string>());
+            uiRestores_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (doc.contains("ab") && doc["ab"].is_object())
+            session_->setAbStateJson(doc["ab"].dump());
     } catch (const std::exception&) {
     }
 }

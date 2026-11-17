@@ -181,6 +181,10 @@ std::vector<std::string> applyPatchAssets(Engine& engine, const Patch& patch, co
                                           std::string_view presetDir) {
     std::vector<std::string> problems;
     for (int i = 0; i < kNumOscs; ++i) {
+        if (const auto& data = patch.tableData[static_cast<std::size_t>(i)]) { // kept in the patch
+            engine.setTable(i, TableData::build(*data.table));
+            continue;
+        }
         std::string error;
         auto table = library.loadTable(patch.tables[static_cast<std::size_t>(i)], error, presetDir);
         if (table == nullptr)

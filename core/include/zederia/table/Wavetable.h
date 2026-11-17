@@ -65,6 +65,9 @@ Frame morphFrame(const Frame& a, const Frame& b, double t, MorphMode mode);
 Frame frameAt(const Wavetable& table, double position);
 // `count` evenly spaced positions (the plan's full set is 256).
 std::vector<Frame> generatePositions(const Wavetable& table, int count = kMaxFrames);
+// The same, computing only the positions marked in `needed` (count entries); the others are left
+// silent. Key frames no needed position uses are not analysed. Results equal the full call.
+std::vector<Frame> generatePositions(const Wavetable& table, int count, const std::vector<char>& needed);
 
 // --- Files (plan 5.6) --------------------------------------------------------------------------
 // A table file is a mono WAV with the key frames end to end, 2048 samples each, and a "ZEDT"
