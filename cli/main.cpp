@@ -76,8 +76,11 @@ Usage: zederia-cli <command> [options]
       --out DIR                folder for the images (default ui-snapshots)
       --patch FILE             a patch to load first
       --content DIR            factory content folder
+      --user DIR               user folder (presets for the library page)
+      --settings FILE          preferences file to use (default: the defaults, not yours)
       --play NOTES             hold these keys (for example 48,52,55) so the displays move
-      --check                  check clipping, overlap, truncated and small text, unlabeled
+      --trace                  print each step as it happens
+      --audit                  check clipping, overlap, truncated and small text, unlabeled
                                controls and theme contrast; exit code 1 on any finding
 
   table SUBCOMMAND             The wavetable toolkit. Tables are WAV files of 2048-sample frames.

@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <unordered_map>
 
 namespace zui {
 
@@ -166,7 +167,25 @@ juce::Font font(float size, bool bold) {
 }
 
 float textWidth(const juce::String& text, float size, bool bold) {
-    return juce::GlyphArrangement::getStringWidth(font(size, bold), text);
+    // Measured once per text and size: controls fit their labels on every repaint, and measuring
+    // shapes the text each time.
+    struct Widths {
+        std::mutex mutex;
+        std::unordered_map<juce::String, float> values;
+    };
+    static Widths cache;
+    const juce::String key = text + "\x1f" + juce::String(size, 2) + (bold ? "b" : "");
+    {
+        const std::lock_guard<std::mutex> lock(cache.mutex);
+        if (const auto it = cache.values.find(key); it != cache.values.end())
+            return it->second;
+    }
+    const float width = juce::GlyphArrangement::getStringWidth(font(size, bold), text);
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    if (cache.values.size() > 4096)
+        cache.values.clear();
+    cache.values.emplace(key, width);
+    return width;
 }
 
 float fittingSize(const juce::String& text, float width, float size, bool bold) {

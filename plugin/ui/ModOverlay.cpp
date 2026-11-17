@@ -161,11 +161,11 @@ void ModMapOverlay::paint(juce::Graphics& g) {
         const juce::String source = str(r.route.source);
         DragChip* chip = nullptr;
         for (auto* c : chips)
-            if (c->source() == source && c->isShowing())
+            if (c->source() == source && visibleWithin(*c, scope))
                 chip = c;
         ParamWidget* dest = nullptr;
         for (auto* w : widgets)
-            if (w->param() == r.dest && w->isShowing())
+            if (w->param() == r.dest && visibleWithin(*w, scope))
                 dest = w;
         if (dest == nullptr) {
             offPage_.add(Context::sourceName(source) + " > " + (r.dest >= 0 ? str(reg.at(r.dest).name) : str(r.route.dest)));

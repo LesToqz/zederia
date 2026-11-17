@@ -171,6 +171,14 @@ MacroStrip::MacroStrip(Context& ctx) : ctx_(ctx) {
                 refreshNames();
             }), false);
         };
+        auto bipolar = std::make_unique<Segmented>(ctx, zed::Registry::get().macroBipolar(m), "Bipolar");
+        bipolar->names = {"+", "+/-"};
+        bipolar->showLabel = false;
+        bipolar->labelledBy = "Macro " + juce::String(m + 1);
+        bipolar->family = Family::Modulators;
+        bipolar->setHelp("Macro range", "0 to 1, or -1 to 1 around the middle.");
+        addAndMakeVisible(*bipolar);
+        polarity.push_back(std::move(bipolar));
         addAndMakeVisible(*knob);
         addAndMakeVisible(*chip);
         addAndMakeVisible(*name);
@@ -202,7 +210,10 @@ void MacroStrip::resized() {
         auto cell = area.removeFromLeft(each).reduced(4, 0);
         knobs[static_cast<std::size_t>(m)]->setBounds(cell.removeFromLeft(36).withSizeKeepingCentre(36, 42));
         cell.removeFromLeft(4);
-        names[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(20));
+        auto top = cell.removeFromTop(20);
+        polarity[static_cast<std::size_t>(m)]->setBounds(top.removeFromRight(40));
+        top.removeFromRight(2);
+        names[static_cast<std::size_t>(m)]->setBounds(top);
         cell.removeFromTop(2);
         chips[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(18));
     }

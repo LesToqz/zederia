@@ -153,10 +153,7 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
 
 LibraryPage::~LibraryPage() { table_.setModel(nullptr); }
 
-juce::File LibraryPage::presetsFolder() const {
-    const std::string user = ctx_.processor.library().userDir();
-    return (user.empty() ? ctx_.prefs.userContentFolder() : juce::File(str(user))).getChildFile("Presets");
-}
+juce::File LibraryPage::presetsFolder() const { return ctx_.userFolder().getChildFile("Presets"); }
 
 void LibraryPage::rescan() {
     problems_.clear();

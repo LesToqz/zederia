@@ -182,21 +182,39 @@ Frame frameAt(const Wavetable& table, double position) {
 }
 
 std::vector<Frame> generatePositions(const Wavetable& table, int count) {
+    return generatePositions(table, count, std::vector<char>(static_cast<std::size_t>(std::clamp(count, 1, 4096)), 1));
+}
+
+std::vector<Frame> generatePositions(const Wavetable& table, int count, const std::vector<char>& needed) {
     count = std::clamp(count, 1, 4096);
     std::vector<Frame> out(static_cast<std::size_t>(count));
     if (table.frames.empty())
         return out;
     const int last = table.size() - 1;
     const bool spectral = isSpectral(table.morph) && !table.stepped;
-    std::vector<Harmonics> keys; // analysed once, not once per position
+    const auto want = [&](int p) { return p < static_cast<int>(needed.size()) && needed[static_cast<std::size_t>(p)] != 0; };
+    // Key frames are analysed once, not once per position, and only those a needed position uses.
+    std::vector<Harmonics> keys;
     if (spectral) {
-        keys.reserve(table.frames.size());
-        for (const Frame& f : table.frames) {
-            keys.push_back(analyzeFrame(f));
-            prepareForMode(keys.back(), table.morph);
+        keys.resize(table.frames.size());
+        std::vector<char> analysed(table.frames.size(), 0);
+        for (int p = 0; p < count; ++p) {
+            if (!want(p))
+                continue;
+            const double at = (count > 1 ? static_cast<double>(p) / (count - 1) : 0.0) * last;
+            const int i = std::min(static_cast<int>(at), std::max(last - 1, 0));
+            for (const int k : {i, std::min(i + 1, last)}) {
+                if (analysed[static_cast<std::size_t>(k)])
+                    continue;
+                keys[static_cast<std::size_t>(k)] = analyzeFrame(table.frames[static_cast<std::size_t>(k)]);
+                prepareForMode(keys[static_cast<std::size_t>(k)], table.morph);
+                analysed[static_cast<std::size_t>(k)] = 1;
+            }
         }
     }
     for (int p = 0; p < count; ++p) {
+        if (!want(p))
+            continue;
         const double position = count > 1 ? static_cast<double>(p) / (count - 1) : 0.0;
         if (!spectral) {
             out[static_cast<std::size_t>(p)] = frameAt(table, position);

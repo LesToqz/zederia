@@ -26,6 +26,7 @@ private:
     int source_;
     std::vector<float> cycle_;
     std::uint64_t key_ = 0;
+    int ticks_ = 0;
 };
 
 // The Stage view of an oscillator: its table in 3D (frames in depth, the live position lit) or its
@@ -38,6 +39,7 @@ public:
     bool show3d = true;
     void draw(juce::Graphics& g) override;
     bool tick() override;
+    juce::RectangleList<int> dirtyArea() override { return dirty_; }
     bool hasVisibleLabel() const override { return false; }
     void mouseDown(const juce::MouseEvent& e) override;
     void resized() override { cache_ = {}; }
@@ -45,11 +47,20 @@ public:
 private:
     void drawCycle(juce::Graphics& g, juce::Rectangle<float> area);
     void build3d(juce::Rectangle<int> size);
+    static constexpr int kLitPoints = 96;
+    // The playing position across the surface: kLitPoints + 1 points, the cycle closed.
+    std::vector<juce::Point<float>> litPoints(const zed::TableData& table, double position) const;
+    juce::Rectangle<int> captionArea() const { return getLocalBounds().reduced(8, 4).removeFromTop(14).removeFromRight(96); }
     Context& ctx_;
     int osc_;
     double position_ = -1.0;
+    bool classicShown_ = false;
+    int captionPercent_ = -1; // the patch's position the caption shows
+    std::vector<juce::Point<float>> litDrawn_; // where the lit line was last painted
+    juce::RectangleList<int> dirty_;
     std::uint64_t warpKey_ = 0;
     const zed::TableData* cachedTable_ = nullptr;
+    const zed::TableData* tickedTable_ = nullptr;
     juce::String cachedTheme_;
     juce::Image cache_;
     std::vector<float> cycle_;

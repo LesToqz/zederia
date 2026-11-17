@@ -64,6 +64,8 @@ public:
     // Locked parameters, re-read when the session changes.
     bool isLocked(int param);
     zed::ValueContext valueContext() const;
+    // The person's content folder: the instance's own when one was set, else the preferences' one.
+    juce::File userFolder() const;
     bool simpleView() const { return prefs.simpleView; }
     int lastGeneration = -1;
 

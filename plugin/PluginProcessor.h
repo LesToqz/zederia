@@ -214,6 +214,9 @@ public:
     // The instance's interface state (open page, selections), kept in the host project.
     std::string uiState() const;
     void setUiState(std::string state);
+    // Counts restores of the interface state from the host (a project opened while an editor is
+    // open): an open editor then takes the restored state instead of saving its own over it.
+    int uiStateRestores() const { return uiRestores_.load(std::memory_order_relaxed); }
     Session& session() { return *session_; }
 
 private:
@@ -291,6 +294,7 @@ private:
     std::atomic<std::int64_t> auditionLeft_{0};
     std::vector<bool> locked_;           // documentLock_
     std::string uiState_;                // documentLock_
+    std::atomic<int> uiRestores_{0};
     // Workshop table builds: the newest request per oscillator, built off the message thread.
     class TableBuilder;
     std::unique_ptr<TableBuilder> tableBuilder_;

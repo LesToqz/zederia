@@ -142,7 +142,8 @@ bool WaveMini::rebuild() {
     return true;
 }
 
-bool WaveMini::tick() { return rebuild(); }
+// Every other frame: a thumbnail this small reads the same at half the rate.
+bool WaveMini::tick() { return (++ticks_ & 1) == 0 && rebuild(); }
 
 void WaveMini::draw(juce::Graphics& g) {
     if (cycle_.empty())
@@ -161,6 +162,7 @@ void WaveMini::draw(juce::Graphics& g) {
 // --- WavetableView -----------------------------------------------------------------------------------
 
 WavetableView::WavetableView(Context& ctx, int osc) : ctx_(ctx), osc_(osc) {
+    setOpaque(true); // it covers its whole area: nothing behind it repaints when it animates
     setTitle("Wavetable");
     setHelp("Wavetable", "The oscillator's table: frames from front to back, the playing position lit. Click to switch between 3D and the 2D cycle.");
     family = Family::Sources;
@@ -175,16 +177,67 @@ void WavetableView::setOsc(int osc) {
 }
 
 bool WavetableView::tick() {
-    const double position = ctx_.processor.engine().liveValue(idx("osc" + juce::String(osc_ + 1) + ".position"));
+    const juce::String m = "osc" + juce::String(osc_ + 1);
+    const double position = ctx_.processor.engine().liveValue(idx(m + ".position"));
     const auto table = ctx_.processor.engine().table(osc_);
-    bool dirty = table.get() != cachedTable_;
+    const bool classic = ctx_.processor.plainValue(idx(m + ".engine")) >= 0.5;
+    bool whole = table.get() != tickedTable_ || classic != classicShown_;
+    tickedTable_ = table.get();
+    classicShown_ = classic;
+    bool moved = false;
     if (std::abs(position - position_) > 0.0008) {
         position_ = position;
-        dirty = true;
+        moved = true;
     }
-    if (!show3d)
-        dirty = oscCycle(ctx_, osc_, cycle_, warpKey_) || dirty;
-    return dirty;
+    const int percent = juce::roundToInt(juce::jlimit(0.0, 1.0, ctx_.processor.plainValue(idx(m + ".position"))) * 100.0);
+    const bool captionChanged = percent != captionPercent_;
+    captionPercent_ = percent;
+    if (captionChanged && !moved && !whole && show3d && !classic) {
+        dirty_ = juce::RectangleList<int>(captionArea());
+        return true;
+    }
+    if (!show3d || classic) {
+        whole = oscCycle(ctx_, osc_, cycle_, warpKey_) || whole || moved || captionChanged;
+    } else if (moved && !whole && cache_.isValid() && table != nullptr && litDrawn_.size() == static_cast<std::size_t>(kLitPoints + 1)) {
+        // Only the lit line moved: repaint the band where it was and where it goes. (Narrow slices
+        // along the line repaint fewer pixels but cost more: every drawing call then works
+        // through each slice.)
+        const auto next = litPoints(*table, position_);
+        float left = 1.0e9f, top = 1.0e9f, right = -1.0e9f, bottom = -1.0e9f;
+        for (std::size_t i = 0; i < next.size(); ++i)
+            for (const auto p : {litDrawn_[i], next[i]}) {
+                left = std::min(left, p.x);
+                right = std::max(right, p.x);
+                top = std::min(top, p.y);
+                bottom = std::max(bottom, p.y);
+            }
+        // The 2 px line, its joints and smoothing.
+        dirty_ = juce::RectangleList<int>(juce::Rectangle<float>::leftTopRightBottom(left, top, right, bottom).getSmallestIntegerContainer().expanded(3));
+        if (captionChanged)
+            dirty_.add(captionArea());
+        return true;
+    } else {
+        whole = whole || moved || captionChanged;
+    }
+    dirty_ = juce::RectangleList<int>(getLocalBounds());
+    return whole;
+}
+
+std::vector<juce::Point<float>> WavetableView::litPoints(const zed::TableData& table, double position) const {
+    const auto plot = getLocalBounds().toFloat().reduced(6.0f);
+    const int frames = table.frames();
+    const float depthX = plot.getWidth() * 0.26f, depthY = plot.getHeight() * 0.34f;
+    const float frontW = plot.getWidth() - depthX - 16.0f, ampH = plot.getHeight() * 0.2f;
+    const float depth = static_cast<float>(juce::jlimit(0.0, 1.0, position));
+    const float x0 = plot.getX() + 8.0f + depth * depthX;
+    const float y0 = plot.getBottom() - ampH - 10.0f - depth * depthY;
+    const double framePos = juce::jlimit(0.0, 1.0, position) * (frames - 1);
+    std::vector<juce::Point<float>> points(static_cast<std::size_t>(kLitPoints + 1));
+    for (int i = 0; i <= kLitPoints; ++i) {
+        const float v = static_cast<float>(table.read(9, framePos, static_cast<double>(i % kLitPoints) / kLitPoints));
+        points[static_cast<std::size_t>(i)] = {x0 + frontW * static_cast<float>(i) / kLitPoints, y0 - juce::jlimit(-1.2f, 1.2f, v) * ampH};
+    }
+    return points;
 }
 
 void WavetableView::mouseDown(const juce::MouseEvent&) {
@@ -193,16 +246,22 @@ void WavetableView::mouseDown(const juce::MouseEvent&) {
     repaint();
 }
 
+// The table's surface, drawn once into an opaque image at the display's pixel density (the
+// background and frame included), so a frame of animation is one plain copy plus the lit line.
 void WavetableView::build3d(juce::Rectangle<int> size) {
     const auto table = ctx_.processor.engine().table(osc_);
     cachedTable_ = table.get();
     cachedTheme_ = theme().name;
-    cache_ = softwareImage(size.getWidth(), size.getHeight());
+    const float scale = static_cast<float>(size.getWidth()) / static_cast<float>(juce::jmax(1, getWidth()));
+    cache_ = juce::Image(juce::Image::RGB, juce::jmax(1, size.getWidth()), juce::jmax(1, size.getHeight()), true, juce::SoftwareImageType());
+    juce::Graphics g(cache_);
+    g.addTransform(juce::AffineTransform::scale(scale));
+    const Theme& t = theme();
+    g.fillAll(t.bg);
+    drawWell(g, getLocalBounds().toFloat());
     if (table == nullptr)
         return;
-    juce::Graphics g(cache_);
-    const Theme& t = theme();
-    const auto area = juce::Rectangle<float>(0.0f, 0.0f, static_cast<float>(size.getWidth()), static_cast<float>(size.getHeight()));
+    const auto area = getLocalBounds().toFloat().reduced(6.0f);
     const float depthX = area.getWidth() * 0.26f, depthY = area.getHeight() * 0.34f;
     const float frontW = area.getWidth() - depthX - 16.0f, ampH = area.getHeight() * 0.2f;
     const int frames = table->frames();
@@ -250,42 +309,37 @@ void WavetableView::drawCycle(juce::Graphics& g, juce::Rectangle<float> area) {
 void WavetableView::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
-    drawWell(g, area);
     plot_ = area.reduced(6.0f);
     const juce::String m = "osc" + juce::String(osc_ + 1);
     const bool classic = ctx_.processor.plainValue(idx(m + ".engine")) >= 0.5;
     if (!show3d || classic) {
+        g.fillAll(t.bg); // opaque: the corners outside the rounded well
+        drawWell(g, area);
         drawCycle(g, plot_);
     } else {
         const float scale = physicalScale(g);
-        const auto size = juce::Rectangle<int>(juce::roundToInt(plot_.getWidth() * scale), juce::roundToInt(plot_.getHeight() * scale));
+        const auto size = juce::Rectangle<int>(juce::roundToInt(area.getWidth() * scale), juce::roundToInt(area.getHeight() * scale));
         const auto table = ctx_.processor.engine().table(osc_);
         if (!cache_.isValid() || cache_.getBounds() != size || table.get() != cachedTable_ || cachedTheme_ != t.name)
             build3d(size);
-        g.drawImage(cache_, plot_);
+        g.drawImage(cache_, area); // one pixel of the image per pixel of the display: a plain copy
         // The playing position, lit across the surface.
         if (table != nullptr) {
-            const int frames = table->frames();
-            const float depthX = plot_.getWidth() * 0.26f, depthY = plot_.getHeight() * 0.34f;
-            const float frontW = plot_.getWidth() - depthX - 16.0f / scale, ampH = plot_.getHeight() * 0.2f;
-            const float depth = static_cast<float>(juce::jlimit(0.0, 1.0, position_));
-            const float x0 = plot_.getX() + 8.0f / scale + depth * depthX;
-            const float y0 = plot_.getBottom() - ampH - 10.0f / scale - depth * depthY;
-            const double framePos = juce::jlimit(0.0, 1.0, position_) * (frames - 1);
+            // A plain line, no glow: it moves every frame, and a wide translucent stroke across the
+            // surface costs more to fill than the rest of the frame together.
+            litDrawn_ = litPoints(*table, position_);
             juce::Path p;
-            for (int i = 0; i <= 96; ++i) {
-                const float v = static_cast<float>(table->read(9, framePos, static_cast<double>(i % 96) / 96.0));
-                const float x = x0 + frontW * static_cast<float>(i) / 96.0f, y = y0 - juce::jlimit(-1.2f, 1.2f, v) * ampH;
-                if (i == 0)
-                    p.startNewSubPath(x, y);
-                else
-                    p.lineTo(x, y);
-            }
-            strokeGlow(g, p, t.displayLine, 1.6f);
+            p.startNewSubPath(litDrawn_.front());
+            for (std::size_t i = 1; i < litDrawn_.size(); ++i)
+                p.lineTo(litDrawn_[i]);
+            g.setColour(t.displayLine);
+            g.strokePath(p, juce::PathStrokeType(2.0f, juce::PathStrokeType::beveled, juce::PathStrokeType::butt));
         }
     }
-    const juce::String caption = (show3d && !classic ? "3D" : "2D") + juce::String("  ") + juce::String(juce::roundToInt(juce::jmax(0.0, position_) * 100.0)) + " %";
-    drawText(g, caption, area.reduced(8.0f, 4.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
+    // The patch's position (the lit line shows where modulation takes it).
+    const double setPosition = ctx_.processor.plainValue(idx(m + ".position"));
+    const juce::String caption = (show3d && !classic ? "3D" : "2D") + juce::String("  ") + juce::String(juce::roundToInt(juce::jlimit(0.0, 1.0, setPosition) * 100.0)) + " %";
+    drawText(g, caption, captionArea().toFloat(), kTextSmall, t.textDim, juce::Justification::centredRight);
 }
 
 // --- FilterResponseView ------------------------------------------------------------------------------

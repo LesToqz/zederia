@@ -99,7 +99,7 @@ private:
     std::unique_ptr<zui::HistoryPanel> history_;
     juce::Component::SafePointer<zui::ParamWidget> hoverCandidate_;
     double hoverSince_ = 0.0, hoverLeft_ = 0.0;
-    int seenGeneration_ = -1, seenSession_ = -1;
+    int seenGeneration_ = -1, seenSession_ = -1, seenRestores_ = 0;
     bool layingOut_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaEditor)

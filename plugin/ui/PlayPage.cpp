@@ -612,13 +612,11 @@ PlayPage::PlayPage(Context& ctx) : Page(ctx) {
     clipOn.power = true;
     clipOn.family = Family::Play;
     clips_->powerSwitch = &clipOn;
-    auto& tabs = parts_.add<TabStrip>(*clips_, juce::StringArray{"1", "2", "3", "4", "5", "6", "7", "8"});
-    tabs.family = Family::Play;
-    tabs.setTitle("Clip slots");
-    for (int i = 0; i < 8; ++i)
-        tabs.tab(i).setTitle("Clip slot " + juce::String(i + 1));
-    tabs.onChange = [this](int i) { ctx_.session.setValue(idx("clip.slot"), i + 1); };
-    clipTabs_ = &tabs;
+    auto& slots = play(parts_.add<Segmented>(*clips_, ctx, "clip.slot", "Clip slot"));
+    slots.names = {"1", "2", "3", "4", "5", "6", "7", "8"};
+    slots.showLabel = false;
+    slots.labelledBy = "Clip player";
+    clipTabs_ = &slots;
     auto& trigger = play(parts_.add<Segmented>(*clips_, ctx, "clip.trigger", "Trigger"));
     trigger.names = {"Transport", "Key"};
     auto& import = parts_.add<Button>(*clips_, "Import MIDI", Glyph::Folder);
@@ -672,7 +670,7 @@ PlayPage::PlayPage(Context& ctx) : Page(ctx) {
         const int slot = clipSlot();
         if (slot != seenSlot_) {
             seenSlot_ = slot;
-            clipTabs_->setSelected(slot, false);
+            clipTabs_->repaint();
             const auto c = ctx_.processor.clip(slot);
             clipInfo_->setText(c.empty() ? juce::String("This slot is empty.") : str(c.name.empty() ? "Clip" : c.name) + ", " + juce::String(c.bars, 2) + " bars" + (c.key.empty() ? "" : ", " + str(c.key)));
             return true;
@@ -766,4 +764,9 @@ void PlayPage::applySimpleView() { resized(); }
 
 bool PlayPage::reveal(const juce::String&) { return true; }
 
+} // namespace zui
+
+namespace zui {
+juce::Component& PlayPage::pianoRoll() { return *roll_; }
+juce::Component& PlayPage::stepLane() { return *lane_; }
 } // namespace zui

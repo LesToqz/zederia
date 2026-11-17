@@ -22,8 +22,8 @@ public:
 
     int clipSlot() const;  // 0..7
     int patternSlot() const; // 0..11
-    PianoRoll& pianoRoll() { return *roll_; }
-    StepLane& stepLane() { return *lane_; }
+    juce::Component& pianoRoll();
+    juce::Component& stepLane();
     bool importClipFile(const juce::File& file, juce::String& error);
     bool exportClipFile(const juce::File& file);
     void mouseDrag(const juce::MouseEvent& e) override; // dragging the clip out to the host
@@ -37,7 +37,7 @@ private:
     std::unique_ptr<ChordEditor> chordEditor_;
     std::unique_ptr<PianoRoll> roll_;
     std::vector<FlowItem> arpItems_, chordItems_, clipItems_;
-    TabStrip* clipTabs_ = nullptr;
+    Segmented* clipTabs_ = nullptr; // the clip slot, 1 to 8
     Caption* clipInfo_ = nullptr;
     std::unique_ptr<juce::Component> ticker_;
     int seenSlot_ = -1;

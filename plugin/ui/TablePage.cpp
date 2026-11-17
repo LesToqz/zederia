@@ -1450,3 +1450,8 @@ void TablePage::loadState(const nlohmann::json& state) {
 }
 
 } // namespace zui
+
+namespace zui {
+juce::Component& TablePage::waveEditor() { return *wave_; }
+juce::Component& TablePage::importWizard() { return *wizard_; }
+} // namespace zui

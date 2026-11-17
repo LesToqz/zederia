@@ -47,8 +47,8 @@ public:
     // For tests: a straight line drawn on the current frame from (x0, y0) to (x1, y1), x 0..1 of the
     // cycle, y -1..1, as a stroke of `steps` pointer moves.
     void drawStroke(double x0, double y0, double x1, double y1, int steps);
-    WaveEditor& waveEditor() { return *wave_; }
-    ImportWizard& importWizard() { return *wizard_; }
+    juce::Component& waveEditor();
+    juce::Component& importWizard();
     void showImport();
 
 private:

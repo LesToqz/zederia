@@ -106,10 +106,9 @@ ParamWidget::ParamWidget(Context& ctx, const char* id, juce::String label)
     jassert(param_ >= 0); // an id that is not in the registry
 }
 
-ParamWidget::~ParamWidget() {
-    if (ctx_.hoverParam)
-        ctx_.hoverParam(nullptr);
-}
+// Nothing to tell the editor: it holds the hovered control by a safe pointer, and clearing the
+// hover here would also clear it when an unrelated control goes (the hover list's own rows).
+ParamWidget::~ParamWidget() = default;
 
 void ParamWidget::setParam(int param) {
     param_ = param;
@@ -313,12 +312,13 @@ bool ParamWidget::tick() {
             dirty = true;
         }
     }
+    bool liveMoved = false;
     if (!arcs_.empty()) {
         const double liveValue = ctx_.processor.engine().liveValue(param_);
         const double live = d.toNormalized(d.clamp(liveValue));
         if (std::abs(live - live_) > 0.0015) {
             live_ = live;
-            dirty = true;
+            liveMoved = true;
         }
     } else if (live_ >= 0.0) {
         live_ = -1.0;
@@ -333,7 +333,8 @@ bool ParamWidget::tick() {
         highlighted_ = highlighted;
         dirty = true;
     }
-    return dirty;
+    liveOnly_ = liveMoved && !dirty;
+    return dirty || liveMoved;
 }
 
 bool ParamWidget::keyPressed(const juce::KeyPress& key) {
@@ -375,18 +376,20 @@ void ParamWidget::mouseDown(const juce::MouseEvent& e) {
         // The depth of the selected source's route (made if it does not exist yet), else of the
         // highlighted or first route.
         int route = -1;
+        ctx_.refresh(); // the routes as they are now, not as last drawn
+        const auto mine = ctx_.routesTo(param_);
         if (ctx_.selectedSource.isNotEmpty()) {
-            for (const auto& a : arcs_)
-                if (const auto* r = ctx_.route(a.route); r != nullptr && str(r->route.source) == ctx_.selectedSource)
-                    route = a.route;
+            for (const auto* r : mine)
+                if (str(r->route.source) == ctx_.selectedSource)
+                    route = r->index;
             if (route < 0 && !e.mods.isShiftDown())
                 route = ctx_.session.addRoute(ctx_.selectedSource, param_, 0.0);
         }
-        if (route < 0 && !arcs_.empty()) {
-            route = arcs_.front().route;
-            for (const auto& a : arcs_)
-                if (a.selected)
-                    route = a.route;
+        if (route < 0 && !mine.empty()) {
+            route = mine.front()->index;
+            for (const auto* r : mine)
+                if (r->index == ctx_.focusRoute)
+                    route = r->index;
         }
         if (route < 0)
             return;
@@ -1454,12 +1457,14 @@ void drawWell(juce::Graphics& g, juce::Rectangle<float> area) {
 
 void strokeGlow(juce::Graphics& g, const juce::Path& path, juce::Colour colour, float width) {
     const float glow = theme().glow;
+    // Bevelled joints: on these dense polylines they look the same as round ones and cost a
+    // fraction to build.
     if (glow > 0.0f) {
         g.setColour(colour.withAlpha(glow * 0.45f));
-        g.strokePath(path, juce::PathStrokeType(width * 3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath(path, juce::PathStrokeType(width * 3.5f, juce::PathStrokeType::beveled, juce::PathStrokeType::rounded));
     }
     g.setColour(colour);
-    g.strokePath(path, juce::PathStrokeType(width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.strokePath(path, juce::PathStrokeType(width, juce::PathStrokeType::beveled, juce::PathStrokeType::rounded));
 }
 
 } // namespace zui
@@ -1499,4 +1504,13 @@ int flow(juce::Rectangle<int> area, const std::vector<FlowItem>& items, int rowH
     return std::max(0, y - gap - area.getY());
 }
 
+} // namespace zui
+
+namespace zui {
+bool visibleWithin(const juce::Component& c, const juce::Component* root) {
+    for (const juce::Component* p = &c; p != nullptr && p != root; p = p->getParentComponent())
+        if (!p->isVisible())
+            return false;
+    return true;
+}
 } // namespace zui

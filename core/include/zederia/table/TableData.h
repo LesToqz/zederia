@@ -77,6 +77,8 @@ private:
     std::array<Level, kNumLevels> levels_{};
     std::vector<float> data_;
     std::vector<std::uint64_t> frameHashes_; // of each stored position's frame, for incremental builds
+    std::vector<std::uint64_t> keyHashes_;   // of each key frame (spectral tables regenerate only what changed)
+    int spectralMorph_ = -1;                 // the morph mode when positions were generated, else -1
 };
 
 // The six spline weights for a fractional position t in 0..1, for the samples at -2..+3.

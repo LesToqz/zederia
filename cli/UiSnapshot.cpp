@@ -133,7 +133,7 @@ int cmdUiSnapshot(const Args& args) {
     auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
     if (editor == nullptr)
         return kFailed;
-    const bool check = args.has("check");
+    const bool check = args.has("audit");
     int findings = 0;
     std::vector<zui::Finding> themeFindings;
     for (const auto& themeName : themes) {

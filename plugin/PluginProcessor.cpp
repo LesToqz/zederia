@@ -880,8 +880,10 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
                     if (const int index = zed::Registry::get().indexOf(id.get<std::string>()); index >= 0)
                         locked_[static_cast<std::size_t>(index)] = true;
         }
-        if (doc.contains("ui") && doc["ui"].is_string())
+        if (doc.contains("ui") && doc["ui"].is_string()) {
             setUiState(doc["ui"].get<std::string>());
+            uiRestores_.fetch_add(1, std::memory_order_relaxed);
+        }
         if (doc.contains("ab") && doc["ab"].is_object())
             session_->setAbStateJson(doc["ab"].dump());
     } catch (const std::exception&) {

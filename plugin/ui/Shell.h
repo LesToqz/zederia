@@ -66,6 +66,7 @@ public:
     std::vector<std::unique_ptr<Knob>> knobs;
     std::vector<std::unique_ptr<DragChip>> chips;
     std::vector<std::unique_ptr<Button>> names;
+    std::vector<std::unique_ptr<Segmented>> polarity; // 0..1 or -1..1
 
 private:
     Context& ctx_;

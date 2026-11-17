@@ -123,8 +123,6 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
         c->setFixedAspectRatio(static_cast<double>(kBaseWidth) / kBaseHeight);
     applyLayout();
     loadUiState(); // sets the page and the size
-    if (getWidth() == 0)
-        setScalePercent(ctx_.prefs.defaultScale);
     ctx_.refresh();
     startTimerHz(ctx_.prefs.frameCap);
 }
@@ -296,7 +294,7 @@ bool ZederiaEditor::revealParam(int index) {
     // Focus the control once the page is laid out.
     std::function<ParamWidget*(juce::Component&)> find = [&](juce::Component& c) -> ParamWidget* {
         for (auto* child : c.getChildren()) {
-            if (!child->isShowing())
+            if (!child->isVisible())
                 continue;
             if (auto* w = dynamic_cast<ParamWidget*>(child); w != nullptr && w->param() == index)
                 return w;
@@ -387,7 +385,7 @@ std::vector<CommandPalette::Entry> ZederiaEditor::paletteEntries() {
         juce::String detail = str(def.module);
         out.push_back({"Control", str(def.name), detail, [this, index] { revealParam(index); }});
     }
-    const auto presets = zed::scanPresets(processor_.library().factoryDir(), ctx_.prefs.userContentFolder().getFullPathName().toStdString());
+    const auto presets = zed::scanPresets(processor_.library().factoryDir(), ctx_.userFolder().getFullPathName().toStdString());
     for (const auto& p : presets) {
         const juce::File file(str(p.path));
         out.push_back({"Preset", str(p.meta.name), str(p.meta.type.empty() ? p.folder : p.meta.type), [this, file] {
@@ -607,7 +605,7 @@ void ZederiaEditor::savePresetAs() {
                 m.tags.push_back(t.trim().toLowerCase().toStdString());
         if (m.author.empty())
             m.author = ctx_.prefs.author.toStdString();
-        const juce::File file = ctx_.prefs.userContentFolder().getChildFile("Presets").getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
+        const juce::File file = ctx_.userFolder().getChildFile("Presets").getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
         juce::String error;
         if (ctx_.session.savePresetFile(file, m, error))
             help_->message("Saved " + file.getFullPathName());
@@ -617,7 +615,7 @@ void ZederiaEditor::savePresetAs() {
 }
 
 void ZederiaEditor::stepPreset(int direction) {
-    const auto presets = zed::scanPresets(processor_.library().factoryDir(), ctx_.prefs.userContentFolder().getFullPathName().toStdString());
+    const auto presets = zed::scanPresets(processor_.library().factoryDir(), ctx_.userFolder().getFullPathName().toStdString());
     if (presets.empty()) {
         help_->message("No presets yet: save one, or import a pack in the library.");
         return;
@@ -698,8 +696,13 @@ void ZederiaEditor::tickTree(juce::Component& c, std::vector<juce::Rectangle<int
     if (!c.isVisible())
         return;
     if (auto* w = dynamic_cast<Widget*>(&c); w != nullptr && w->tick()) {
-        w->repaint();
-        dirty.push_back(getLocalArea(w, w->getLocalBounds()));
+        for (const auto& r : w->dirtyArea()) {
+            const auto area = r.getIntersection(w->getLocalBounds());
+            if (!area.isEmpty()) {
+                w->repaint(area);
+                dirty.push_back(getLocalArea(w, area));
+            }
+        }
     }
     for (auto* child : c.getChildren())
         tickTree(*child, dirty);
@@ -708,7 +711,9 @@ void ZederiaEditor::tickTree(juce::Component& c, std::vector<juce::Rectangle<int
 void ZederiaEditor::updateHover() {
     const double now = juce::Time::getMillisecondCounterHiRes();
     auto* candidate = hoverCandidate_.getComponent();
-    if (candidate != nullptr && candidate->modulated() && candidate->isShowing() && now - hoverSince_ > 350.0) {
+    if (candidate != nullptr && hoverList_->isParentOf(candidate))
+        candidate = nullptr; // the list's own amount controls leave it as it is
+    if (candidate != nullptr && candidate->modulated() && zui::visibleWithin(*candidate, this) && now - hoverSince_ > 350.0) {
         if (!hoverList_->isVisible() || hoverList_->target() != candidate) {
             if (hoverList_->showFor(*candidate)) {
                 const auto at = root_->getLocalArea(candidate, candidate->getLocalBounds());
@@ -721,16 +726,25 @@ void ZederiaEditor::updateHover() {
                 hoverList_->setVisible(true);
                 hoverList_->toFront(false);
             }
-        } else {
-            hoverList_->rebuild();
         }
     } else if (candidate == nullptr && hoverList_->isVisible() && !hoverList_->isMouseOver(true) && now - hoverLeft_ > 300.0) {
         hoverList_->setVisible(false);
+    }
+    // While open (the pointer on its target or in the list itself), the list follows the routes:
+    // a mute, solo, flip or removal made in it shows at once, and it closes with its last route.
+    if (hoverList_->isVisible()) {
+        hoverList_->rebuild();
+        if (hoverList_->target() == nullptr || hoverList_->rowCount() == 0)
+            hoverList_->setVisible(false);
+        else if (hoverList_->getHeight() != hoverList_->preferredHeight())
+            hoverList_->setSize(hoverList_->getWidth(), hoverList_->preferredHeight());
     }
 }
 
 std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
     std::vector<juce::Rectangle<int>> dirty;
+    if (processor_.uiStateRestores() != seenRestores_)
+        loadUiState(); // a project was opened while the editor was open
     const bool routesChanged = ctx_.refresh();
     if (processor_.stateGeneration() != seenGeneration_) {
         seenGeneration_ = processor_.stateGeneration();
@@ -767,6 +781,8 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
 // --- Interface state -----------------------------------------------------------------------------------
 
 void ZederiaEditor::saveUiState() {
+    if (processor_.uiStateRestores() != seenRestores_)
+        return; // the host restored a project since this editor opened: keep what it restored
     nlohmann::json state = nlohmann::json::object();
     state["page"] = current_;
     state["scale"] = juce::roundToInt(scale() * 100.0f);
@@ -783,6 +799,7 @@ void ZederiaEditor::saveUiState() {
 }
 
 void ZederiaEditor::loadUiState() {
+    seenRestores_ = processor_.uiStateRestores();
     int pageId = Synth, percent = 0;
     nlohmann::json pages;
     try {
@@ -797,8 +814,7 @@ void ZederiaEditor::loadUiState() {
         }
     } catch (const std::exception&) {
     }
-    if (percent > 0)
-        setScalePercent(percent);
+    setScalePercent(percent > 0 ? percent : ctx_.prefs.defaultScale); // the resize limits may already have set a size
     showPage(pageId);
     if (pages.is_object())
         for (const auto& [key, value] : pages.items()) {

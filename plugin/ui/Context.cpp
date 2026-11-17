@@ -125,3 +125,10 @@ void buildSourceMenu(juce::PopupMenu& menu, const std::function<void(const juce:
 }
 
 } // namespace zui
+
+namespace zui {
+juce::File Context::userFolder() const {
+    const std::string dir = processor.library().userDir();
+    return dir.empty() ? prefs.userContentFolder() : juce::File(str(dir));
+}
+} // namespace zui

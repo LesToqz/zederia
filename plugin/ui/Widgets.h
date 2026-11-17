@@ -20,6 +20,9 @@ public:
     virtual void draw(juce::Graphics& g) = 0;
     // Called by the frame clock while the widget is showing; returns true to repaint.
     virtual bool tick() { return false; }
+    // After tick() returned true: the part of the widget that changed (all of it unless the widget
+    // knows better, as a display whose marker moved does).
+    virtual juce::RectangleList<int> dirtyArea() { return getLocalBounds(); }
     // For the snapshot checks: false for parts that rely on a tooltip and an accessible name.
     virtual bool hasVisibleLabel() const { return true; }
 
@@ -100,6 +103,8 @@ public:
     bool modulated() const { return !arcs_.empty(); }
 
     bool tick() override;
+    // When only the live marker moved, only the part that draws it repaints.
+    juce::RectangleList<int> dirtyArea() override { return liveOnly_ ? liveArea() : getLocalBounds(); }
     bool keyPressed(const juce::KeyPress& key) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
@@ -121,6 +126,7 @@ protected:
     // How far a vertical drag of one pixel moves the normalized value.
     virtual double dragSpeed() const { return 1.0 / 200.0; }
     virtual bool dragsValue() const { return true; }
+    virtual juce::Rectangle<int> liveArea() const { return getLocalBounds(); } // where the live marker is drawn
     virtual void clicked(juce::Point<float> position, bool keyboard) { juce::ignoreUnused(position, keyboard); }
     void drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float startAngle, float endAngle) const;
     // The state decorations every control shares: lock, MIDI learn, drop target, highlight, focus.
@@ -136,6 +142,7 @@ protected:
     std::vector<Arc> arcs_;
     int arcsGeneration_ = -1;
     bool dragging_ = false, depthDrag_ = false, dropTarget_ = false, highlighted_ = false, locked_ = false, learning_ = false;
+    bool liveOnly_ = false; // the last tick changed nothing but the live marker
     int depthRoute_ = -1;
     double dragStartNorm_ = 0.0, depthStart_ = 0.0;
     juce::Point<float> dragStartPos_;
@@ -153,6 +160,7 @@ public:
 
 protected:
     juce::Rectangle<float> knobArea() const;
+    juce::Rectangle<int> liveArea() const override { return knobArea().getSmallestIntegerContainer(); }
 };
 
 // A horizontal bar: route amounts, mixes, anything that reads better as a length.
@@ -328,7 +336,8 @@ class DragChip final : public Widget {
 public:
     DragChip(Context& ctx, juce::String source);
     void draw(juce::Graphics& g) override;
-    bool tick() override;
+    bool tick() override; // the live value moved: only its bar along the bottom edge repaints
+    juce::RectangleList<int> dirtyArea() override { return getLocalBounds().removeFromBottom(5); }
     const juce::String& source() const { return source_; }
     juce::String text;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -423,4 +432,10 @@ int flow(juce::Rectangle<int> area, const std::vector<FlowItem>& items, int rowH
 // True when the widget should be visible in the current view (advanced parts hide in Simple view).
 inline bool shownInView(const Widget& w, bool simple) { return !(simple && w.advanced); }
 
+} // namespace zui
+
+namespace zui {
+// True when the component and every parent up to (not including) `root` are visible: "shown in
+// the editor" whether or not the editor has a window (offscreen snapshots and tests have none).
+bool visibleWithin(const juce::Component& c, const juce::Component* root);
 } // namespace zui

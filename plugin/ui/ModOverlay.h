@@ -13,7 +13,8 @@ public:
     // Shows the routes of a control; false when it has none.
     bool showFor(ParamWidget& target);
     ParamWidget* target() const { return target_.getComponent(); }
-    void rebuild();
+    void rebuild(); // follows the routes: called every frame while the list is open
+    int rowCount() const { return static_cast<int>(rows_.size()); }
     void paint(juce::Graphics& g) override;
     void resized() override;
     int preferredHeight() const;
