@@ -301,7 +301,7 @@ void LookAndFeel::fillTextEditorBackground(juce::Graphics& g, int width, int hei
 
 void LookAndFeel::drawTextEditorOutline(juce::Graphics& g, int width, int height, juce::TextEditor& editor) {
     const Theme& t = theme();
-    g.setColour(editor.hasKeyboardFocus(true) ? t.focus : t.line);
+    g.setColour(editor.hasKeyboardFocus(true) ? t.lineStrong : t.line); // the caret shows where typing goes; nothing lights up
     g.drawRoundedRectangle(0.5f, 0.5f, static_cast<float>(width) - 1.0f, static_cast<float>(height) - 1.0f, 4.0f, 1.0f);
 }
 

@@ -86,6 +86,7 @@ class SlotRow final : public Widget {
 public:
     SlotRow(Context& ctx, FxPage& page, int lane, int slot, int type) : ctx_(ctx), page_(page), lane_(lane), slot_(slot), type_(type) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true; // Delete removes the slot, Alt with the arrows moves it
         family = Family::Effects;
         setTitle(juce::String(kLaneNames[lane]) + " slot " + juce::String(slot + 1) + ": " + effectName(type));
         setHelp(effectName(type), "Click to edit. Drag to reorder or move to another lane. Right-click for presets, copy, paste, replace and remove.");

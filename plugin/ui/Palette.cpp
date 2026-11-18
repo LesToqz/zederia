@@ -164,9 +164,13 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
            [&p, save](Button&) { p.tooltips = !p.tooltips; save(); });
     addRow("Help strip", "The line at the bottom that explains what is under the pointer.", [&p] { return p.helpStrip ? juce::String("Shown") : juce::String("Hidden"); },
            [this, &p, save](Button&) { p.helpStrip = !p.helpStrip; save(); if (onLayout) onLayout(); });
-    addRow("Computer keys", "Letters on the computer keyboard play notes: A W S E D F T G Y H U J K O L P ; from C; Z and X move the octave.",
+    addRow("Computer keys", "The computer keyboard plays notes in two rows: Z S X D C V G B H N J M from C, Q 2 W 3 E R 5 T 6 Y 7 U an "
+                            "octave higher. Left and Right move the octave, Down and Up the velocity.",
            [&p] { return p.computerKeys ? juce::String("Play notes") : juce::String("Off"); },
            [this, &p, save](Button&) { p.computerKeys = !p.computerKeys; save(); if (onLayout) onLayout(); });
+    addRow("Key letters", "Shows on the keyboard which computer key plays each note.",
+           [&p] { return p.keyLabels ? juce::String("Shown on the keys") : juce::String("Hidden"); },
+           [this, &p, save](Button&) { p.keyLabels = !p.keyLabels; save(); if (onLayout) onLayout(); });
     addRow("View", "Simple view hides the advanced controls.", [&p] { return p.simpleView ? juce::String("Simple") : juce::String("Full"); },
            [this, &p, save](Button&) { p.simpleView = !p.simpleView; save(); if (onLayout) onLayout(); });
     addRow("Frame rate", "How often moving displays redraw. Lower costs less.", [&p] { return juce::String(p.frameCap) + " per second"; },

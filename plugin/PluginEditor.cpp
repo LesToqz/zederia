@@ -46,6 +46,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     lnf_.applyTheme();
     setLookAndFeel(&lnf_);
     setTitle("Zederia");
+    setWantsKeyboardFocus(true); // the computer keys and the shortcuts arrive here
     root_ = std::make_unique<Root>(*this);
     addAndMakeVisible(*root_);
 
@@ -256,7 +257,7 @@ void ZederiaEditor::applyLayout() {
     modMap_.setBounds(area);
     modMap_.scope = root_.get();
     palette_->setBounds(juce::Rectangle<int>(560, 420).withCentre(root_->getLocalBounds().getCentre()).withY(80));
-    prefs_->setBounds(juce::Rectangle<int>(520, 560).withCentre(root_->getLocalBounds().getCentre()));
+    prefs_->setBounds(juce::Rectangle<int>(520, 600).withCentre(root_->getLocalBounds().getCentre()));
     history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330 + kLogoWidth, kHeaderHeight - 30));
     if (isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
@@ -288,7 +289,29 @@ void ZederiaEditor::applyRenderer() {
 void ZederiaEditor::parentHierarchyChanged() {
     applyRenderer();
     fitToScreen();
+    takeKeysOnFirstShow();
 }
+
+// The standalone application plays from the computer keys as soon as it opens. Inside a host the
+// keyboard stays with the host until the editor is clicked, so the host's own shortcuts keep working.
+void ZederiaEditor::takeKeysOnFirstShow() {
+    if (!focusPending_ || !isShowing() || processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        return;
+    focusPending_ = false;
+    if (juce::Component::getCurrentlyFocusedComponent() == nullptr)
+        grabKeyboardFocus();
+}
+
+namespace {
+// Tab and Shift-Tab go through the controls in order as usual; a click on something that takes no
+// focus finds no control to give it to, and the focus goes up to the editor.
+class EditorFocusTraverser final : public juce::FocusTraverser {
+public:
+    juce::Component* getDefaultComponent(juce::Component*) override { return nullptr; }
+};
+} // namespace
+
+std::unique_ptr<juce::ComponentTraverser> ZederiaEditor::createFocusTraverser() { return std::make_unique<EditorFocusTraverser>(); }
 
 // When the editor first appears on a screen it shrinks, if it must, so the whole window, keyboard
 // included, fits on that display (a size stored for a larger screen would hide the bottom layers).
@@ -309,6 +332,7 @@ void ZederiaEditor::fitToScreen() {
 void ZederiaEditor::visibilityChanged() {
     applyRenderer();
     fitToScreen();
+    takeKeysOnFirstShow();
     if (isVisible() && !isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
 }
@@ -759,6 +783,19 @@ bool ZederiaEditor::keyStateChanged(bool isKeyDown) {
     if (!isKeyDown)
         keys_->piano().checkHeld(); // a computer key went up: its note ends now, not at the next frame
     return false;
+}
+
+// Every click inside the editor, after the clicked part's own mouseDown. A part that keeps the focus
+// to edit with keys keeps it for a click on itself (without an outline); a click anywhere else
+// gives the keyboard back to the editor.
+void ZederiaEditor::mouseDown(const juce::MouseEvent& e) {
+    auto* focused = dynamic_cast<Widget*>(juce::Component::getCurrentlyFocusedComponent());
+    if (focused == nullptr)
+        return;
+    if (e.eventComponent == focused || focused->isParentOf(e.eventComponent))
+        focused->clickedWhileFocused();
+    else
+        grabKeyboardFocus();
 }
 
 void ZederiaEditor::mouseMove(const juce::MouseEvent& e) {

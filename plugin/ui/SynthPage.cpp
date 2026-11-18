@@ -845,22 +845,12 @@ void SynthPage::expandSource(int source) { focusSource(source); }
 
 void SynthPage::focusSource(int source) {
     expanded_ = juce::jlimit(0, 4, source);
-    for (int i = 0; i < static_cast<int>(sources_.size()); ++i)
-        sources_[static_cast<std::size_t>(i)]->selectedLook = i == source;
-    for (auto& f : filters_)
-        f->selectedLook = false;
     if (source >= 3)
         stage_->showSource(source);
-    repaint();
 }
 
 void SynthPage::focusFilter(int slot) {
-    for (int i = 0; i < 2; ++i)
-        filters_[static_cast<std::size_t>(i)]->selectedLook = i == slot;
-    for (auto& s : sources_)
-        s->selectedLook = false;
     stage_->showFilter(slot);
-    repaint();
 }
 
 void SynthPage::focusWarpCurve(int osc, int slot) {

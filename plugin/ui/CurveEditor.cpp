@@ -34,6 +34,7 @@ private:
 
 CurveEditor::CurveEditor(Context& ctx, juce::String name) : ctx_(ctx), name_(std::move(name)) {
     setWantsKeyboardFocus(true);
+    keepsClickFocus = true; // Delete removes the selected points
     setTitle(name_);
     family = Family::Modulators;
     setHelp(name_, "Double-click to add or remove a point. Drag points; drag the small diamonds to bend a segment. "

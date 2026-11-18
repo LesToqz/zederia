@@ -46,7 +46,7 @@ public:
 
     Button menu{"", Glyph::Menu}, prev{"", Glyph::Prev}, next{"", Glyph::Next}, save{"Save", Glyph::Save};
     Button presetName{"Init"};
-    Button undo{"Undo", Glyph::Undo}, redo{"Redo", Glyph::Redo}, history{"", Glyph::History};
+    Button history{"", Glyph::History};
     Button abA{"A"}, abB{"B"}, abCopy{"A>B"};
     Caption cpuText{"CPU", kTextSmall, true};
     Caption agent{"Agent off", kTextSmall, true};

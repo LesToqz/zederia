@@ -18,8 +18,9 @@ struct Prefs {
     bool tooltips = true;
     bool helpStrip = true;
     bool macroStrip = true;      // kept for old settings files; the macros now live in the modulation dock
-    bool computerKeys = true;    // letters on the computer keyboard play notes (A W S E D F T G Y H U J K O L P ;)
-    int keysOctave = 3;          // the octave the computer keys start at (C3 = note 48), 0..8
+    bool computerKeys = true;    // the computer keyboard plays notes in two rows (Z S X D C ... from C, Q 2 W 3 E ... an octave up)
+    int keysOctave = 3;          // the octave the lower row (Z) starts at (C3 = note 48), 0..7; the upper row (Q) is one higher
+    bool keyLabels = true;       // the keyboard shows which computer key plays each note
     int keysVelocity = 100;      // velocity of computer keys, 1..127
     bool simpleView = false;
     int frameCap = 30;           // 15, 30 or 60 frames per second

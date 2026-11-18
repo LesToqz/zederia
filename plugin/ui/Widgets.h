@@ -50,10 +50,27 @@ public:
     juce::String labelledBy;
     Family family = Family::Neutral;
 
+    // A click landed while this part had the focus (the editor calls it after the part's own
+    // mouseDown): a plain control hands the keyboard back to the editor, a part with keys of its
+    // own keeps it and hides its outline until a key is used.
+    void clickedWhileFocused();
+
 protected:
-    void focusGained(FocusChangeType) override { repaint(); }
+    // Clicks never light anything up, and a click on a control leaves the keyboard with the editor,
+    // so the computer keys keep playing. A part that edits with keys of its own (a curve, a step
+    // grid, a frame strip) sets this to keep the focus a click gives it.
+    bool keepsClickFocus = false;
+    void focusGained(FocusChangeType cause) override;
     void focusLost(FocusChangeType) override { repaint(); }
+    bool keyStateChanged(bool isKeyDown) override; // an editing key shows where the keyboard is
+    // The focus outline (and a part's own keyboard cursor) shows only when the keyboard brought the
+    // focus here, with Tab or the command palette, or an editing key was used since: never after a click.
+    bool showsFocus() const { return focusCue_ && hasKeyboardFocus(false); }
     void drawFocus(juce::Graphics& g, juce::Rectangle<float> area, float radius = 4.0f) const;
+
+private:
+    bool handFocusToEditor();
+    bool focusCue_ = false;
 };
 
 // A text line that is not a control.
@@ -346,7 +363,6 @@ public:
     const juce::String& titleText() const { return title_; }
     juce::String moduleId; // for copy, paste, locks and module presets
     int headerHeight = 28;
-    bool selectedLook = false;
     bool screws = true; // two screws in the bottom corners (the hardware finish)
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}

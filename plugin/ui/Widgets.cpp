@@ -69,10 +69,50 @@ void Widget::setHelp(const juce::String& title, const juce::String& text) {
 }
 
 void Widget::drawFocus(juce::Graphics& g, juce::Rectangle<float> area, float radius) const {
-    if (!hasKeyboardFocus(false))
+    if (!showsFocus())
         return;
     g.setColour(theme().focus);
     g.drawRoundedRectangle(area.reduced(0.5f), radius, 1.5f);
+}
+
+bool Widget::handFocusToEditor() {
+    auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>();
+    if (editor == nullptr || !editor->getWantsKeyboardFocus() || !editor->isShowing())
+        return false;
+    editor->grabKeyboardFocus();
+    return !hasKeyboardFocus(false);
+}
+
+void Widget::focusGained(FocusChangeType cause) {
+    if (cause == focusChangedByMouseClick && !keepsClickFocus && handFocusToEditor())
+        return;
+    focusCue_ = cause != focusChangedByMouseClick;
+    repaint();
+}
+
+void Widget::clickedWhileFocused() {
+    if (!keepsClickFocus && handFocusToEditor())
+        return;
+    if (focusCue_) {
+        focusCue_ = false;
+        repaint();
+    }
+}
+
+bool Widget::keyStateChanged(bool isKeyDown) {
+    if (isKeyDown && !focusCue_ && hasKeyboardFocus(false)) {
+        static const int editingKeys[] = {juce::KeyPress::leftKey,   juce::KeyPress::rightKey,   juce::KeyPress::upKey,     juce::KeyPress::downKey,
+                                              juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey, juce::KeyPress::homeKey,   juce::KeyPress::endKey,
+                                              juce::KeyPress::deleteKey, juce::KeyPress::backspaceKey, juce::KeyPress::returnKey, juce::KeyPress::spaceKey,
+                                              juce::KeyPress::tabKey};
+        for (const int key : editingKeys)
+            if (juce::KeyPress::isKeyCurrentlyDown(key)) {
+                focusCue_ = true;
+                repaint();
+                break;
+            }
+    }
+    return false;
 }
 
 Caption::Caption(juce::String text, float size, bool dim) : text_(std::move(text)), size_(size), dim_(dim) {
@@ -1295,9 +1335,9 @@ void Card::draw(juce::Graphics& g) {
             right = std::min(right, static_cast<float>(c->getX()) - 4.0f);
     if (drawHeaderExtra && !headerExtraArea.isEmpty())
         right = std::min(right, headerExtraArea.getX() - 4.0f);
-    // Everything here changes only with the title, the header's layout and the focus: one copy per repaint.
+    // Everything here changes only with the title and the header's layout: one copy per repaint.
     std::uint64_t key = static_cast<std::uint64_t>(title_.hashCode64());
-    for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, headerHeight, selectedLook ? 1 : 0, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
+    for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, headerHeight, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
                         juce::roundToInt(right), static_cast<int>(family)})
         key = key * 1099511628211ull + static_cast<std::uint64_t>(v + 1);
     background_.draw(g, getLocalBounds(), key, true, [&](juce::Graphics& bg) {
@@ -1310,10 +1350,6 @@ void Card::draw(juce::Graphics& g) {
                 drawScrew(bg, {inset, area.getBottom() - inset}, 2.8f, 0.3f);
                 drawScrew(bg, {area.getRight() - inset, area.getBottom() - inset}, 2.8f, 0.9f);
             }
-        }
-        if (selectedLook) {
-            bg.setColour(t.accent(family).withAlpha(0.8f));
-            bg.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.2f);
         }
         auto h = header().toFloat().reduced(6.0f, 4.0f);
         if (collapsible) {

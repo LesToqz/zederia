@@ -214,6 +214,15 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         take(scope.startIndex1, scope.blockSize1);
         take(scope.startIndex2, scope.blockSize2);
     }
+    // The screen's wheels where they are now, when they moved.
+    if (const float bend = screenBend_.load(std::memory_order_relaxed); bend != playedBend_ && count < kMaxEventsPerBlock) {
+        playedBend_ = bend;
+        blockEvents_[static_cast<std::size_t>(count++)] = zed::MidiEvent::pitchBend(0, bend);
+    }
+    if (const float mod = screenMod_.load(std::memory_order_relaxed); mod != playedMod_ && count < kMaxEventsPerBlock) {
+        playedMod_ = mod;
+        blockEvents_[static_cast<std::size_t>(count++)] = zed::MidiEvent::controller(0, 1, mod);
+    }
     // Keys the screen started, and any it let go of whose release never arrived.
     {
         const auto bit = [](int key) { return std::uint64_t{1} << (key & 63); };

@@ -44,71 +44,6 @@ zed::EnvShape shapeToEnv(const zed::Shape& s, double totalMs, int sustain, int l
     return env;
 }
 
-// Pitch and modulation wheels beside the keys.
-class Wheel final : public Widget {
-public:
-    Wheel(Context& ctx, bool pitch) : ctx_(ctx), pitch_(pitch) {
-        setWantsKeyboardFocus(true);
-        setTitle(pitch ? "Pitch wheel" : "Modulation wheel");
-        setHelp(pitch ? "Pitch" : "Mod", pitch ? "Bends the pitch; springs back when released." : "The modulation wheel (controller 1).");
-    }
-    void draw(juce::Graphics& g) override {
-        const Theme& t = theme();
-        auto area = getLocalBounds().toFloat();
-        auto label = area.removeFromBottom(13.0f);
-        drawText(g, pitch_ ? "Pitch" : "Mod", label, kTextSmall, t.textDim, juce::Justification::centred);
-        const auto slot = area.reduced(2.0f, 1.0f);
-        g.setColour(t.sunken);
-        g.fillRoundedRectangle(slot, 4.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.drawRoundedRectangle(slot, 4.0f, 1.0f);
-        // The wheel: ridges across a lit drum, its position marked.
-        const auto drum = slot.reduced(3.0f, 3.0f);
-        const juce::Colour metal = t.dark ? t.raised.brighter(0.1f) : t.raised.darker(0.05f);
-        juce::ColourGradient lightOnDrum(metal.darker(0.5f), drum.getX(), drum.getY(), metal.darker(0.5f), drum.getX(), drum.getBottom(), false);
-        lightOnDrum.addColour(0.5, metal.brighter(0.25f));
-        g.setGradientFill(lightOnDrum);
-        g.fillRoundedRectangle(drum, 3.0f);
-        const float norm = pitch_ ? (value_ + 1.0f) * 0.5f : value_;
-        g.setColour(juce::Colours::black.withAlpha(0.25f));
-        for (int i = 0; i < 9; ++i) {
-            const float phase = std::fmod(norm * 3.0f + static_cast<float>(i) / 9.0f, 1.0f);
-            const float y = drum.getY() + drum.getHeight() * (0.5f - 0.5f * std::cos(phase * juce::MathConstants<float>::pi));
-            g.fillRect(drum.getX() + 1.0f, y, drum.getWidth() - 2.0f, 1.0f);
-        }
-        const float y = drum.getBottom() - drum.getHeight() * norm;
-        g.setColour(t.accent(Family::Play));
-        g.fillRoundedRectangle(juce::Rectangle<float>(drum.getX(), y - 2.0f, drum.getWidth(), 4.0f), 1.5f);
-        drawFocus(g, getLocalBounds().toFloat());
-    }
-    void mouseDown(const juce::MouseEvent& e) override { mouseDrag(e); }
-    void mouseDrag(const juce::MouseEvent& e) override {
-        const auto track = getLocalBounds().toFloat().withTrimmedBottom(13.0f).reduced(5.0f, 4.0f);
-        const float norm = juce::jlimit(0.0f, 1.0f, (track.getBottom() - e.position.y) / track.getHeight());
-        set(pitch_ ? norm * 2.0f - 1.0f : norm);
-    }
-    void mouseUp(const juce::MouseEvent&) override {
-        if (pitch_)
-            set(0.0f);
-    }
-    bool keyPressed(const juce::KeyPress& key) override {
-        const float step = 0.1f;
-        if (key == juce::KeyPress::upKey) { set(juce::jmin(1.0f, value_ + step)); return true; }
-        if (key == juce::KeyPress::downKey) { set(juce::jmax(pitch_ ? -1.0f : 0.0f, value_ - step)); return true; }
-        return false;
-    }
-    void set(float v) {
-        value_ = v;
-        ctx_.processor.pushUiEvent(pitch_ ? zed::MidiEvent::pitchBend(0, v) : zed::MidiEvent::controller(0, 1, v));
-        repaint();
-    }
-
-private:
-    Context& ctx_;
-    bool pitch_;
-    float value_ = 0.0f;
-};
-
 } // namespace
 
 // --- Macros ------------------------------------------------------------------------------------------
@@ -570,17 +505,81 @@ void ModDock::applySimpleView() {
 // --- The keys ----------------------------------------------------------------------------------------
 
 namespace {
-constexpr const char* kComputerKeys = "AWSEDFTGYHUJKOLP;";
+
+// The computer keys in two rows, each laid out like a keyboard: the letters play the white keys and
+// the keys above them the black ones. The lower row starts at C of the octave, the upper row an
+// octave higher, and the end of the lower row reaches into the start of the upper one.
+struct ComputerKey {
+    char key;
+    int semitone;
+};
+constexpr ComputerKey kComputerKeys[] = {
+    {'Z', 0},  {'S', 1},  {'X', 2},  {'D', 3},  {'C', 4},  {'V', 5},  {'G', 6},  {'B', 7},  {'H', 8},  {'N', 9},  {'J', 10}, {'M', 11},
+    {',', 12}, {'L', 13}, {'.', 14}, {';', 15}, {'/', 16},
+    {'Q', 12}, {'2', 13}, {'W', 14}, {'3', 15}, {'E', 16}, {'R', 17}, {'5', 18}, {'T', 19}, {'6', 20}, {'Y', 21}, {'7', 22}, {'U', 23},
+    {'I', 24}, {'9', 25}, {'O', 26}, {'0', 27}, {'P', 28}, {'[', 29}, {'=', 30}, {']', 31},
+};
+
+// The character on the key itself, without Shift (US layout): a shifted key still plays its note.
+int unshifted(int c) {
+    if (c >= 'a' && c <= 'z')
+        return c - 'a' + 'A';
+    switch (c) {
+    case '<': return ',';
+    case '>': return '.';
+    case ':': return ';';
+    case '?': return '/';
+    case '{': return '[';
+    case '}': return ']';
+    case '+': return '=';
+    case '@': return '2';
+    case '#': return '3';
+    case '%': return '5';
+    case '^': return '6';
+    case '&': return '7';
+    case '(': return '9';
+    case ')': return '0';
+    default: return c;
+    }
 }
 
-const char* PianoKeys::letters() { return kComputerKeys; }
+// Whether a computer key is down right now. The framework looks most keys up by their character;
+// the = key it knows by its shifted character.
+bool computerKeyIsDown(int key) {
+#if JUCE_WINDOWS
+    if (key == '=')
+        key = '+';
+#endif
+    return juce::KeyPress::isKeyCurrentlyDown(key);
+}
+
+constexpr const char* kKeysHelp = "Z S X D C V G B H N J M , L . ; / play from C of the octave, Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P [ = ] "
+                                  "from C an octave higher; Left and Right move the octave, Down and Up the velocity.";
+
+} // namespace
+
+int PianoKeys::semitoneFor(int character) {
+    const int c = unshifted(character);
+    for (const auto& k : kComputerKeys)
+        if (k.key == c)
+            return k.semitone;
+    return -1;
+}
+
+juce::StringArray PianoKeys::lettersFor(int semitone) {
+    juce::StringArray out;
+    for (const auto& k : kComputerKeys)
+        if (k.semitone == semitone)
+            out.add(juce::String::charToString(static_cast<juce::juce_wchar>(k.key)));
+    return out;
+}
 
 PianoKeys::PianoKeys(Context& ctx) : ctx_(ctx) {
     setTitle("Keyboard");
-    setHelp("Keyboard", "Click or drag to play. With Keys on, the computer keyboard plays too: A W S E D F T G Y H U J K O L P ; from C, "
-                        "Z and X move the octave, C and V the velocity.");
-    setWantsKeyboardFocus(false); // clicks leave the editor's focus where it is, so the computer keys keep playing
+    setHelp("Keyboard", juce::String("Click or drag to play. With Keys on, the computer keyboard plays too: ") + kKeysHelp);
+    setWantsKeyboardFocus(false); // clicks leave the keyboard with the editor, so the computer keys keep playing
     family = Family::Play;
+    keyIsDown = computerKeyIsDown;
 }
 
 PianoKeys::~PianoKeys() { releaseAll(); }
@@ -630,7 +629,7 @@ int PianoKeys::octave() const { return ctx_.prefs.keysOctave; }
 int PianoKeys::velocity() const { return ctx_.prefs.keysVelocity; }
 
 void PianoKeys::setOctave(int o) {
-    o = juce::jlimit(0, 8, o);
+    o = juce::jlimit(0, 7, o); // at 7 the upper row ends on G9, the last note there is
     if (o == ctx_.prefs.keysOctave)
         return;
     ctx_.prefs.keysOctave = o;
@@ -727,30 +726,32 @@ bool PianoKeys::computerKeyDown(const juce::KeyPress& key) {
     const auto mods = key.getModifiers();
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
         return false;
-    int code = key.getKeyCode();
-    if (code >= 'a' && code <= 'z')
-        code -= 'a' - 'A';
-    const juce::juce_wchar typed = key.getTextCharacter();
-    if (typed == ';' || typed == ':')
-        code = ';';
-    const int offset = juce::String(kComputerKeys).indexOfChar(static_cast<juce::juce_wchar>(code));
-    if (offset >= 0) {
-        if (computerHeld_.count(code) != 0)
-            return true; // the key repeats while held: one note
-        const int note = (octave() + 1) * 12 + offset;
-        if (note > 127)
-            return true;
-        computerHeld_[code] = note;
-        press(note, static_cast<float>(velocity()) / 127.0f);
+    // The octave and the velocity sit on keys that play no note, so playing never moves them.
+    const int code = key.getKeyCode();
+    if (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey) {
+        setOctave(octave() + (code == juce::KeyPress::rightKey ? 1 : -1));
         return true;
     }
-    switch (code) {
-    case 'Z': setOctave(octave() - 1); return true;
-    case 'X': setOctave(octave() + 1); return true;
-    case 'C': setVelocity(velocity() <= 20 ? 1 : velocity() - 20); return true;
-    case 'V': setVelocity(velocity() + 20); return true;
-    default: return false;
+    if (code == juce::KeyPress::upKey || code == juce::KeyPress::downKey) {
+        setVelocity(velocity() + (code == juce::KeyPress::upKey ? 10 : -10));
+        return true;
     }
+    int character = unshifted(code);
+    int semitone = semitoneFor(character);
+    if (semitone < 0 && code < 0x10000) { // the typed character when the key code is not one (number-pad keys are never notes)
+        character = unshifted(static_cast<int>(key.getTextCharacter()));
+        semitone = semitoneFor(character);
+    }
+    if (semitone < 0)
+        return false;
+    if (computerHeld_.count(character) != 0)
+        return true; // the key repeats while held: one note
+    const int note = (octave() + 1) * 12 + semitone;
+    if (note > 127)
+        return true;
+    computerHeld_[character] = note;
+    press(note, static_cast<float>(velocity()) / 127.0f);
+    return true;
 }
 
 void PianoKeys::checkHeld() {
@@ -784,11 +785,9 @@ void PianoKeys::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat();
     const juce::Colour lit = t.accent(Family::Play);
     const int base = (octave() + 1) * 12;
-    const juce::String keys(kComputerKeys);
-    const auto letterFor = [&](int note) -> juce::String {
-        const int i = note - base;
-        return ctx_.prefs.computerKeys && i >= 0 && i < keys.length() ? keys.substring(i, i + 1) : juce::String();
-    };
+    // Which computer key plays each note (the preferences can hide this).
+    const bool labels = ctx_.prefs.computerKeys && ctx_.prefs.keyLabels;
+    const auto lettersOf = [&](int note) { return labels ? lettersFor(note - base) : juce::StringArray(); };
     // White keys: ivory with a soft fall-off towards the player, a groove between each.
     const juce::Colour ivory = t.dark ? juce::Colour(0xffe9e6df) : juce::Colour(0xfffbfaf7);
     for (int n = lowest; n <= highest; ++n) {
@@ -803,13 +802,16 @@ void PianoKeys::draw(juce::Graphics& g) {
         g.fillRect(k.withTop(k.getBottom() - (down ? 2.0f : 4.0f)));
         g.setColour(juce::Colours::black.withAlpha(0.35f));
         g.fillRect(k.getRight(), k.getY(), 0.8f, k.getHeight());
-        const auto label = k.withTop(k.getBottom() - 15.0f);
-        if (n % 12 == 0)
+        // From the bottom up: the octave's name on each C, then the computer keys (two where the rows overlap).
+        auto label = k.withTop(k.getBottom() - 15.0f);
+        if (n % 12 == 0) {
             drawText(g, "C" + juce::String(n / 12 - 1), label, kTextSmall, juce::Colour(0xff6f737a), juce::Justification::centred);
-        else if (const auto l = letterFor(n); l.isNotEmpty())
+            label = label.translated(0.0f, -13.0f);
+        }
+        for (const auto& l : lettersOf(n)) {
             drawText(g, l, label, kTextSmall, juce::Colour(0xff8a8f97), juce::Justification::centred);
-        if (n % 12 == 0 && letterFor(n).isNotEmpty())
-            drawText(g, letterFor(n), label.translated(0.0f, -14.0f), kTextSmall, juce::Colour(0xff8a8f97), juce::Justification::centred);
+            label = label.translated(0.0f, -13.0f);
+        }
     }
     // Black keys: lacquer with a lit edge.
     for (int n = lowest; n <= highest; ++n) {
@@ -824,13 +826,16 @@ void PianoKeys::draw(juce::Graphics& g) {
         g.fillRoundedRectangle(k, 2.0f);
         g.setColour(juce::Colours::white.withAlpha(down ? 0.1f : 0.16f));
         g.fillRoundedRectangle(k.reduced(2.5f, 0.0f).withTrimmedBottom(k.getHeight() * 0.2f).withTrimmedTop(1.0f).withWidth(1.5f), 0.75f);
-        if (const auto l = letterFor(n); l.isNotEmpty())
-            drawText(g, l, k.withTop(k.getBottom() - 14.0f), kTextSmall, juce::Colour(0xffaeb3ba), juce::Justification::centred);
+        auto label = k.withTop(k.getBottom() - 14.0f);
+        for (const auto& l : lettersOf(n)) {
+            drawText(g, l, label, kTextSmall, juce::Colour(0xffaeb3ba), juce::Justification::centred);
+            label = label.translated(0.0f, -12.0f);
+        }
     }
     // The computer keys' range, marked along the top.
-    if (ctx_.prefs.computerKeys && base + keys.length() - 1 >= lowest && base <= highest) {
+    if (labels && base + kSpan - 1 >= lowest && base <= highest) {
         const float x0 = keyBounds(juce::jlimit(lowest, highest, base)).getX();
-        const float x1 = keyBounds(juce::jlimit(lowest, highest, base + keys.length() - 1)).getRight();
+        const float x1 = keyBounds(juce::jlimit(lowest, highest, base + kSpan - 1)).getRight();
         g.setColour(lit.withAlpha(0.8f));
         g.fillRect(x0 + 1.0f, area.getY(), x1 - x0 - 2.0f, 2.0f);
     }
@@ -838,6 +843,95 @@ void PianoKeys::draw(juce::Graphics& g) {
     g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.45f), 0.0f, area.getY(), juce::Colours::transparentBlack, 0.0f,
                                            area.getY() + 6.0f, false));
     g.fillRect(area.withHeight(6.0f));
+}
+
+// --- The wheels --------------------------------------------------------------------------------------
+
+Wheel::Wheel(Context& ctx, bool pitch) : ctx_(ctx), pitch_(pitch), value_(ctx.processor.screenWheel(pitch)) {
+    setWantsKeyboardFocus(true);
+    setTitle(pitch ? "Pitch wheel" : "Modulation wheel");
+    setHelp(pitch ? "Pitch" : "Mod", pitch ? "Bends the pitch; springs back when released." : "The modulation wheel (controller 1).");
+}
+
+// Nobody holds the pitch wheel once the editor closes: the pitch goes back to the centre.
+Wheel::~Wheel() {
+    if (pitch_)
+        ctx_.processor.setScreenWheel(true, 0.0f);
+}
+
+void Wheel::draw(juce::Graphics& g) {
+    const Theme& t = theme();
+    auto area = getLocalBounds().toFloat();
+    auto label = area.removeFromBottom(13.0f);
+    drawText(g, pitch_ ? "Pitch" : "Mod", label, kTextSmall, t.textDim, juce::Justification::centred);
+    const auto slot = area.reduced(2.0f, 1.0f);
+    g.setColour(t.sunken);
+    g.fillRoundedRectangle(slot, 4.0f);
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.drawRoundedRectangle(slot, 4.0f, 1.0f);
+    // The wheel: ridges across a lit drum, its position marked.
+    const auto drum = slot.reduced(3.0f, 3.0f);
+    const juce::Colour metal = t.dark ? t.raised.brighter(0.1f) : t.raised.darker(0.05f);
+    juce::ColourGradient lightOnDrum(metal.darker(0.5f), drum.getX(), drum.getY(), metal.darker(0.5f), drum.getX(), drum.getBottom(), false);
+    lightOnDrum.addColour(0.5, metal.brighter(0.25f));
+    g.setGradientFill(lightOnDrum);
+    g.fillRoundedRectangle(drum, 3.0f);
+    const float norm = pitch_ ? (value_ + 1.0f) * 0.5f : value_;
+    g.setColour(juce::Colours::black.withAlpha(0.25f));
+    for (int i = 0; i < 9; ++i) {
+        const float phase = std::fmod(norm * 3.0f + static_cast<float>(i) / 9.0f, 1.0f);
+        const float y = drum.getY() + drum.getHeight() * (0.5f - 0.5f * std::cos(phase * juce::MathConstants<float>::pi));
+        g.fillRect(drum.getX() + 1.0f, y, drum.getWidth() - 2.0f, 1.0f);
+    }
+    const float y = drum.getBottom() - drum.getHeight() * norm;
+    g.setColour(t.accent(Family::Play));
+    g.fillRoundedRectangle(juce::Rectangle<float>(drum.getX(), y - 2.0f, drum.getWidth(), 4.0f), 1.5f);
+    drawFocus(g, getLocalBounds().toFloat());
+}
+
+void Wheel::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu())
+        return;
+    held_ = true;
+    mouseDrag(e);
+}
+
+void Wheel::mouseDrag(const juce::MouseEvent& e) {
+    if (!held_)
+        return;
+    const auto track = getLocalBounds().toFloat().withTrimmedBottom(13.0f).reduced(5.0f, 4.0f);
+    const float norm = juce::jlimit(0.0f, 1.0f, (track.getBottom() - e.position.y) / track.getHeight());
+    set(pitch_ ? norm * 2.0f - 1.0f : norm);
+}
+
+void Wheel::mouseUp(const juce::MouseEvent&) { letGo(); }
+
+// A release the host kept from the window: the next frame sees no button down and lets go.
+bool Wheel::tick() {
+    if (held_ && mouseIsDown != nullptr && !mouseIsDown())
+        letGo();
+    return false;
+}
+
+void Wheel::letGo() {
+    if (!held_)
+        return;
+    held_ = false;
+    if (pitch_)
+        set(0.0f); // the pitch wheel springs back, and the pitch with it
+}
+
+bool Wheel::keyPressed(const juce::KeyPress& key) {
+    const float step = 0.1f;
+    if (key == juce::KeyPress::upKey) { set(juce::jmin(1.0f, value_ + step)); return true; }
+    if (key == juce::KeyPress::downKey) { set(juce::jmax(pitch_ ? -1.0f : 0.0f, value_ - step)); return true; }
+    return false;
+}
+
+void Wheel::set(float v) {
+    value_ = v;
+    ctx_.processor.setScreenWheel(pitch_, v);
+    repaint();
 }
 
 // --- The keyboard layer ------------------------------------------------------------------------------
@@ -859,17 +953,17 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
         b->setTooltip(b->getTitle());
         b->ghost = true;
     }
-    octDown_.setHelp("Octave down", "Moves the computer keys an octave down (Z).");
-    octUp_.setHelp("Octave up", "Moves the computer keys an octave up (X).");
-    velDown_.setHelp("Velocity down", "Softer computer keys (C).");
-    velUp_.setHelp("Velocity up", "Harder computer keys (V).");
+    octDown_.setHelp("Octave down", "Moves the computer keys an octave down (Left arrow).");
+    octUp_.setHelp("Octave up", "Moves the computer keys an octave up (Right arrow).");
+    velDown_.setHelp("Velocity down", "Softer computer keys (Down arrow).");
+    velUp_.setHelp("Velocity up", "Harder computer keys (Up arrow).");
     octDown_.onClick = [this] { piano_.setOctave(piano_.octave() - 1); };
     octUp_.onClick = [this] { piano_.setOctave(piano_.octave() + 1); };
     velDown_.onClick = [this] { piano_.setVelocity(piano_.velocity() - 10); };
     velUp_.onClick = [this] { piano_.setVelocity(piano_.velocity() + 10); };
     keysButton_.toggleRole = true;
     keysButton_.textSize = kTextSmall + 0.5f;
-    keysButton_.setHelp("Computer keys", "Lets the computer keyboard play: A W S E D F T G Y H U J K O L P ; from C; Z and X move the octave, C and V the velocity.");
+    keysButton_.setHelp("Computer keys", juce::String("Lets the computer keyboard play: ") + kKeysHelp);
     keysButton_.onClick = [this] {
         piano_.releaseAll();
         ctx_.prefs.computerKeys = !ctx_.prefs.computerKeys;
@@ -893,7 +987,7 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
 void KeyboardLayer::refresh() {
     octave_.setText("Oct " + juce::String(piano_.octave()));
     velocity_.setText("Vel " + juce::String(piano_.velocity()));
-    octave_.setTitle("Computer keys start at C" + juce::String(piano_.octave()));
+    octave_.setTitle("Computer keys: Z plays C" + juce::String(piano_.octave()) + ", Q plays C" + juce::String(piano_.octave() + 1));
     velocity_.setTitle("Computer keys velocity " + juce::String(piano_.velocity()));
     keysButton_.setToggled(ctx_.prefs.computerKeys);
     piano_.repaint();

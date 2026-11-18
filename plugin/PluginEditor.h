@@ -33,6 +33,10 @@ public:
     void visibilityChanged() override;
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override { mouseMove(e); }
+    void mouseDown(const juce::MouseEvent& e) override;
+    // The keyboard belongs to the editor (the computer keys play) unless a text field or a part
+    // with editing keys of its own holds it: a click on empty panel never gives it to a control.
+    std::unique_ptr<juce::ComponentTraverser> createFocusTraverser() override;
 
     // --- Navigation -------------------------------------------------------------------------------
     void showPage(int page);
@@ -89,6 +93,8 @@ private:
     void applyRenderer();
     void fitToScreen();
     bool fitPending_ = false;
+    bool focusPending_ = true; // the standalone application takes the keyboard when it first shows
+    void takeKeysOnFirstShow();
     void stepPreset(int direction);
 
     ZederiaProcessor& processor_;
