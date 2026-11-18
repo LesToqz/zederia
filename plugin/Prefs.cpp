@@ -82,6 +82,14 @@ bool Prefs::load(const juce::File& from) {
         flag("tooltips", tooltips);
         flag("help_strip", helpStrip);
         flag("macro_strip", macroStrip);
+        flag("computer_keys", computerKeys);
+        // An octave and velocity saved with the earlier one-row layout, whose letters moved them while
+        // playing, are not kept: the keys start again from C3 at velocity 100.
+        if (doc.contains("keys_layout") && doc["keys_layout"].is_number() && doc["keys_layout"].get<int>() == 2) {
+            number("keys_octave", keysOctave, 0, 7);
+            number("keys_velocity", keysVelocity, 1, 127);
+        }
+        flag("key_labels", keyLabels);
         flag("simple_view", simpleView);
         number("frame_cap", frameCap, 15, 60);
         frameCap = frameCap <= 20 ? 15 : frameCap <= 45 ? 30 : 60;
@@ -110,6 +118,11 @@ void Prefs::save() const {
     doc["tooltips"] = tooltips;
     doc["help_strip"] = helpStrip;
     doc["macro_strip"] = macroStrip;
+    doc["computer_keys"] = computerKeys;
+    doc["keys_layout"] = 2; // two rows of computer keys
+    doc["keys_octave"] = keysOctave;
+    doc["keys_velocity"] = keysVelocity;
+    doc["key_labels"] = keyLabels;
     doc["simple_view"] = simpleView;
     doc["frame_cap"] = frameCap;
     doc["gpu_rendering"] = gpuRendering;

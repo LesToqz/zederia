@@ -63,6 +63,7 @@ public:
     static constexpr int kCell = 58;
     explicit FrameStrip(TablePage& page) : page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true; // arrow keys move, Delete removes
         setTitle("Frames");
         setHelp("Frames", "Key frames of the table. Click to select; Shift for a range, Ctrl for several. Drag to reorder. Arrow keys move, Delete removes.");
         family = Family::Sources;
@@ -141,6 +142,7 @@ public:
     enum class Tool { Free, Flat, RampUp, RampDown, Line, Sine, HalfUp, HalfDown, QuarterIn, QuarterOut, Curve, Nudge, Noise };
     explicit WaveEditor(TablePage& page) : page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true;
         setTitle("Wave");
         setHelp("Wave", "Draw on the frame. Pick a tool; with Snap the strokes follow the grid. Faint lines are the neighbouring frames.");
         family = Family::Sources;
@@ -277,6 +279,7 @@ class HarmonicEditor final : public Widget {
 public:
     explicit HarmonicEditor(TablePage& page) : page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true;
         setTitle("Harmonics");
         setHelp("Harmonics", "Level (top) and phase (bottom) of each harmonic of the frame. Drag across the bars to draw them. Right-click for operations.");
         family = Family::Sources;
@@ -426,6 +429,7 @@ class SpectralEditor final : public Widget {
 public:
     explicit SpectralEditor(TablePage& page) : page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true;
         setTitle("Spectrum of the table");
         setHelp("Spectral view", "Frames (across) by harmonics (up), brightness is level. Paint, erase or smooth with the brush; Lock keeps the brush on one harmonic.");
         family = Family::Sources;
@@ -1442,7 +1446,7 @@ void TablePage::resized() {
     wizard_->setBounds(getLocalBounds().reduced(60, 30));
 }
 
-void TablePage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void TablePage::paint(juce::Graphics&) {} // the chassis shows through
 
 bool TablePage::reveal(const juce::String& module) {
     if (module.startsWith("table"))

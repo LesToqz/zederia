@@ -9,8 +9,11 @@
 
 namespace zui {
 
-inline constexpr int kBaseWidth = 1320, kBaseHeight = 820;
+// The editor is four fixed layers top to bottom: the header (logo, preset bar, page tabs), the page,
+// the modulation dock and the keyboard; the help strip runs along the bottom edge.
+inline constexpr int kBaseWidth = 1320, kBaseHeight = 940;
 inline constexpr int kTopBarHeight = 40, kTabsHeight = 30, kMacroStripHeight = 50, kHelpStripHeight = 24;
+inline constexpr int kHeaderHeight = 76, kLogoWidth = 150;
 
 // A page of the editor. Pages are built when first shown and kept.
 class Page : public juce::Component {
@@ -36,13 +39,14 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void refresh(); // names, history and A/B state
+    juce::Rectangle<int> presetWindow() const; // the dark window behind the preset name, in the bar's coordinates
     bool tick();    // CPU and meters
     std::function<void()> onMenu, onPalette, onHistory, onSavePreset, onPresetBrowse;
     std::function<void(int)> onStepPreset;
 
     Button menu{"", Glyph::Menu}, prev{"", Glyph::Prev}, next{"", Glyph::Next}, save{"Save", Glyph::Save};
     Button presetName{"Init"};
-    Button undo{"Undo", Glyph::Undo}, redo{"Redo", Glyph::Redo}, history{"", Glyph::History};
+    Button history{"", Glyph::History};
     Button abA{"A"}, abB{"B"}, abCopy{"A>B"};
     Caption cpuText{"CPU", kTextSmall, true};
     Caption agent{"Agent off", kTextSmall, true};

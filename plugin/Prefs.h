@@ -11,13 +11,17 @@
 struct Prefs {
     // Interface
     juce::String theme = "Graphite";
-    int defaultScale = 100;      // percent of 1320 x 820, 70..300
+    int defaultScale = 100;      // percent of 1320 x 940, 70..300
     bool rotaryDrag = false;     // false: knobs follow vertical drags; true: they follow the angle around them
     int wheel = 1;               // 0 off, 1 normal, 2 fine
     bool doubleClickTypes = false; // false: double-click resets; true: it opens value entry
     bool tooltips = true;
     bool helpStrip = true;
-    bool macroStrip = true;
+    bool macroStrip = true;      // kept for old settings files; the macros now live in the modulation dock
+    bool computerKeys = true;    // the computer keyboard plays notes in two rows (Z S X D C ... from C, Q 2 W 3 E ... an octave up)
+    int keysOctave = 3;          // the octave the lower row (Z) starts at (C3 = note 48), 0..7; the upper row (Q) is one higher
+    bool keyLabels = true;       // the keyboard shows which computer key plays each note
+    int keysVelocity = 100;      // velocity of computer keys, 1..127
     bool simpleView = false;
     int frameCap = 30;           // 15, 30 or 60 frames per second
     bool gpuRendering = false;   // false: software rendering (no GPU needed)

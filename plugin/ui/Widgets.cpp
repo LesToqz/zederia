@@ -69,10 +69,50 @@ void Widget::setHelp(const juce::String& title, const juce::String& text) {
 }
 
 void Widget::drawFocus(juce::Graphics& g, juce::Rectangle<float> area, float radius) const {
-    if (!hasKeyboardFocus(false))
+    if (!showsFocus())
         return;
     g.setColour(theme().focus);
     g.drawRoundedRectangle(area.reduced(0.5f), radius, 1.5f);
+}
+
+bool Widget::handFocusToEditor() {
+    auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>();
+    if (editor == nullptr || !editor->getWantsKeyboardFocus() || !editor->isShowing())
+        return false;
+    editor->grabKeyboardFocus();
+    return !hasKeyboardFocus(false);
+}
+
+void Widget::focusGained(FocusChangeType cause) {
+    if (cause == focusChangedByMouseClick && !keepsClickFocus && handFocusToEditor())
+        return;
+    focusCue_ = cause != focusChangedByMouseClick;
+    repaint();
+}
+
+void Widget::clickedWhileFocused() {
+    if (!keepsClickFocus && handFocusToEditor())
+        return;
+    if (focusCue_) {
+        focusCue_ = false;
+        repaint();
+    }
+}
+
+bool Widget::keyStateChanged(bool isKeyDown) {
+    if (isKeyDown && !focusCue_ && hasKeyboardFocus(false)) {
+        static const int editingKeys[] = {juce::KeyPress::leftKey,   juce::KeyPress::rightKey,   juce::KeyPress::upKey,     juce::KeyPress::downKey,
+                                              juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey, juce::KeyPress::homeKey,   juce::KeyPress::endKey,
+                                              juce::KeyPress::deleteKey, juce::KeyPress::backspaceKey, juce::KeyPress::returnKey, juce::KeyPress::spaceKey,
+                                              juce::KeyPress::tabKey};
+        for (const int key : editingKeys)
+            if (juce::KeyPress::isKeyCurrentlyDown(key)) {
+                focusCue_ = true;
+                repaint();
+                break;
+            }
+    }
+    return false;
 }
 
 Caption::Caption(juce::String text, float size, bool dim) : text_(std::move(text)), size_(size), dim_(dim) {
@@ -317,6 +357,7 @@ bool ParamWidget::tick() {
         const double liveValue = ctx_.processor.engine().liveValue(param_);
         const double live = d.toNormalized(d.clamp(liveValue));
         if (std::abs(live - live_) > 0.0015) {
+            liveBefore_ = live_;
             live_ = live;
             liveMoved = true;
         }
@@ -525,7 +566,7 @@ std::unique_ptr<juce::AccessibilityHandler> ParamWidget::createAccessibilityHand
                                                         juce::AccessibilityHandler::Interfaces{std::make_unique<ParamValue>(*this)});
 }
 
-void ParamWidget::drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float, float) const {
+void ParamWidget::drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float, float, bool live) const {
     const double base = norm();
     int ring = 0;
     for (const auto& a : arcs_) {
@@ -544,6 +585,11 @@ void ParamWidget::drawModulation(juce::Graphics& g, juce::Point<float> centre, f
         }
         ++ring;
     }
+    if (live)
+        drawLiveMarker(g, centre, radius);
+}
+
+void ParamWidget::drawLiveMarker(juce::Graphics& g, juce::Point<float> centre, float radius) const {
     if (live_ >= 0.0) { // the live value: a bright dot on the track
         const float a = angleFor(live_);
         const juce::Point<float> p = centre.getPointOnCircumference(radius, a);
@@ -591,7 +637,45 @@ juce::Rectangle<float> Knob::knobArea() const {
     return getLocalBounds().toFloat().withTrimmedBottom((showValue ? 13.0f : 0.0f) + (showLabel ? 13.0f : 0.0f));
 }
 
+juce::RectangleList<int> Knob::dirtyArea() {
+    if (!liveOnly_ || liveBefore_ < 0.0)
+        return ParamWidget::dirtyArea();
+    // The marker is a dot on the track: repaint where it was and where it is.
+    const auto area = knobArea();
+    const float radius = std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (small ? 5.0f : 7.0f));
+    const auto dot = [&](double n) {
+        return juce::Rectangle<float>(9.0f, 9.0f).withCentre(area.getCentre().getPointOnCircumference(radius, angleFor(n))).getSmallestIntegerContainer();
+    };
+    juce::RectangleList<int> list(dot(liveBefore_));
+    list.add(dot(live_));
+    return list;
+}
+
 void Knob::draw(juce::Graphics& g) {
+    if (arcs_.empty()) {
+        drawFace(g);
+        return;
+    }
+    // A modulated knob repaints every frame for its live marker: its face is kept as an image and
+    // only the marker is drawn over it.
+    std::uint64_t key = static_cast<std::uint64_t>(label_.hashCode64()) ^ (static_cast<std::uint64_t>(valueText().hashCode64()) << 1);
+    const auto add = [&key](double v) { key = (key ^ std::hash<double>{}(v)) * 1099511628211ull; };
+    add(norm());
+    for (const bool b : {isEnabled(), isMouseOverOrDragging(), dragging_, depthDrag_, highlighted_, dropTarget_, learning_, locked_, hasKeyboardFocus(true)})
+        add(b ? 1.0 : 0.0);
+    for (const auto& a : arcs_) {
+        add(a.low);
+        add(a.high);
+        add((a.muted ? 1.0 : 0.0) + (a.selected ? 2.0 : 0.0));
+        add(static_cast<double>(a.colour.getARGB()));
+    }
+    face_.draw(g, getLocalBounds(), key, false, [this](juce::Graphics& fg) { drawFace(fg); });
+    const auto area = knobArea();
+    const float radius = std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (small ? 5.0f : 7.0f));
+    drawLiveMarker(g, area.getCentre(), radius);
+}
+
+void Knob::drawFace(juce::Graphics& g) {
     const Theme& t = theme();
     const auto& d = def();
     const auto area = knobArea();
@@ -600,19 +684,53 @@ void Knob::draw(juce::Graphics& g) {
     const double n = norm();
     const bool enabled = isEnabled();
     // Track and value arc.
-    strokeArc(g, c, radius, kStartAngle, kEndAngle, 2.4f, t.line);
+    strokeArc(g, c, radius, kStartAngle, kEndAngle, 2.4f, t.metal > 0.0f && t.dark ? t.sunken : t.line);
     const float zero = angleFor(isBipolar(d) ? d.toNormalized(0.0) : 0.0);
     strokeArc(g, c, radius, zero, angleFor(n), 2.6f, enabled ? accent() : t.textFaint);
     // Body and pointer.
     const float body = radius - 4.5f;
-    g.setColour(t.raised);
-    g.fillEllipse(juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(c));
-    g.setColour(isMouseOverOrDragging() ? t.lineStrong.brighter(0.25f) : t.lineStrong);
-    g.drawEllipse(juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(c), 1.0f);
+    const auto bodyBox = juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(c);
     const float a = angleFor(n);
-    g.setColour(enabled ? t.text : t.textFaint);
-    g.drawLine(juce::Line<float>(c.getPointOnCircumference(body * 0.25f, a), c.getPointOnCircumference(body - 1.5f, a)), 2.0f);
-    drawModulation(g, c, radius, kStartAngle, kEndAngle);
+    if (t.metal > 0.0f) {
+        // A machined cap: shadow, knurled skirt, brushed top lit from above (drawn once, kept as an
+        // image: it does not turn), then a lit pointer line.
+        const bool hot = isMouseOverOrDragging();
+        cap_.draw(g, bodyBox.expanded(2.0f, 3.0f).getSmallestIntegerContainer(), hot ? 1u : 0u, false, [&](juce::Graphics& cg) {
+            cg.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.22f));
+            cg.fillEllipse(bodyBox.expanded(1.0f).translated(0.0f, 1.6f));
+            const juce::Colour skirt = t.dark ? t.raised.darker(0.25f) : t.raised.darker(0.12f);
+            cg.setGradientFill(juce::ColourGradient(skirt.brighter(0.45f * t.metal), c.x, bodyBox.getY(), skirt.darker(0.35f * t.metal), c.x,
+                                                    bodyBox.getBottom(), false));
+            cg.fillEllipse(bodyBox);
+            if (body > 9.0f) { // the knurling
+                cg.setColour(juce::Colours::black.withAlpha(0.28f));
+                constexpr int kTeeth = 28;
+                for (int i = 0; i < kTeeth; ++i) {
+                    const float ta = juce::MathConstants<float>::twoPi * static_cast<float>(i) / kTeeth;
+                    cg.drawLine(juce::Line<float>(c.getPointOnCircumference(body - 2.2f, ta), c.getPointOnCircumference(body - 0.5f, ta)), 0.8f);
+                }
+            }
+            const auto cap = bodyBox.reduced(body > 9.0f ? 2.6f : 1.5f);
+            const juce::Colour top = t.dark ? t.raised.brighter(0.18f) : t.panel.brighter(0.05f);
+            cg.setGradientFill(juce::ColourGradient(top.brighter(0.35f * t.metal), cap.getX() + cap.getWidth() * 0.3f, cap.getY(),
+                                                    top.darker(0.25f * t.metal), cap.getRight(), cap.getBottom(), true));
+            cg.fillEllipse(cap);
+            cg.setColour(hot ? accent().withAlpha(0.8f) : juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
+            cg.drawEllipse(bodyBox, 1.0f);
+            cg.setColour(juce::Colours::white.withAlpha(t.dark ? 0.10f : 0.5f));
+            cg.drawEllipse(cap.reduced(0.5f), 0.7f);
+        });
+        g.setColour(enabled ? (t.dark ? juce::Colours::white.withAlpha(0.92f) : t.text) : t.textFaint);
+        g.drawLine(juce::Line<float>(c.getPointOnCircumference(body * 0.35f, a), c.getPointOnCircumference(body - 1.5f, a)), 2.0f);
+    } else {
+        g.setColour(t.raised);
+        g.fillEllipse(bodyBox);
+        g.setColour(isMouseOverOrDragging() ? t.lineStrong.brighter(0.25f) : t.lineStrong);
+        g.drawEllipse(bodyBox, 1.0f);
+        g.setColour(enabled ? t.text : t.textFaint);
+        g.drawLine(juce::Line<float>(c.getPointOnCircumference(body * 0.25f, a), c.getPointOnCircumference(body - 1.5f, a)), 2.0f);
+    }
+    drawModulation(g, c, radius, kStartAngle, kEndAngle, arcs_.empty());
     // Label and value.
     const auto bounds = getLocalBounds().toFloat();
     auto text = bounds.withTop(area.getBottom());
@@ -716,6 +834,10 @@ void Toggle::draw(juce::Graphics& g) {
     if (power) {
         const auto circle = area.withSizeKeepingCentre(std::min(area.getWidth(), area.getHeight()) - 2.0f,
                                                        std::min(area.getWidth(), area.getHeight()) - 2.0f);
+        if (on && t.metal > 0.0f) { // a lit button glows
+            g.setColour(accent().withAlpha(0.28f));
+            g.fillEllipse(circle.expanded(1.0f));
+        }
         g.setColour(on ? accent() : t.sunken);
         g.fillEllipse(circle);
         g.setColour(on ? accent() : t.lineStrong);
@@ -1176,6 +1298,7 @@ Card::Card(juce::String title, Family f) : title_(std::move(title)) {
     family = f;
     setTitle(title_);
     setAccessible(true);
+    setOpaque(true); // it paints every pixel (its corners in the chassis colour)
 }
 
 juce::Rectangle<int> Card::header() const { return getLocalBounds().removeFromTop(headerHeight); }
@@ -1205,36 +1328,49 @@ void Card::resized() {
 void Card::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
-    drawPanel(g, area, t.panel);
-    if (selectedLook) {
-        g.setColour(t.accent(family).withAlpha(0.8f));
-        g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.2f);
-    }
-    auto h = header().toFloat().reduced(6.0f, 4.0f);
-    if (collapsible) {
-        g.setColour(t.textDim);
-        g.fillPath(glyphPath(collapsed ? Glyph::ChevronRight : Glyph::ChevronDown, h.removeFromLeft(12.0f).withSizeKeepingCentre(9.0f, 9.0f)));
-        h.removeFromLeft(2.0f);
-    }
-    if (powerSwitch != nullptr)
-        h.removeFromLeft(h.getHeight() + 3.0f);
-    g.setColour(t.accent(family));
-    g.fillRoundedRectangle(h.removeFromLeft(3.0f).withSizeKeepingCentre(3.0f, 12.0f), 1.5f);
-    h.removeFromLeft(6.0f);
-    float right = h.getRight();
+    // Where the title may run: up to the first header part on the right.
+    float right = static_cast<float>(getWidth());
     for (auto* c : headerRight)
         if (c != nullptr && c->isVisible())
             right = std::min(right, static_cast<float>(c->getX()) - 4.0f);
-    if (drawHeaderExtra && !headerExtraArea.isEmpty()) {
-        drawHeaderExtra(g, headerExtraArea);
+    if (drawHeaderExtra && !headerExtraArea.isEmpty())
         right = std::min(right, headerExtraArea.getX() - 4.0f);
-    }
-    const juce::String title = title_.toUpperCase();
-    drawText(g, title, h.withRight(right), kTextSmall + 0.5f, t.text, juce::Justification::centredLeft, true);
-    if (!collapsed) {
-        g.setColour(t.line);
-        g.fillRect(juce::Rectangle<float>(area.getX() + 1.0f, static_cast<float>(headerHeight) - 1.0f, area.getWidth() - 2.0f, 1.0f));
-    }
+    // Everything here changes only with the title and the header's layout: one copy per repaint.
+    std::uint64_t key = static_cast<std::uint64_t>(title_.hashCode64());
+    for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, headerHeight, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
+                        juce::roundToInt(right), static_cast<int>(family)})
+        key = key * 1099511628211ull + static_cast<std::uint64_t>(v + 1);
+    background_.draw(g, getLocalBounds(), key, true, [&](juce::Graphics& bg) {
+        bg.fillAll(t.bg); // the corners outside the rounded panel: the chassis
+        drawPanel(bg, area, t.panel);
+        if (t.metal > 0.0f) {
+            drawPlate(bg, header().toFloat().reduced(1.0f, 0.0f).withTrimmedTop(1.0f), t.radius);
+            if (screws && !collapsed && getHeight() > 90 && getWidth() > 120) {
+                const float inset = 7.0f;
+                drawScrew(bg, {inset, area.getBottom() - inset}, 2.8f, 0.3f);
+                drawScrew(bg, {area.getRight() - inset, area.getBottom() - inset}, 2.8f, 0.9f);
+            }
+        }
+        auto h = header().toFloat().reduced(6.0f, 4.0f);
+        if (collapsible) {
+            bg.setColour(t.textDim);
+            bg.fillPath(glyphPath(collapsed ? Glyph::ChevronRight : Glyph::ChevronDown, h.removeFromLeft(12.0f).withSizeKeepingCentre(9.0f, 9.0f)));
+            h.removeFromLeft(2.0f);
+        }
+        if (powerSwitch != nullptr)
+            h.removeFromLeft(h.getHeight() + 3.0f);
+        bg.setColour(t.accent(family));
+        bg.fillRoundedRectangle(h.removeFromLeft(3.0f).withSizeKeepingCentre(3.0f, 12.0f), 1.5f);
+        h.removeFromLeft(6.0f);
+        const juce::String title = title_.toUpperCase();
+        drawText(bg, title, h.withRight(std::min(right, h.getRight())), kTextSmall + 0.5f, t.text, juce::Justification::centredLeft, true);
+        if (!collapsed) {
+            bg.setColour(t.line);
+            bg.fillRect(juce::Rectangle<float>(area.getX() + 1.0f, static_cast<float>(headerHeight) - 1.0f, area.getWidth() - 2.0f, 1.0f));
+        }
+    });
+    if (drawHeaderExtra && !headerExtraArea.isEmpty())
+        drawHeaderExtra(g, headerExtraArea);
 }
 
 void Card::mouseDown(const juce::MouseEvent& e) {
@@ -1261,6 +1397,8 @@ DragChip::DragChip(Context& ctx, juce::String source) : ctx_(ctx), source_(std::
 }
 
 bool DragChip::tick() {
+    if ((++frames_ & 1u) != 0) // the live bar moves at half the frame rate
+        return false;
     const int index = Context::sourceIndex(source_);
     const float v = index >= 0 ? ctx_.processor.engine().sourceValue(index) : 0.0f;
     if (std::abs(v - value_) > 0.004f) {
@@ -1275,17 +1413,23 @@ void DragChip::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat().reduced(0.5f);
     const juce::Colour c = ctx_.sourceColour(source_);
     const bool selected = ctx_.selectedSource == source_;
-    g.setColour(selected ? c.withAlpha(0.22f) : t.raised);
-    g.fillRoundedRectangle(area, area.getHeight() * 0.5f);
-    g.setColour(selected || isMouseOver() ? c : t.line);
-    g.drawRoundedRectangle(area, area.getHeight() * 0.5f, selected ? 1.4f : 1.0f);
-    auto inner = area.reduced(area.getHeight() * 0.35f, 0.0f);
-    g.setColour(c);
-    g.fillEllipse(inner.removeFromLeft(7.0f).withSizeKeepingCentre(7.0f, 7.0f));
-    inner.removeFromLeft(4.0f);
-    g.setColour(t.textDim);
-    g.fillPath(glyphPath(Glyph::Grip, inner.removeFromRight(8.0f).withSizeKeepingCentre(8.0f, 11.0f)));
-    drawText(g, text, inner, fittingSize(text, inner.getWidth(), kTextSmall + 0.5f), t.text);
+    const bool over = isMouseOver();
+    // The chip itself changes only with selection, hover and its name: kept as an image, so the
+    // live value's bar repaints over a copy.
+    const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u) | (over ? 2u : 0u);
+    body_.draw(g, getLocalBounds(), key, false, [&](juce::Graphics& cg) {
+        cg.setColour(selected ? c.withAlpha(0.22f) : t.raised);
+        cg.fillRoundedRectangle(area, area.getHeight() * 0.5f);
+        cg.setColour(selected || over ? c : t.line);
+        cg.drawRoundedRectangle(area, area.getHeight() * 0.5f, selected ? 1.4f : 1.0f);
+        auto inner = area.reduced(area.getHeight() * 0.35f, 0.0f);
+        cg.setColour(c);
+        cg.fillEllipse(inner.removeFromLeft(7.0f).withSizeKeepingCentre(7.0f, 7.0f));
+        inner.removeFromLeft(4.0f);
+        cg.setColour(t.textDim);
+        cg.fillPath(glyphPath(Glyph::Grip, inner.removeFromRight(8.0f).withSizeKeepingCentre(8.0f, 11.0f)));
+        drawText(cg, text, inner, fittingSize(text, inner.getWidth(), kTextSmall + 0.5f), t.text);
+    });
     // The source's live value as a thin bar along the bottom edge.
     const float v = juce::jlimit(-1.0f, 1.0f, value_);
     const float mid = area.getCentreX(), half = area.getWidth() * 0.5f - 8.0f;
@@ -1358,10 +1502,12 @@ Meter::Meter(Context& ctx) : ctx_(ctx) {
 }
 
 bool Meter::tick() {
+    if ((++frames_ & 1u) != 0) // 15 updates a second are plenty for a meter; the peaks wait in the processor
+        return false;
     bool dirty = false;
     for (int ch = 0; ch < 2; ++ch) {
         const float peak = ctx_.processor.meterPeak(ch);
-        const float next = std::max(peak, level_[ch] * 0.82f);
+        const float next = std::max(peak, level_[ch] * 0.67f); // the fall of two frames
         const float shown = next < 1e-4f ? 0.0f : next;
         if (std::abs(shown - level_[ch]) > 1e-4f) {
             level_[ch] = shown;
@@ -1369,7 +1515,7 @@ bool Meter::tick() {
         }
         if (peak >= hold_[ch]) {
             hold_[ch] = peak;
-            holdFrames_[ch] = 45;
+            holdFrames_[ch] = 23;
         } else if (holdFrames_[ch] > 0 && --holdFrames_[ch] == 0) {
             hold_[ch] = 0.0f;
             dirty = true;
@@ -1437,21 +1583,163 @@ juce::Rectangle<int> placeRow(juce::Rectangle<int> area, std::initializer_list<s
     return area.withRight(row.getX());
 }
 
+// --- Cached drawing -------------------------------------------------------------------------------------
+
+void CachedDrawing::draw(juce::Graphics& g, juce::Rectangle<int> area, std::uint64_t key, bool opaque, const std::function<void(juce::Graphics&)>& paint) {
+    if (area.isEmpty())
+        return;
+    if (AuditRecorder::active()) { // the snapshot checks see every text drawn, so nothing comes from a copy
+        paint(g);
+        return;
+    }
+    const float scale = juce::jmax(1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    const int w = juce::jmax(1, juce::roundToInt(static_cast<float>(area.getWidth()) * scale));
+    const int h = juce::jmax(1, juce::roundToInt(static_cast<float>(area.getHeight()) * scale));
+    if (!image_.isValid() || image_.getWidth() != w || image_.getHeight() != h || area != area_ || key != key_ || theme_ != theme().name) {
+        image_ = juce::Image(opaque ? juce::Image::RGB : juce::Image::ARGB, w, h, true, juce::SoftwareImageType());
+        juce::Graphics ig(image_);
+        ig.addTransform(juce::AffineTransform::translation(static_cast<float>(-area.getX()), static_cast<float>(-area.getY()))
+                            .scaled(static_cast<float>(w) / static_cast<float>(area.getWidth()), static_cast<float>(h) / static_cast<float>(area.getHeight())));
+        paint(ig);
+        area_ = area;
+        key_ = key;
+        theme_ = theme().name;
+    }
+    g.drawImage(image_, area.toFloat()); // at the display's density: one pixel of the image per pixel
+}
+
+// --- The hardware finish -------------------------------------------------------------------------------
+
+namespace {
+
+// A tile of fine grain with faint horizontal brushing, made once. Panels and the chassis draw it
+// over their fill at a low opacity; tiles are anchored at the editor's origin so neighbouring
+// panels line up.
+const juce::Image& grainTile(bool dark) {
+    static juce::Image tiles[2];
+    juce::Image& tile = tiles[dark ? 1 : 0];
+    if (tile.isNull()) {
+        constexpr int kSize = 192;
+        tile = juce::Image(juce::Image::ARGB, kSize, kSize, true, juce::SoftwareImageType());
+        juce::Random random(dark ? 0x5eed : 0x5eee);
+        std::vector<float> streak(kSize);
+        for (int y = 0; y < kSize; ++y) // brushing: each row a little lighter or darker than the next
+            streak[static_cast<std::size_t>(y)] = (random.nextFloat() - 0.5f) * 0.5f;
+        juce::Image::BitmapData data(tile, juce::Image::BitmapData::writeOnly);
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x) {
+                const float v = (random.nextFloat() - 0.5f) + streak[static_cast<std::size_t>(y)];
+                const auto alpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(std::abs(v) * 255.0f)));
+                data.setPixelColour(x, y, (v > 0 ? juce::Colours::white : juce::Colours::black).withAlpha(alpha));
+            }
+    }
+    return tile;
+}
+
+} // namespace
+
+void drawGrain(juce::Graphics& g, const juce::Path& shape, float strength) {
+    const Theme& t = theme();
+    const float alpha = strength * t.texture;
+    if (alpha <= 0.0f)
+        return;
+    g.saveState();
+    g.setTiledImageFill(grainTile(t.dark), 0, 0, juce::jlimit(0.0f, 1.0f, alpha));
+    g.fillPath(shape);
+    g.restoreState();
+}
+
+void drawChassis(juce::Graphics& g, juce::Rectangle<float> area) {
+    const Theme& t = theme();
+    g.setColour(t.bg);
+    g.fillRect(area);
+    juce::Path p;
+    p.addRectangle(area);
+    drawGrain(g, p, t.dark ? 0.07f : 0.05f);
+}
+
+void drawScrew(juce::Graphics& g, juce::Point<float> c, float radius, float angle) {
+    const Theme& t = theme();
+    if (t.metal <= 0.0f)
+        return;
+    const auto head = juce::Rectangle<float>(radius * 2.0f, radius * 2.0f).withCentre(c);
+    // Countersink shadow, then a domed head lit from the top left.
+    g.setColour(juce::Colours::black.withAlpha(t.dark ? 0.55f : 0.25f));
+    g.fillEllipse(head.expanded(1.0f).translated(0.0f, 0.6f));
+    const juce::Colour metal = t.dark ? juce::Colour(0xff9aa2ac) : juce::Colour(0xffc4c9cf);
+    juce::ColourGradient dome(metal.brighter(0.5f), head.getX() + radius * 0.6f, head.getY() + radius * 0.5f, metal.darker(0.9f),
+                              head.getRight(), head.getBottom(), true);
+    g.setGradientFill(dome);
+    g.fillEllipse(head);
+    // A hex socket.
+    juce::Path hex;
+    const float r = radius * 0.48f;
+    for (int i = 0; i < 6; ++i) {
+        const float a = angle + juce::MathConstants<float>::pi / 3.0f * static_cast<float>(i);
+        const juce::Point<float> p(c.x + r * std::cos(a), c.y + r * std::sin(a));
+        if (i == 0) hex.startNewSubPath(p); else hex.lineTo(p);
+    }
+    hex.closeSubPath();
+    g.setColour(juce::Colour(0xff15171a).withAlpha(0.85f));
+    g.fillPath(hex);
+    g.setColour(juce::Colours::white.withAlpha(0.18f));
+    g.drawEllipse(head.reduced(0.4f), 0.6f);
+}
+
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour fill, bool border) {
     const Theme& t = theme();
-    g.setColour(fill);
+    // A soft drop shadow under machined panels.
+    if (t.metal > 0.0f && border) {
+        g.setColour(juce::Colours::black.withAlpha((t.dark ? 0.35f : 0.12f) * t.metal));
+        g.fillRoundedRectangle(area.translated(0.0f, 1.5f), t.radius);
+    }
+    if (t.metal > 0.0f)
+        g.setGradientFill(juce::ColourGradient(fill.brighter(0.07f * t.metal), area.getX(), area.getY(), fill.darker(0.10f * t.metal), area.getX(),
+                                               area.getBottom(), false));
+    else
+        g.setColour(fill);
     g.fillRoundedRectangle(area, t.radius);
+    juce::Path shape;
+    shape.addRoundedRectangle(area, t.radius);
+    drawGrain(g, shape, t.dark ? 0.10f : 0.07f);
     if (border) {
         g.setColour(t.line);
         g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.0f);
+        if (t.metal > 0.0f) { // the lit top edge of a bevel
+            g.setColour(juce::Colours::white.withAlpha((t.dark ? 0.07f : 0.5f) * t.metal));
+            g.drawHorizontalLine(static_cast<int>(area.getY() + 1.0f), area.getX() + t.radius, area.getRight() - t.radius);
+        }
     }
+}
+
+void drawPlate(juce::Graphics& g, juce::Rectangle<float> area, float radius) {
+    const Theme& t = theme();
+    const juce::Colour base = t.dark ? t.bg.brighter(0.05f) : t.raised.darker(0.04f);
+    g.setGradientFill(juce::ColourGradient(base.brighter(0.08f * t.metal), area.getX(), area.getY(), base.darker(0.08f * t.metal), area.getX(),
+                                           area.getBottom(), false));
+    juce::Path plate;
+    plate.addRoundedRectangle(area.getX(), area.getY(), area.getWidth(), area.getHeight(), radius, radius, true, true, false, false);
+    g.fillPath(plate);
+    drawGrain(g, plate, 0.08f);
+    // An engraved line under the plate: dark groove, light lip.
+    g.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.18f));
+    g.fillRect(area.getX() + 1.0f, area.getBottom() - 1.0f, area.getWidth() - 2.0f, 1.0f);
+    g.setColour(juce::Colours::white.withAlpha(t.dark ? 0.05f : 0.4f));
+    g.fillRect(area.getX() + 1.0f, area.getBottom(), area.getWidth() - 2.0f, 1.0f);
 }
 
 void drawWell(juce::Graphics& g, juce::Rectangle<float> area) {
     const Theme& t = theme();
     g.setColour(t.display);
     g.fillRoundedRectangle(area, 4.0f);
-    g.setColour(t.line);
+    if (t.metal > 0.0f) { // inset: shade along the top edge, a lit lip along the bottom
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.45f * t.metal), area.getX(), area.getY(), juce::Colours::transparentBlack,
+                                               area.getX(), area.getY() + 7.0f, false));
+        g.fillRoundedRectangle(area.withHeight(std::min(7.0f, area.getHeight())), 4.0f);
+        g.setColour(juce::Colours::white.withAlpha((t.dark ? 0.06f : 0.35f) * t.metal));
+        g.drawHorizontalLine(static_cast<int>(area.getBottom()), area.getX() + 4.0f, area.getRight() - 4.0f);
+    }
+    g.setColour(t.dark ? juce::Colours::black.withAlpha(0.7f) : t.line);
     g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
 }
 

@@ -346,6 +346,7 @@ void WavetableView::draw(juce::Graphics& g) {
 
 FilterResponseView::FilterResponseView(Context& ctx, int slot) : ctx_(ctx), slot_(slot) {
     setTitle("Filter response");
+    setOpaque(true); // it paints every pixel: nothing behind it repaints with its curves
     setHelp("Filter response", "The filter's response at the patch's settings (faint) and as it is modulated now (bright); the other filter behind. Click to show phase.");
     family = Family::Filters;
     for (int i = 0; i < 180; ++i)
@@ -389,13 +390,25 @@ bool FilterResponseView::tick() {
     std::uint64_t h = static_cast<std::uint64_t>(slot_ + 1) * 31u + (showPhase ? 7u : 0u);
     for (int s = 0; s < 2; ++s) {
         const zed::FilterView v = engine.filterView(s);
-        h = zed::fnv1a(&v.settings, sizeof v.settings, h);
+        // Field by field: the struct's padding bytes are not part of its value.
+        for (const double field : {static_cast<double>(v.settings.type), static_cast<double>(v.settings.cutoffHz[0]), static_cast<double>(v.settings.cutoffHz[1]),
+                                   static_cast<double>(v.settings.resonance), static_cast<double>(v.settings.drive), static_cast<double>(v.settings.character),
+                                   static_cast<double>(v.settings.mix), v.settings.levelMode ? 1.0 : 0.0})
+            h = mix(h, field);
         h = mix(h, v.on ? 1.0 : 0.0);
+        h = mix(h, static_cast<double>(v.oversample));
     }
+    std::uint64_t patch = static_cast<std::uint64_t>(slot_ + 1) * 131u + (showPhase ? 7u : 0u);
+    patch = mix(patch, engine.sampleRate()); // the response depends on the rate and the oversampling too
     for (const char* f : {"type", "cutoff", "resonance", "drive", "character", "mix", "mix_mode", "on"})
-        h = mix(h, ctx_.processor.plainValue(idx("filter" + juce::String(slot_ + 1) + "." + f)));
+        patch = mix(patch, ctx_.processor.plainValue(idx("filter" + juce::String(slot_ + 1) + "." + f)));
+    h = mix(h, static_cast<double>(patch));
     if (h == key_)
         return false;
+    // Movement from modulation alone redraws at a third of the frame rate; a change to the patch at once.
+    if (patch == patchKey_ && (++frames_ % 3u) != 0)
+        return false;
+    patchKey_ = patch;
     key_ = h;
     compute();
     return true;
@@ -406,21 +419,10 @@ void FilterResponseView::draw(juce::Graphics& g) {
         compute();
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
-    drawWell(g, area);
     const auto plot = area.reduced(8.0f, 8.0f).withTrimmedBottom(12.0f);
     const float lo = showPhase ? -3.2f : -36.0f, hi = showPhase ? 3.2f : 24.0f;
     const auto xOf = [&](std::size_t i) { return plot.getX() + plot.getWidth() * static_cast<float>(i) / static_cast<float>(hz_.size() - 1); };
     const auto yOf = [&](float v) { return plot.getBottom() - plot.getHeight() * (juce::jlimit(lo, hi, v) - lo) / (hi - lo); };
-    for (const double f : {100.0, 1000.0, 10000.0}) {
-        const float x = plot.getX() + plot.getWidth() * static_cast<float>(std::log(f / 20.0) / std::log(1000.0));
-        g.setColour(t.displayGrid); // each time: the label below sets its own colour
-        g.fillRect(x, plot.getY(), 1.0f, plot.getHeight());
-        drawText(g, formatHz(f), juce::Rectangle<float>(x - 20.0f, plot.getBottom() + 1.0f, 40.0f, 12.0f), kTextSmall, t.textDim, juce::Justification::centred);
-    }
-    for (const float db : showPhase ? std::vector<float>{-1.5708f, 0.0f, 1.5708f} : std::vector<float>{-24.0f, -12.0f, 0.0f, 12.0f}) {
-        g.setColour(db == 0.0f ? t.lineStrong : t.displayGrid);
-        g.fillRect(plot.getX(), yOf(db), plot.getWidth(), 1.0f);
-    }
     const auto path = [&](const std::vector<float>& v) {
         juce::Path p;
         for (std::size_t i = 0; i < v.size(); ++i) {
@@ -431,19 +433,39 @@ void FilterResponseView::draw(juce::Graphics& g) {
         }
         return p;
     };
+    // The well, the grid, the patch's own response and the caption change only with the settings:
+    // kept as an image, so a modulated cutoff repaints just the live curves over it.
+    const std::uint64_t key = zed::fnv1a(still_.data(), still_.size() * sizeof(float),
+                                         static_cast<std::uint64_t>(slot_ * 4 + (showPhase ? 2 : 0) + (on_[slot_] ? 1 : 0)));
+    staticLayer_.draw(g, getLocalBounds(), key, true, [&](juce::Graphics& sg) {
+        sg.fillAll(t.panel); // the corners outside the rounded well
+        drawWell(sg, area);
+        for (const double f : {100.0, 1000.0, 10000.0}) {
+            const float x = plot.getX() + plot.getWidth() * static_cast<float>(std::log(f / 20.0) / std::log(1000.0));
+            sg.setColour(t.displayGrid); // each time: the label below sets its own colour
+            sg.fillRect(x, plot.getY(), 1.0f, plot.getHeight());
+            drawText(sg, formatHz(f), juce::Rectangle<float>(x - 20.0f, plot.getBottom() + 1.0f, 40.0f, 12.0f), kTextSmall, t.textDim, juce::Justification::centred);
+        }
+        for (const float db : showPhase ? std::vector<float>{-1.5708f, 0.0f, 1.5708f} : std::vector<float>{-24.0f, -12.0f, 0.0f, 12.0f}) {
+            sg.setColour(db == 0.0f ? t.lineStrong : t.displayGrid);
+            sg.fillRect(plot.getX(), yOf(db), plot.getWidth(), 1.0f);
+        }
+        sg.setColour(t.filters.withAlpha(0.4f));
+        sg.strokePath(path(still_), juce::PathStrokeType(1.0f));
+        const juce::String caption = juce::String("FILTER ") + juce::String(slot_ + 1) + (showPhase ? "  PHASE" : "") + (on_[slot_] ? "" : "  OFF");
+        drawText(sg, caption, area.reduced(10.0f, 6.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight, true);
+    });
     const int other = 1 - slot_;
     const auto& otherValues = showPhase ? phase_[other] : live_[other];
     if (on_[other] && !otherValues.empty()) {
         g.setColour(t.filters.withAlpha(0.25f));
         g.strokePath(path(otherValues), juce::PathStrokeType(1.0f));
     }
-    g.setColour(t.filters.withAlpha(0.4f));
-    g.strokePath(path(still_), juce::PathStrokeType(1.0f));
     const auto& mine = showPhase ? phase_[slot_] : live_[slot_];
-    if (!mine.empty())
-        strokeGlow(g, path(mine), on_[slot_] ? t.filters : t.textFaint, 1.8f);
-    const juce::String caption = juce::String("FILTER ") + juce::String(slot_ + 1) + (showPhase ? "  PHASE" : "") + (on_[slot_] ? "" : "  OFF");
-    drawText(g, caption, area.reduced(10.0f, 6.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight, true);
+    if (!mine.empty()) { // a plain line: it moves every frame under modulation, and a glow there costs more than the rest
+        g.setColour(on_[slot_] ? t.filters : t.textFaint);
+        g.strokePath(path(mine), juce::PathStrokeType(1.8f, juce::PathStrokeType::beveled, juce::PathStrokeType::rounded));
+    }
 }
 
 // --- EnvelopeView ------------------------------------------------------------------------------------
@@ -823,6 +845,44 @@ void SignalMap::mouseDown(const juce::MouseEvent& e) {
     for (const auto& n : nodes())
         if (n.box.contains(e.position) && ctx_.reveal)
             ctx_.reveal(n.module);
+}
+
+// --- Source scope ------------------------------------------------------------------------------------
+
+SourceScope::SourceScope(Context& ctx) : ctx_(ctx) {
+    setTitle("Source output");
+    setHelp("Output", "The modulator's output over the last seconds.");
+    history_.assign(240, 0.0f);
+}
+
+bool SourceScope::tick() {
+    const int i = Context::sourceIndex(source);
+    const float v = i >= 0 ? ctx_.processor.engine().sourceValue(i) : 0.0f;
+    history_[static_cast<std::size_t>(pos_)] = v;
+    pos_ = (pos_ + 1) % static_cast<int>(history_.size());
+    const bool moved = std::abs(v - last_) > 1e-4f || std::abs(v) > 1e-4f;
+    last_ = v;
+    return moved;
+}
+
+void SourceScope::draw(juce::Graphics& g) {
+    const Theme& t = theme();
+    const auto area = getLocalBounds().toFloat();
+    drawWell(g, area);
+    const auto plot = area.reduced(8.0f);
+    g.setColour(t.lineStrong);
+    g.fillRect(plot.getX(), plot.getCentreY(), plot.getWidth(), 1.0f);
+    juce::Path p;
+    const int n = static_cast<int>(history_.size());
+    for (int i = 0; i < n; ++i) {
+        const float v = history_[static_cast<std::size_t>((pos_ + i) % n)];
+        const float x = plot.getX() + plot.getWidth() * static_cast<float>(i) / static_cast<float>(n - 1);
+        const float y = plot.getCentreY() - juce::jlimit(-1.0f, 1.0f, v) * plot.getHeight() * 0.45f;
+        if (i == 0) p.startNewSubPath(x, y); else p.lineTo(x, y);
+    }
+    strokeGlow(g, p, ctx_.sourceColour(source), 1.6f);
+    drawText(g, Context::sourceName(source) + "  " + juce::String(last_, 2), area.reduced(10.0f, 6.0f).removeFromTop(14.0f), kTextSmall,
+             t.textDim, juce::Justification::centredRight);
 }
 
 } // namespace zui

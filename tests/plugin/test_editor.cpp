@@ -1,7 +1,8 @@
 // The interface (milestone 5): snapshots with the automatic checks at three scales, theme contrast,
 // every parameter reachable, undo and redo round trips, modulation gestures, state across editor
 // and host sessions, keyboard and screen-reader access, typed values, the command palette, the
-// frame clock, the interface's cost, workshop latency, Simple view, rack and library actions.
+// frame clock, the interface's cost, workshop latency, Simple view, rack and library actions, and
+// the keyboard (mouse, computer keys, releases that never arrive) and the wheels.
 #include "../support/TestUtil.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -183,6 +184,11 @@ TEST_CASE("editor: every page renders at 100, 150 and 200 % without clipped, ove
     zui::writePng(zui::renderSnapshot(*rig.editor, &overlayFindings), folder.getChildFile("overlay_modmap_100.png"));
     for (auto& f : zui::checkLayout(*rig.editor))
         overlayFindings.push_back(f);
+    rig.editor->setModMap(false);
+    // The signal map, shown large over the oscillators.
+    dynamic_cast<zui::SynthPage&>(rig.editor->page(ZederiaEditor::Synth)).showSignalMap();
+    rig.frames(2);
+    zui::writePng(zui::renderSnapshot(*rig.editor, &overlayFindings), folder.getChildFile("overlay_signalmap_100.png"));
     for (const auto& f : overlayFindings)
         UNSCOPED_INFO("overlay: " << f.kind << ": " << f.where << ": " << f.detail);
     CHECK(overlayFindings.empty());
@@ -826,4 +832,272 @@ TEST_CASE("editor: the PLAY page edits steps and clips, and clips go to and from
     file.deleteFile();
     rig.processor.session().undo();
     CHECK(rig.processor.clip(2).notes.empty());
+}
+
+TEST_CASE("editor: the keyboard plays from the mouse and the computer keys and never leaves a note hanging", "[editor][keys]") {
+    Rig rig;
+    rig.frames(2);
+    auto& piano = rig.editor->keyboardLayer().piano();
+    std::set<int> keysDown;
+    bool buttonDown = false;
+    piano.keyIsDown = [&](int code) { return keysDown.count(code) != 0; };
+    piano.mouseIsDown = [&] { return buttonDown; };
+    const auto centre = [&](int note) { return piano.keyBounds(note).getCentre().translated(0.0f, piano.isBlack(note) ? 0.0f : 20.0f); };
+    const auto settle = [&] { rig.frames(2); };
+
+    // A click plays the key under the pointer and the release ends it.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(60)));
+    settle();
+    CHECK(rig.processor.uiNoteHeld(60));
+    CHECK(rig.processor.noteDown(60));
+    CHECK(rig.processor.activeVoices() > 0);
+    piano.mouseUp(mouse(piano, centre(60)));
+    buttonDown = false;
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(60));
+    CHECK_FALSE(rig.processor.noteDown(60));
+    // Dragging across the keys moves the note: the old key ends as the new one starts.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(60)));
+    piano.mouseDrag(mouse(piano, centre(62), {juce::ModifierKeys::leftButtonModifier}, centre(60)));
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(60));
+    CHECK(rig.processor.uiNoteHeld(62));
+    // Dragged off the keys: nothing plays.
+    piano.mouseDrag(mouse(piano, {-30.0f, 10.0f}, {juce::ModifierKeys::leftButtonModifier}, centre(60)));
+    CHECK(piano.heldCount() == 0);
+    piano.mouseUp(mouse(piano, {-30.0f, 10.0f}));
+    buttonDown = false;
+    // A release the host kept from the window: the next frame sees no button down and ends the note.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(64)));
+    settle();
+    REQUIRE(rig.processor.uiNoteHeld(64));
+    buttonDown = false; // no mouseUp arrives
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(64));
+    CHECK_FALSE(rig.processor.noteDown(64));
+
+    // Computer keys: Z plays C of the keys' octave, a held key repeats without a second note, and
+    // the note ends when the key is no longer down.
+    rig.ctx().prefs.computerKeys = true;
+    piano.setOctave(3);
+    const int c3 = 48;
+    keysDown.insert('Z');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('z')));
+    CHECK(rig.editor->keyPressed(juce::KeyPress('z'))); // auto-repeat
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3));
+    CHECK(piano.heldCount() == 1);
+    keysDown.erase('Z');
+    rig.editor->keyStateChanged(false);
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(c3));
+    // Two keys at once, released while the window had no focus (no key event at all): the frame clock ends both.
+    keysDown.insert('X');
+    keysDown.insert('M');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('x')));
+    CHECK(rig.editor->keyPressed(juce::KeyPress('m')));
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3 + 2));
+    CHECK(rig.processor.uiNoteHeld(c3 + 11));
+    keysDown.clear();
+    settle();
+    CHECK(piano.heldCount() == 0);
+    CHECK_FALSE(rig.processor.noteDown(c3 + 2));
+    CHECK_FALSE(rig.processor.noteDown(c3 + 11));
+    // The two rows: the lower from Z with S D G H J as the black keys, the upper from Q an octave
+    // higher with 2 3 5 6 7 9 0 and the punctuation keys; where the rows overlap two keys play one note.
+    const std::pair<char, int> layout[] = {{'Z', 0},  {'S', 1},  {'X', 2},  {'D', 3},  {'C', 4},  {'V', 5},  {'G', 6},  {'B', 7},
+                                           {'H', 8},  {'N', 9},  {'J', 10}, {'M', 11}, {',', 12}, {'L', 13}, {'.', 14}, {';', 15},
+                                           {'/', 16}, {'Q', 12}, {'2', 13}, {'W', 14}, {'3', 15}, {'E', 16}, {'R', 17}, {'5', 18},
+                                           {'T', 19}, {'6', 20}, {'Y', 21}, {'7', 22}, {'U', 23}, {'I', 24}, {'9', 25}, {'O', 26},
+                                           {'0', 27}, {'P', 28}, {'[', 29}, {'=', 30}, {']', 31}};
+    for (const auto& [key, semitone] : layout) {
+        INFO("key " << key);
+        CHECK(zui::PianoKeys::semitoneFor(key) == semitone);
+        CHECK(zui::PianoKeys::lettersFor(semitone).contains(juce::String::charToString(static_cast<juce::juce_wchar>(key))));
+    }
+    CHECK(zui::PianoKeys::semitoneFor('q') == 12);   // lower case
+    CHECK(zui::PianoKeys::semitoneFor('<') == 12);   // with Shift
+    CHECK(zui::PianoKeys::semitoneFor('@') == 13);
+    CHECK(zui::PianoKeys::lettersFor(12).size() == 2); // , and Q
+    for (const char key : {'A', 'F', 'K', '1', '4', '8', '-'})
+        CHECK(zui::PianoKeys::semitoneFor(key) == -1);
+    keysDown.insert('Q');
+    keysDown.insert(',');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('q')));
+    CHECK(rig.editor->keyPressed(juce::KeyPress(',')));
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3 + 12));
+    keysDown.erase('Q'); // the other key still holds the note
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3 + 12));
+    keysDown.erase(',');
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(c3 + 12));
+    keysDown.insert('5');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('%', juce::ModifierKeys::shiftModifier, '%'))); // Shift held: still the 5 key
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3 + 18));
+    keysDown.clear();
+    settle();
+    CHECK(piano.heldCount() == 0);
+    // Playing never moves the octave or the velocity: every row key leaves them as they were.
+    const int velocity = piano.velocity();
+    for (const auto& [key, semitone] : layout) {
+        keysDown.insert(key);
+        CHECK(rig.editor->keyPressed(juce::KeyPress(key)));
+        keysDown.erase(key);
+        rig.editor->keyStateChanged(false);
+    }
+    CHECK(piano.octave() == 3);
+    CHECK(piano.velocity() == velocity);
+    CHECK(piano.heldCount() == 0);
+    // Left and Right move the octave, Down and Up the velocity; shortcuts with Ctrl are not notes.
+    CHECK(rig.editor->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    CHECK(piano.octave() == 4);
+    CHECK(rig.editor->keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+    CHECK(piano.octave() == 3);
+    CHECK(rig.editor->keyPressed(juce::KeyPress(juce::KeyPress::downKey)));
+    CHECK(piano.velocity() < velocity);
+    CHECK(rig.editor->keyPressed(juce::KeyPress(juce::KeyPress::upKey)));
+    CHECK(piano.velocity() == velocity);
+    CHECK_FALSE(piano.computerKeyDown(juce::KeyPress('z', juce::ModifierKeys::ctrlModifier, 0)));
+    CHECK_FALSE(piano.computerKeyDown(juce::KeyPress(juce::KeyPress::numberPad5, {}, '5'))); // number-pad keys are not notes
+    CHECK(piano.heldCount() == 0);
+    // With the computer keys switched off, letters do nothing.
+    rig.ctx().prefs.computerKeys = false;
+    CHECK_FALSE(rig.editor->keyPressed(juce::KeyPress('z')));
+    rig.ctx().prefs.computerKeys = true;
+
+    // The processor's own guard: a release that cannot be queued (the queue filled while audio was
+    // stopped) still ends the note, because the screen no longer holds the key.
+    rig.processor.keyboardState().noteOn(1, 70, 0.8f);
+    for (int i = 0; i < 400; ++i)
+        rig.processor.pushUiEvent(zed::MidiEvent::pitchBend(0, 0.0f));
+    rig.processor.keyboardState().noteOff(1, 70, 0.0f);
+    rig.run(4);
+    CHECK_FALSE(rig.processor.noteDown(70));
+    // Letting go of everything at once (the panic button does this, then sends all notes and sounds off).
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(72)));
+    settle();
+    REQUIRE(rig.processor.noteDown(72));
+    rig.editor->keyboardLayer().piano().releaseAll();
+    settle();
+    CHECK_FALSE(rig.processor.noteDown(72));
+    buttonDown = false;
+    // Closing the editor while a key is held ends the note.
+    keysDown.insert('C');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('c')));
+    settle();
+    REQUIRE(rig.processor.uiNoteHeld(c3 + 4));
+    rig.open();
+    rig.run(2);
+    CHECK_FALSE(rig.processor.uiNoteHeld(c3 + 4));
+    CHECK_FALSE(rig.processor.noteDown(c3 + 4));
+}
+
+TEST_CASE("editor: the pitch wheel springs back and the pitch with it, whatever happens to the events", "[editor][keys][wheel]") {
+    Rig rig;
+    rig.frames(2);
+    auto* wheel = &rig.editor->keyboardLayer().pitchWheel();
+    bool buttonDown = false;
+    wheel->mouseIsDown = [&] { return buttonDown; };
+    const auto top = juce::Point<float>(static_cast<float>(wheel->getWidth()) * 0.5f, 2.0f);
+    const auto middle = juce::Point<float>(static_cast<float>(wheel->getWidth()) * 0.5f, static_cast<float>(wheel->getHeight()) * 0.4f);
+    const juce::ModifierKeys left{juce::ModifierKeys::leftButtonModifier};
+    const int bendSource = zui::Context::sourceIndex("pitchbend"), modSource = zui::Context::sourceIndex("modwheel");
+    REQUIRE(bendSource >= 0);
+    REQUIRE(modSource >= 0);
+    const auto bend = [&] { return rig.processor.engine().sourceValue(bendSource); };
+    // Rising zero crossings of the left channel over a number of blocks: the pitch that plays.
+    const auto crossings = [&](int blocks) {
+        int n = 0;
+        float last = 0.0f;
+        for (int b = 0; b < blocks; ++b) {
+            rig.run(1);
+            const float* l = rig.buffer.getReadPointer(0);
+            for (int i = 0; i < rig.buffer.getNumSamples(); ++i) {
+                if (last < 0.0f && l[i] >= 0.0f)
+                    ++n;
+                last = l[i];
+            }
+        }
+        return n;
+    };
+    rig.processor.keyboardState().noteOn(1, 57, 0.8f);
+    rig.run(8);
+    const int still = crossings(24);
+
+    // Up and let go: the pitch bends and comes back with the wheel.
+    buttonDown = true;
+    wheel->mouseDown(mouse(*wheel, top, left));
+    rig.run(8);
+    CHECK(bend() > 0.9f);
+    CHECK(crossings(24) > still);
+    wheel->mouseUp(mouse(*wheel, top));
+    buttonDown = false;
+    CHECK(wheel->value() == 0.0f);
+    rig.run(8);
+    CHECK(std::abs(bend()) < 0.01f);
+    CHECK(std::abs(crossings(24) - still) <= 1);
+
+    // Moved a long way while the host did not call the audio thread (more moves than any queue
+    // holds), then let go: the centre still arrives when the audio runs again.
+    buttonDown = true;
+    wheel->mouseDown(mouse(*wheel, top, left));
+    for (int i = 0; i < 600; ++i)
+        wheel->mouseDrag(mouse(*wheel, i % 2 == 0 ? middle : top, left, top));
+    wheel->mouseUp(mouse(*wheel, top));
+    buttonDown = false;
+    rig.run(8);
+    CHECK(std::abs(bend()) < 0.01f);
+    // The same with the keyboard's event queue full as well.
+    buttonDown = true;
+    wheel->mouseDown(mouse(*wheel, top, left));
+    for (int i = 0; i < 400; ++i)
+        rig.processor.pushUiEvent(zed::MidiEvent::controller(0, 20, 0.0f));
+    wheel->mouseUp(mouse(*wheel, top));
+    buttonDown = false;
+    rig.run(8);
+    CHECK(std::abs(bend()) < 0.01f);
+
+    // A release the host kept from the window: the next frame sees no button down and the wheel springs back.
+    buttonDown = true;
+    wheel->mouseDown(mouse(*wheel, top, left));
+    rig.run(4);
+    REQUIRE(bend() > 0.9f);
+    buttonDown = false; // no mouseUp arrives
+    rig.frames(2);
+    CHECK_FALSE(wheel->held());
+    CHECK(wheel->value() == 0.0f);
+    rig.run(8);
+    CHECK(std::abs(bend()) < 0.01f);
+
+    // Closing the editor while the wheel is held: the pitch goes back to the centre.
+    buttonDown = true;
+    wheel->mouseDown(mouse(*wheel, top, left));
+    rig.run(4);
+    REQUIRE(bend() > 0.9f);
+    rig.open();
+    rig.run(8);
+    CHECK(std::abs(bend()) < 0.01f);
+    CHECK(rig.editor->keyboardLayer().pitchWheel().value() == 0.0f);
+
+    // The modulation wheel stays where it is let go, and a reopened editor shows it there.
+    auto& mod = rig.editor->keyboardLayer().modWheel();
+    mod.mouseIsDown = [&] { return buttonDown; };
+    buttonDown = true;
+    mod.mouseDown(mouse(mod, top, left));
+    mod.mouseUp(mouse(mod, top));
+    buttonDown = false;
+    rig.frames(2);
+    rig.run(8);
+    CHECK(rig.processor.engine().sourceValue(modSource) > 0.9f);
+    rig.open();
+    CHECK(rig.editor->keyboardLayer().modWheel().value() > 0.9f);
+    rig.processor.keyboardState().noteOff(1, 57, 0.0f);
 }

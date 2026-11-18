@@ -153,8 +153,22 @@ public:
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
     float meterPeak(int channel) { return meter_[static_cast<std::size_t>(channel)].exchange(0.0f, std::memory_order_relaxed); }
     int activeVoices() const { return engine_.activeVoices(); }
-    // Events from the interface (wheels, audition): played at the start of the next block.
+    // Events from the interface (panic, audition): played at the start of the next block.
     void pushUiEvent(const zed::MidiEvent& event) { pushKeyboardEvent(event); }
+    // The pitch and modulation wheels on the screen (pitch -1..1, modulation 0..1). Their latest
+    // position, not a queue of moves: the next block plays it, so a full queue or a host that stops
+    // calling the audio thread while the wheel moves can never leave the pitch where the wheel is not.
+    void setScreenWheel(bool pitch, float value) { (pitch ? screenBend_ : screenMod_).store(value, std::memory_order_relaxed); }
+    float screenWheel(bool pitch) const { return (pitch ? screenBend_ : screenMod_).load(std::memory_order_relaxed); }
+    // Keys down from any input (the host's notes and the on-screen keyboard), as the last audio
+    // block saw them: for the keyboard's display.
+    bool noteDown(int key) const {
+        return key >= 0 && key < 128 && ((downShown_[static_cast<std::size_t>(key >> 6)].load(std::memory_order_relaxed) >> (key & 63)) & 1u) != 0;
+    }
+    // Keys the on-screen keyboard holds (message thread's view).
+    bool uiNoteHeld(int key) const {
+        return key >= 0 && key < 128 && ((uiHeld_[static_cast<std::size_t>(key >> 6)].load(std::memory_order_relaxed) >> (key & 63)) & 1u) != 0;
+    }
 
     // --- Whole states: undo, A/B, presets (message thread; ProcessorEditing.cpp) -------------------
     // The current patch: the document with the engine's current values.
@@ -253,6 +267,18 @@ private:
     juce::MidiKeyboardState keyboard_;
     juce::AbstractFifo keyboardFifo_{kKeyboardQueue};
     std::array<zed::MidiEvent, kKeyboardQueue> keyboardEvents_{};
+    // The keys the screen holds (the message thread's word) against the keys the audio thread
+    // started from the screen: a started key the screen no longer holds is released, so a lost
+    // release (a full queue while audio was stopped) can never leave a note hanging.
+    std::array<std::atomic<std::uint64_t>, 2> uiHeld_{};
+    std::array<std::uint64_t, 2> uiStarted_{};
+    std::array<std::uint64_t, 2> uiEnded_{}; // ended here before their own release arrived: that release is dropped
+    // The screen's wheels (message thread) and what the audio thread last played of them.
+    std::atomic<float> screenBend_{0.0f}, screenMod_{0.0f};
+    float playedBend_ = 0.0f, playedMod_ = 0.0f;
+    // Keys down from any input, for the keyboard's display (audio thread, then published).
+    std::array<std::uint64_t, 2> down_{};
+    std::array<std::atomic<std::uint64_t>, 2> downShown_{};
 
     std::array<zed::MidiEvent, kMaxEventsPerBlock> blockEvents_{};
     std::array<std::atomic<float>, 2> meter_{};

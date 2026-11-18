@@ -35,5 +35,5 @@
     "mod7": "#a8407f",
     "mod8": "#5c636d"
   },
-  "metrics": { "radius": 6, "glow": 0.0 }
+  "metrics": { "radius": 5, "glow": 0.0, "texture": 0.55, "metal": 0.6 }
 }

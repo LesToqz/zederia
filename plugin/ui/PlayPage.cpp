@@ -17,6 +17,7 @@ class StepLane final : public Widget {
 public:
     StepLane(Context& ctx, PlayPage& page) : ctx_(ctx), page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true; // arrow keys move between steps
         setTitle("Step lane");
         setHelp("Step lane", "Each step: click the top cell for on, tie or rest; drag the bar for velocity; drag the lower cells for transposition and ratchets. Arrow keys move, Space changes the state.");
         family = Family::Play;
@@ -67,7 +68,7 @@ public:
         for (int i = 0; i < n; ++i) {
             const auto s = p.step(i);
             const float x = r.state.getX() + w * static_cast<float>(i);
-            const bool focused = i == focusStep_ && hasKeyboardFocus(false);
+            const bool focused = i == focusStep_ && showsFocus();
             auto cell = juce::Rectangle<float>(x + 1.0f, r.state.getY(), w - 2.0f, r.state.getHeight());
             g.setColour(s.state == zed::StepState::On ? t.play : s.state == zed::StepState::Tie ? t.play.withAlpha(0.45f) : t.sunken);
             g.fillRoundedRectangle(cell, 2.0f);
@@ -184,6 +185,7 @@ class ChordEditor final : public Widget {
 public:
     explicit ChordEditor(Context& ctx) : ctx_(ctx) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true;
         setTitle("Chord notes");
         setHelp("Chord notes", "The chord one key plays: click semitones above the key (0 is the key itself). Arrow keys move, Space toggles.");
         family = Family::Play;
@@ -206,7 +208,7 @@ public:
             const bool on = std::find(n.begin(), n.end(), s) != n.end();
             g.setColour(on ? t.play : black[s % 12] ? t.sunken : t.raised);
             g.fillRoundedRectangle(cell, 2.0f);
-            if (s == focus_ && hasKeyboardFocus(false)) {
+            if (s == focus_ && showsFocus()) {
                 g.setColour(t.focus);
                 g.drawRoundedRectangle(cell, 2.0f, 1.5f);
             }
@@ -255,6 +257,7 @@ class PianoRoll final : public Widget {
 public:
     PianoRoll(Context& ctx, PlayPage& page) : ctx_(ctx), page_(page) {
         setWantsKeyboardFocus(true);
+        keepsClickFocus = true; // Delete removes the selected notes
         setTitle("Piano roll");
         setHelp("Piano roll", "Double-click to add a note; drag to move, drag the right edge for length, drag in the lower strip for velocity. Delete removes; the Quantize menu snaps starts.");
         family = Family::Play;
@@ -612,6 +615,7 @@ PlayPage::PlayPage(Context& ctx) : Page(ctx) {
     clipOn.power = true;
     clipOn.family = Family::Play;
     clips_->powerSwitch = &clipOn;
+    clips_->screws = false; // its left column runs to the bottom edge
     auto& slots = play(parts_.add<Segmented>(*clips_, ctx, "clip.slot", "Clip slot"));
     slots.names = {"1", "2", "3", "4", "5", "6", "7", "8"};
     slots.showLabel = false;
@@ -710,11 +714,11 @@ bool PlayPage::exportClipFile(const juce::File& file) {
     return !bytes.empty() && file.replaceWithData(bytes.data(), bytes.size());
 }
 
-void PlayPage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void PlayPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void PlayPage::resized() {
     auto area = getLocalBounds().reduced(8);
-    auto top = area.removeFromTop(area.getHeight() / 2 - 20);
+    auto top = area.removeFromTop(juce::jmax(300, area.getHeight() / 2 - 20));
     chords_->setBounds(top.removeFromRight(440));
     top.removeFromRight(8);
     arp_->setBounds(top);

@@ -71,7 +71,7 @@ KitPage::KitPage(Context& ctx) : Page(ctx) {
     displayRow_.push_back(&add(displays, std::make_unique<SignalMap>(ctx)));
 }
 
-void KitPage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void KitPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void KitPage::resized() {
     auto area = getLocalBounds().reduced(8);

@@ -17,11 +17,9 @@ TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
     next.setTooltip("Next preset");
     presetName.setHelp("Preset", "The sound's name; click to open the library. A dot marks changes since it was loaded or saved.");
     save.setHelp("Save", "Save the sound as a preset (Ctrl+S).");
-    undo.setHelp("Undo", "Undo the last change (Ctrl+Z).");
-    redo.setHelp("Redo", "Redo (Ctrl+Shift+Z).");
     history.setTitle("History");
     history.setTooltip("History: every change, by name");
-    history.setHelp("History", "The list of changes; click one to go back to it.");
+    history.setHelp("History", "The list of changes; click one to go back to it. Ctrl+Z undoes, Ctrl+Shift+Z redoes.");
     abA.setHelp("Compare A", "Two versions of the sound to compare. Click the other letter to switch (Ctrl+B).");
     abB.setHelp("Compare B", "Two versions of the sound to compare. Click the other letter to switch (Ctrl+B).");
     abCopy.setHelp("Copy to other side", "Copy this side to the other side of the compare.");
@@ -36,7 +34,7 @@ TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
     master->showValue = false;
     cpuText.setTitle("CPU");
     agent.setTitle("Agent link");
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&menu, &prev, &next, &presetName, &save, &undo, &redo, &history, &abA, &abB,
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&menu, &prev, &next, &presetName, &save, &history, &abA, &abB,
                                                                        &abCopy, quality.get(), &cpuText, fxOff.get(), &agent, &meter, master.get()})
         addAndMakeVisible(c);
     for (Button* b : {&menu, &prev, &next, &history})
@@ -56,8 +54,6 @@ TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
         if (ctx_.notify)
             ctx_.notify(ctx_.session.abSide() == 0 ? "A copied to B" : "B copied to A");
     };
-    undo.onClick = [this] { ctx_.session.undo(); };
-    redo.onClick = [this] { ctx_.session.redo(); };
     history.onClick = [this] { if (onHistory) onHistory(); };
     menu.onClick = [this] { if (onMenu) onMenu(); };
     save.onClick = [this] { if (onSavePreset) onSavePreset(); };
@@ -68,11 +64,6 @@ TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
 }
 
 void TopBar::refresh() {
-    const auto& h = ctx_.session.history();
-    undo.setEnabled(h.canUndo());
-    redo.setEnabled(h.canRedo());
-    undo.setTooltip(h.canUndo() ? "Undo " + str(h.undoLabel()) : "Nothing to undo");
-    redo.setTooltip(h.canRedo() ? "Redo " + str(h.redoLabel()) : "Nothing to redo");
     const juce::String name = ctx_.session.presetName() + (ctx_.session.modified() ? juce::String::fromUTF8(" \xe2\x80\xa2") : juce::String());
     presetName.setText(name);
     presetName.setTitle("Preset " + ctx_.session.presetName());
@@ -106,14 +97,11 @@ void TopBar::resized() {
     menu.setBounds(area.removeFromLeft(28));
     area.removeFromLeft(6);
     prev.setBounds(area.removeFromLeft(22));
-    presetName.setBounds(area.removeFromLeft(250));
+    presetName.setBounds(area.removeFromLeft(212));
     next.setBounds(area.removeFromLeft(22));
     area.removeFromLeft(4);
     save.setBounds(area.removeFromLeft(62));
-    area.removeFromLeft(14);
-    undo.setBounds(area.removeFromLeft(66));
-    area.removeFromLeft(4);
-    redo.setBounds(area.removeFromLeft(64));
+    area.removeFromLeft(8);
     history.setBounds(area.removeFromLeft(26));
     area.removeFromLeft(14);
     abA.setBounds(area.removeFromLeft(28));
@@ -135,12 +123,10 @@ void TopBar::resized() {
     quality->setBounds(area.removeFromRight(96));
 }
 
-void TopBar::paint(juce::Graphics& g) {
-    const Theme& t = theme();
-    g.setColour(t.panel);
-    g.fillRect(getLocalBounds());
-    g.setColour(t.line);
-    g.fillRect(getLocalBounds().removeFromBottom(1));
+void TopBar::paint(juce::Graphics&) {} // the editor's cached header draws the plate and the preset window behind
+
+juce::Rectangle<int> TopBar::presetWindow() const {
+    return juce::Rectangle<int>(prev.getX() - 2, presetName.getY() - 1, next.getRight() - prev.getX() + 4, presetName.getHeight() + 2);
 }
 
 // --- MacroStrip --------------------------------------------------------------------------------------

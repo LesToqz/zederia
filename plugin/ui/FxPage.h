@@ -1,6 +1,7 @@
-// The FX page (plan 3.8): lanes A, B and Master side by side, slots dragged to reorder or move
-// between lanes, the selected slot's controls and display, the bus balances, FX off, the rack lock
-// and rack and slot presets.
+// The FX page (plan 3.8): on the left the chain (lanes A, B and Master; the selected lane's effects
+// in order, dragged to reorder or onto another lane), the bus balances, FX off, the rack lock and
+// rack presets; on the right the rack: each effect of the lane as a strip with its controls in
+// named groups, its mix, and a display where one helps (EQ and Filter responses, Drive's curves).
 #pragma once
 
 #include "Shell.h"

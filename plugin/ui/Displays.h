@@ -87,6 +87,9 @@ private:
     std::vector<double> hz_;
     std::vector<float> live_[2], phase_[2], still_;
     bool on_[2] = {false, false};
+    CachedDrawing staticLayer_;
+    std::uint64_t patchKey_ = 0;
+    unsigned frames_ = 0;
 };
 
 // An envelope's shape from its times, levels and curves, with handles to drag (attack, hold,
@@ -158,6 +161,22 @@ private:
     Context& ctx_;
     std::uint64_t key_ = 0;
     int hover_ = -1;
+};
+
+// A source's output over the last seconds, for sources without a shape to draw (Flux, Sub, Texture).
+class SourceScope final : public Widget {
+public:
+    explicit SourceScope(Context& ctx);
+    juce::String source;
+    bool tick() override;
+    void draw(juce::Graphics& g) override;
+    bool hasVisibleLabel() const override { return false; }
+
+private:
+    Context& ctx_;
+    std::vector<float> history_;
+    int pos_ = 0;
+    float last_ = 0.0f;
 };
 
 // Short text helpers shared by displays.

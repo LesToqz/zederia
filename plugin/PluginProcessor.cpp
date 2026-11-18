@@ -214,6 +214,48 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         take(scope.startIndex1, scope.blockSize1);
         take(scope.startIndex2, scope.blockSize2);
     }
+    // The screen's wheels where they are now, when they moved.
+    if (const float bend = screenBend_.load(std::memory_order_relaxed); bend != playedBend_ && count < kMaxEventsPerBlock) {
+        playedBend_ = bend;
+        blockEvents_[static_cast<std::size_t>(count++)] = zed::MidiEvent::pitchBend(0, bend);
+    }
+    if (const float mod = screenMod_.load(std::memory_order_relaxed); mod != playedMod_ && count < kMaxEventsPerBlock) {
+        playedMod_ = mod;
+        blockEvents_[static_cast<std::size_t>(count++)] = zed::MidiEvent::controller(0, 1, mod);
+    }
+    // Keys the screen started, and any it let go of whose release never arrived.
+    {
+        const auto bit = [](int key) { return std::uint64_t{1} << (key & 63); };
+        int kept = 0;
+        for (int i = 0; i < count; ++i) {
+            const zed::MidiEvent e = blockEvents_[static_cast<std::size_t>(i)];
+            const auto w = static_cast<std::size_t>((e.number >> 6) & 1);
+            const bool on = e.type == zed::MidiEvent::Type::NoteOn && e.value > 0.0f;
+            const bool off = !on && (e.type == zed::MidiEvent::Type::NoteOn || e.type == zed::MidiEvent::Type::NoteOff);
+            if (off && (uiEnded_[w] & bit(e.number)) != 0) {
+                uiEnded_[w] &= ~bit(e.number); // already ended below in an earlier block: this late release must not end a newer note
+                continue;
+            }
+            if (on) {
+                uiStarted_[w] |= bit(e.number);
+                uiEnded_[w] &= ~bit(e.number);
+            } else if (off) {
+                uiStarted_[w] &= ~bit(e.number);
+            }
+            blockEvents_[static_cast<std::size_t>(kept++)] = e;
+        }
+        count = kept;
+        for (std::size_t w = 0; w < 2; ++w) {
+            const std::uint64_t lost = uiStarted_[w] & ~uiHeld_[w].load(std::memory_order_acquire);
+            for (int b = 0; b < 64 && lost != 0 && count < kMaxEventsPerBlock; ++b) {
+                if (((lost >> b) & 1u) == 0)
+                    continue;
+                uiStarted_[w] &= ~(std::uint64_t{1} << b);
+                uiEnded_[w] |= std::uint64_t{1} << b; // its own release may still be on its way
+                blockEvents_[static_cast<std::size_t>(count++)] = zed::MidiEvent::noteOff(0, static_cast<int>(w) * 64 + b);
+            }
+        }
+    }
     // An audition phrase from the library: its events at their own samples.
     auditionPlan_.retirePrevious();
     if (auditionPlan_.take()) {
@@ -287,6 +329,19 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         blockEvents_[static_cast<std::size_t>(j)] = e;
     }
     args.midi = {blockEvents_.data(), static_cast<std::size_t>(count)};
+    // Keys down, for the keyboard's display.
+    for (int i = 0; i < count; ++i) {
+        const zed::MidiEvent& e = blockEvents_[static_cast<std::size_t>(i)];
+        auto& word = down_[static_cast<std::size_t>((e.number >> 6) & 1)];
+        if (e.type == zed::MidiEvent::Type::NoteOn && e.value > 0.0f)
+            word |= std::uint64_t{1} << (e.number & 63);
+        else if (e.type == zed::MidiEvent::Type::NoteOn || e.type == zed::MidiEvent::Type::NoteOff)
+            word &= ~(std::uint64_t{1} << (e.number & 63));
+        else if (e.type == zed::MidiEvent::Type::Controller && (e.number == 123 || e.number == 120))
+            down_ = {};
+    }
+    for (std::size_t w = 0; w < 2; ++w)
+        downShown_[w].store(down_[w], std::memory_order_relaxed);
     if (auto* head = getPlayHead()) {
         if (const auto position = head->getPosition()) {
             args.transport.bpm = position->getBpm().orFallback(120.0);
@@ -901,10 +956,14 @@ void ZederiaProcessor::pushKeyboardEvent(const zed::MidiEvent& event) {
 }
 
 void ZederiaProcessor::handleNoteOn(juce::MidiKeyboardState*, int channel, int note, float velocity) {
+    if (note >= 0 && note < 128) // held before the event goes out: the audio thread never sees a start the screen does not hold
+        uiHeld_[static_cast<std::size_t>(note >> 6)].fetch_or(std::uint64_t{1} << (note & 63), std::memory_order_release);
     pushKeyboardEvent(zed::MidiEvent::noteOn(0, note, velocity, channel - 1));
 }
 
 void ZederiaProcessor::handleNoteOff(juce::MidiKeyboardState*, int channel, int note, float velocity) {
+    if (note >= 0 && note < 128) // let go first: even if the release cannot be queued, the audio thread ends the note
+        uiHeld_[static_cast<std::size_t>(note >> 6)].fetch_and(~(std::uint64_t{1} << (note & 63)), std::memory_order_release);
     pushKeyboardEvent(zed::MidiEvent::noteOff(0, note, velocity, channel - 1));
 }
 
