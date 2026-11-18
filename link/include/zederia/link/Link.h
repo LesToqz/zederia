@@ -50,6 +50,7 @@ void removeDiscovery(const std::string& instanceId);
 // Every discovery file whose process still runs; files of processes that ended are removed.
 std::vector<Discovery> listDiscoveries();
 bool processAlive(int pid);
+int currentProcessId();
 
 // --- The pipe -----------------------------------------------------------------------------------------
 // A pipe name for a new instance: \\.\pipe\zederia-link-<random>.

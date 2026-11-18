@@ -1,4 +1,3 @@
-                         tFlats = key.valid() && music::prefersFlats(key.tonic, key.scale->minorLike);
 #include "Tools.h"
 
 #include "zederia/music/Theory.h"
@@ -83,6 +82,7 @@ void addMusicTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          ToolOutput out;
                          out.structured["action"] = action;
                          const music::Key key = keyArg(a, action == "scale" || action == "quantize");
+                         tFlats = key.valid() && music::prefersFlats(key.tonic, key.scale->minorLike);
                          if (key.valid())
                              out.structured["key"] = key.name();
                          if (action == "scales") {

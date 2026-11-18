@@ -232,8 +232,15 @@ int ZederiaProcessor::readOutput(float* dest, int count) const {
     return count;
 }
 
-void ZederiaProcessor::audition(const std::vector<zed::NoteSpec>& notes) {
+void ZederiaProcessor::audition(const std::vector<zed::NoteSpec>& notes) { audition(notes, 1.0f); }
+
+void ZederiaProcessor::audition(const std::vector<zed::NoteSpec>& notes, float capGain) {
     auto plan = std::make_shared<AuditionPlan>();
+    plan->capGain = std::clamp(capGain, 0.0f, 1.0f);
+    double end = 0.0;
+    for (const auto& n : notes)
+        end = std::max(end, n.start + n.duration);
+    plan->capUntil = static_cast<std::int64_t>((end + 2.0) * sampleRate_);
     for (const auto& n : notes) {
         const auto at = [&](double seconds) { return static_cast<int>(std::lround(std::max(0.0, seconds) * sampleRate_)); };
         plan->events.push_back(zed::MidiEvent::noteOn(at(n.start), n.note, static_cast<float>(n.velocity)));

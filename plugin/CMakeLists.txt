@@ -27,7 +27,7 @@ string(APPEND theme_text "} // namespace zui::themes\n")
 file(CONFIGURE OUTPUT ${ZED_THEME_SOURCE} CONTENT "${theme_text}")
 
 set(ZED_PLUGIN_SOURCES
-    PluginProcessor.cpp PluginProcessor.h ProcessorParts.h ProcessorEditing.cpp
+    PluginProcessor.cpp PluginProcessor.h ProcessorParts.h ProcessorEditing.cpp AgentLink.cpp AgentLink.h
     Session.cpp Session.h Prefs.cpp Prefs.h
     PluginEditor.cpp PluginEditor.h
     ui/Theme.cpp ui/Theme.h
@@ -50,7 +50,7 @@ set(ZED_PLUGIN_SOURCES
     ui/KitPage.cpp ui/KitPage.h
     ${ZED_THEME_SOURCE})
 target_sources(Zederia PRIVATE ${ZED_PLUGIN_SOURCES})
-zed_strict_sources(PluginProcessor.cpp ProcessorEditing.cpp Session.cpp Prefs.cpp PluginEditor.cpp
+zed_strict_sources(PluginProcessor.cpp ProcessorEditing.cpp AgentLink.cpp Session.cpp Prefs.cpp PluginEditor.cpp
     ui/Theme.cpp ui/Context.cpp ui/Widgets.cpp ui/CurveEditor.cpp ui/Displays.cpp ui/Audit.cpp ui/Shell.cpp
     ui/Dock.cpp ui/ModOverlay.cpp ui/Palette.cpp ui/SynthPage.cpp ui/FxPage.cpp ui/ModPage.cpp ui/TablePage.cpp ui/PlayPage.cpp
     ui/LibraryPage.cpp ui/AgentPage.cpp ui/KitPage.cpp)
@@ -61,7 +61,7 @@ target_compile_definitions(Zederia PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_MODAL_LOOPS_PERMITTED=0)
 target_link_libraries(Zederia
-    PRIVATE zederia_core juce::juce_audio_utils
+    PRIVATE zederia_core zederia_link juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags)
 
 if(ZED_BUILD_CLAP)

@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 
+#include "AgentLink.h"
 #include "PluginEditor.h"
 #include "ProcessorParts.h"
 #include "Session.h"
@@ -132,11 +133,18 @@ ZederiaProcessor::ZederiaProcessor()
     keyboard_.addListener(this);
     tableBuilder_ = std::make_unique<TableBuilder>(*this);
     session_ = std::make_unique<Session>(*this);
+    agentLink_ = std::make_unique<AgentLink>(*this);
+    // Off by default (plan 4.8); ZEDERIA_AGENT_LINK=1 switches it on for automated live-link tests.
+    if (juce::SystemStats::getEnvironmentVariable("ZEDERIA_AGENT_LINK", {}) == "1") {
+        std::string error;
+        agentLink_->setEnabled(true, error);
+    }
     startTimerHz(30);
 }
 
 ZederiaProcessor::~ZederiaProcessor() {
     stopTimer();
+    agentLink_.reset(); // closes the pipe and removes the discovery file before anything it uses goes
     session_.reset();
     tableBuilder_.reset(); // stops its thread before anything it touches goes away
     keyboard_.removeListener(this);
@@ -375,6 +383,23 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         const auto velocity = static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::lround(e.value * 127.0f)), on ? 1 : 0, 127));
         const std::uint8_t bytes[3] = {static_cast<std::uint8_t>((on ? 0x90 : 0x80) | (e.channel & 0x0F)), e.number, velocity};
         midi.addEvent(bytes, 3, std::clamp(e.offset, 0, frames - 1));
+    }
+
+    // An agent's audition is level-capped (plan 4.8): the gain drops at once to hold the block's
+    // peak at the cap and recovers slowly afterwards.
+    if (const AuditionPlan* plan = auditionPlan_.current(); plan != nullptr && plan->capGain < 1.0f && auditionPos_ <= plan->capUntil) {
+        const float peak = std::max(buffer.getMagnitude(0, 0, frames), buffer.getMagnitude(std::min(1, buffer.getNumChannels() - 1), 0, frames));
+        const float target = peak > plan->capGain ? plan->capGain / peak : 1.0f;
+        const float next = std::min(target, auditionGain_ + (1.0f - auditionGain_) * 0.02f);
+        if (next < auditionGain_) {
+            buffer.applyGain(0, frames, next);
+        } else {
+            for (int channel = 0; channel < std::min(2, buffer.getNumChannels()); ++channel)
+                buffer.applyGainRamp(channel, 0, frames, auditionGain_, next);
+        }
+        auditionGain_ = next;
+    } else {
+        auditionGain_ = 1.0f;
     }
 
     for (int channel = 0; channel < 2; ++channel) {
@@ -764,6 +789,8 @@ bool ZederiaProcessor::loadProgramFile(const std::string& file) {
 }
 
 void ZederiaProcessor::serviceMessageThread() {
+    if (agentLink_ != nullptr)
+        agentLink_->service(); // requests from agents, should their prompt call have been missed
     // MIDI learn: the controller that arrived is bound to the waiting parameter.
     const int learned = learned_.exchange(-1, std::memory_order_relaxed);
     if (learned >= 0) {
@@ -806,6 +833,7 @@ void ZederiaProcessor::getStateInformation(juce::MemoryBlock& destination) {
         instrument["programs"] = programList();
         instrument["rack_locked"] = engine_.rackLocked();
         instrument["tuning_locked"] = engine_.tuningLocked();
+        instrument["agent_link"] = agentLink_ != nullptr && agentLink_->enabled();
         // Host parameters the patch has no use for (the amount of a route that does not exist, the
         // values of an empty rack slot): the patch keeps them at their defaults, but a host expects
         // back exactly what it set, so they travel here.
@@ -916,6 +944,10 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
             engine_.setRackLocked(doc["rack_locked"].get<bool>());
         if (doc.contains("tuning_locked") && doc["tuning_locked"].is_boolean())
             engine_.setTuningLocked(doc["tuning_locked"].get<bool>());
+        if (doc.contains("agent_link") && doc["agent_link"].is_boolean() && agentLink_ != nullptr) {
+            std::string error;
+            agentLink_->setEnabled(doc["agent_link"].get<bool>(), error);
+        }
         if (doc.contains("unused_values") && doc["unused_values"].is_object()) {
             const juce::ScopedLock lock(documentLock_);
             const auto& reg = zed::Registry::get();

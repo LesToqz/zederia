@@ -560,6 +560,22 @@ bool Session::pasteModule(const juce::String& moduleId, juce::String& error) {
     return ok;
 }
 
+bool Session::applyAgentState(const juce::String& label, const juce::String& origin, const zed::Patch& state, bool asPreset) {
+    const zed::Patch before = p_.snapshot();
+    history_.absorb(before);
+    if (asPreset)
+        p_.loadPresetPatch(state);
+    else
+        p_.restore(state);
+    const zed::Patch after = p_.snapshot();
+    lastMergeKey_.clear();
+    if (after == before)
+        return false;
+    history_.push(label.toStdString(), after, origin.toStdString());
+    changed();
+    return true;
+}
+
 bool Session::perform(const juce::String& label, const std::function<bool()>& action) {
     history_.absorb(p_.snapshot());
     if (!action())

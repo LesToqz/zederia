@@ -1,6 +1,7 @@
 #include "Shell.h"
 
 #include "Audit.h"
+#include "../AgentLink.h"
 
 namespace zui {
 
@@ -71,13 +72,21 @@ void TopBar::refresh() {
     abB.setToggled(ctx_.session.abSide() == 1);
     abCopy.setText(ctx_.session.abSide() == 0 ? "A>B" : "B>A");
     abCopy.setTitle(ctx_.session.abSide() == 0 ? "Copy A to B" : "Copy B to A");
-    agent.setText(ctx_.prefs.agentLink ? "Agent on" : "Agent off");
+    agent.setText(ctx_.processor.agentLink().enabled() ? "Agent on" : "Agent off");
     repaint();
 }
 
 // The CPU readout changes at most twice a second, and only when the number it shows changes: a
 // figure that changes every frame cannot be read.
 bool TopBar::tick() {
+    // The indicator follows the instance's Agent Link (plan 4.8: the top bar shows when it is on).
+    const juce::String agentText = ctx_.processor.agentLink().enabled() ? "Agent on" : "Agent off";
+    if (agentText != agent.text()) {
+        agent.setText(agentText);
+        agent.setTooltip(agentText == "Agent on" ? "Agent Link is on: AI agents on this computer can edit this instance (AGENT page)"
+                                                 : "Agent Link is off (AGENT page)");
+        return true;
+    }
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (now - cpuShownAt_ < 500.0)
         return false;

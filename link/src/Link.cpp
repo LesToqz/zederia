@@ -281,6 +281,14 @@ bool processAlive(int pid) {
 #endif
 }
 
+int currentProcessId() {
+#ifdef _WIN32
+    return static_cast<int>(GetCurrentProcessId());
+#else
+    return static_cast<int>(getpid());
+#endif
+}
+
 std::vector<Discovery> listDiscoveries() {
     std::vector<Discovery> out;
     std::error_code ec;
