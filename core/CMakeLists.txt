@@ -51,6 +51,8 @@ add_library(zederia_core STATIC
     src/midi/MidiFile.cpp
     src/midi/CcMap.cpp
     src/render/OfflineRenderer.cpp
+    src/analysis/Analysis.cpp
+    src/music/Theory.cpp
     src/bench/Bench.cpp
 )
 target_include_directories(zederia_core PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/generated)

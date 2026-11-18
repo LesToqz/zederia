@@ -44,6 +44,9 @@ std::string recipeCategory(const nlohmann::json& recipe);
 
 // Both return false with a message that names the step or layer and the problem.
 bool buildTableRecipe(const nlohmann::json& recipe, Wavetable& out, std::string& error);
+// Applies a list of recipe steps (the same vocabulary as "steps" above) to an existing table, in
+// order. On an error the table is left as it was and `error` names the step and the problem.
+bool applyTableSteps(const nlohmann::json& steps, Wavetable& table, std::string& error);
 bool buildTextureRecipe(const nlohmann::json& recipe, WavData& out, std::string& error);
 
 // Builds every recipe found under `recipesDir` (searched through its subfolders) into

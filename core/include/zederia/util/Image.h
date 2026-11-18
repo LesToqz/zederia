@@ -23,4 +23,7 @@ bool decodeImage(std::span<const std::uint8_t> bytes, ImageData& out, std::strin
 // damaged data or when the result would exceed `maxSize`.
 bool inflateZlib(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out, std::size_t maxSize);
 
+// Writes an 8-bit RGB image (width * height * 3 bytes, top row first) as a PNG file.
+std::vector<std::uint8_t> encodePngRgb(int width, int height, std::span<const std::uint8_t> rgb);
+
 } // namespace zed

@@ -9,6 +9,7 @@
 #include "zederia/table/TableData.h"
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <cstdint>
 #include <span>
@@ -55,11 +56,17 @@ struct RenderSettings {
     // Tables and the texture sample to play; null entries leave the engine's built-in ones.
     std::array<std::shared_ptr<const TableData>, kNumOscs> tables;
     std::shared_ptr<const SampleData> texture;
+    // The render lasts at least this long (a loop's length plus its tail), seconds.
+    double minSeconds = 0.0;
+    // Called about every 50 ms of rendered audio with the fraction done; returning false stops
+    // the render early (RenderResult::cancelled). Called on the rendering thread.
+    std::function<bool(double fraction)> progress;
 };
 
 struct RenderResult {
     std::vector<float> left, right;
     double sampleRate = 48000.0;
+    bool cancelled = false; // the progress callback stopped it; the audio is incomplete
     // The notes the play features made (arpeggiator, chord tools, clips) while global.midi_out is
     // on, at their absolute sample positions.
     std::vector<SeqEvent> midiOut;

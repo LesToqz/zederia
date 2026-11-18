@@ -20,6 +20,7 @@ include(cmake/Warnings.cmake)
 include(cmake/Dependencies.cmake)
 
 add_subdirectory(core)
+add_subdirectory(link) # the local pipe protocol shared by the plug-in and the agent server
 if(ZED_BUILD_PLUGIN)
     add_subdirectory(plugin) # before the command-line tool: its ui-snapshot command uses the editor
 endif()
