@@ -258,7 +258,7 @@ TEST_CASE("plug-in: the editor opens at its default size and follows the process
     auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
     REQUIRE(editor != nullptr);
     CHECK(editor->getWidth() == 1320);
-    CHECK(editor->getHeight() == 820);
+    CHECK(editor->getHeight() == 940);
     editor->setSize(700, 450); // the constrainer is the host's business; the content scales with any size
     editor->setScalePercent(150);
     CHECK(editor->getWidth() == 1980);

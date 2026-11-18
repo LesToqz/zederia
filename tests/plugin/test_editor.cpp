@@ -1,7 +1,8 @@
 // The interface (milestone 5): snapshots with the automatic checks at three scales, theme contrast,
 // every parameter reachable, undo and redo round trips, modulation gestures, state across editor
 // and host sessions, keyboard and screen-reader access, typed values, the command palette, the
-// frame clock, the interface's cost, workshop latency, Simple view, rack and library actions.
+// frame clock, the interface's cost, workshop latency, Simple view, rack and library actions, and
+// the keyboard (mouse, computer keys, releases that never arrive).
 #include "../support/TestUtil.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -183,6 +184,11 @@ TEST_CASE("editor: every page renders at 100, 150 and 200 % without clipped, ove
     zui::writePng(zui::renderSnapshot(*rig.editor, &overlayFindings), folder.getChildFile("overlay_modmap_100.png"));
     for (auto& f : zui::checkLayout(*rig.editor))
         overlayFindings.push_back(f);
+    rig.editor->setModMap(false);
+    // The signal map, shown large over the oscillators.
+    dynamic_cast<zui::SynthPage&>(rig.editor->page(ZederiaEditor::Synth)).showSignalMap();
+    rig.frames(2);
+    zui::writePng(zui::renderSnapshot(*rig.editor, &overlayFindings), folder.getChildFile("overlay_signalmap_100.png"));
     for (const auto& f : overlayFindings)
         UNSCOPED_INFO("overlay: " << f.kind << ": " << f.where << ": " << f.detail);
     CHECK(overlayFindings.empty());
@@ -826,4 +832,122 @@ TEST_CASE("editor: the PLAY page edits steps and clips, and clips go to and from
     file.deleteFile();
     rig.processor.session().undo();
     CHECK(rig.processor.clip(2).notes.empty());
+}
+
+TEST_CASE("editor: the keyboard plays from the mouse and the computer keys and never leaves a note hanging", "[editor][keys]") {
+    Rig rig;
+    rig.frames(2);
+    auto& piano = rig.editor->keyboardLayer().piano();
+    std::set<int> keysDown;
+    bool buttonDown = false;
+    piano.keyIsDown = [&](int code) { return keysDown.count(code) != 0; };
+    piano.mouseIsDown = [&] { return buttonDown; };
+    const auto centre = [&](int note) { return piano.keyBounds(note).getCentre().translated(0.0f, piano.isBlack(note) ? 0.0f : 20.0f); };
+    const auto settle = [&] { rig.frames(2); };
+
+    // A click plays the key under the pointer and the release ends it.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(60)));
+    settle();
+    CHECK(rig.processor.uiNoteHeld(60));
+    CHECK(rig.processor.noteDown(60));
+    CHECK(rig.processor.activeVoices() > 0);
+    piano.mouseUp(mouse(piano, centre(60)));
+    buttonDown = false;
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(60));
+    CHECK_FALSE(rig.processor.noteDown(60));
+    // Dragging across the keys moves the note: the old key ends as the new one starts.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(60)));
+    piano.mouseDrag(mouse(piano, centre(62), {juce::ModifierKeys::leftButtonModifier}, centre(60)));
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(60));
+    CHECK(rig.processor.uiNoteHeld(62));
+    // Dragged off the keys: nothing plays.
+    piano.mouseDrag(mouse(piano, {-30.0f, 10.0f}, {juce::ModifierKeys::leftButtonModifier}, centre(60)));
+    CHECK(piano.heldCount() == 0);
+    piano.mouseUp(mouse(piano, {-30.0f, 10.0f}));
+    buttonDown = false;
+    // A release the host kept from the window: the next frame sees no button down and ends the note.
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(64)));
+    settle();
+    REQUIRE(rig.processor.uiNoteHeld(64));
+    buttonDown = false; // no mouseUp arrives
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(64));
+    CHECK_FALSE(rig.processor.noteDown(64));
+
+    // Computer keys: A plays C of the keys' octave, a held key repeats without a second note, and
+    // the note ends when the key is no longer down.
+    rig.ctx().prefs.computerKeys = true;
+    piano.setOctave(3);
+    const int c3 = 48;
+    keysDown.insert('A');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('a')));
+    CHECK(rig.editor->keyPressed(juce::KeyPress('a'))); // auto-repeat
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3));
+    CHECK(piano.heldCount() == 1);
+    keysDown.erase('A');
+    rig.editor->keyStateChanged(false);
+    settle();
+    CHECK_FALSE(rig.processor.uiNoteHeld(c3));
+    // Two keys at once, released while the window had no focus (no key event at all): the frame clock ends both.
+    keysDown.insert('S');
+    keysDown.insert('J');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('s')));
+    CHECK(rig.editor->keyPressed(juce::KeyPress('j')));
+    settle();
+    CHECK(rig.processor.uiNoteHeld(c3 + 2));
+    CHECK(rig.processor.uiNoteHeld(c3 + 11));
+    keysDown.clear();
+    settle();
+    CHECK(piano.heldCount() == 0);
+    CHECK_FALSE(rig.processor.noteDown(c3 + 2));
+    CHECK_FALSE(rig.processor.noteDown(c3 + 11));
+    // Z and X move the octave, C and V the velocity; shortcuts with Ctrl are not notes.
+    CHECK(rig.editor->keyPressed(juce::KeyPress('x')));
+    CHECK(piano.octave() == 4);
+    CHECK(rig.editor->keyPressed(juce::KeyPress('z')));
+    CHECK(piano.octave() == 3);
+    const int velocity = piano.velocity();
+    CHECK(rig.editor->keyPressed(juce::KeyPress('c')));
+    CHECK(piano.velocity() < velocity);
+    CHECK(rig.editor->keyPressed(juce::KeyPress('v')));
+    CHECK(piano.velocity() == velocity);
+    CHECK_FALSE(piano.computerKeyDown(juce::KeyPress('a', juce::ModifierKeys::ctrlModifier, 0)));
+    CHECK(piano.heldCount() == 0);
+    // With the computer keys switched off, letters do nothing.
+    rig.ctx().prefs.computerKeys = false;
+    CHECK_FALSE(rig.editor->keyPressed(juce::KeyPress('a')));
+    rig.ctx().prefs.computerKeys = true;
+
+    // The processor's own guard: a release that cannot be queued (the queue filled while audio was
+    // stopped) still ends the note, because the screen no longer holds the key.
+    rig.processor.keyboardState().noteOn(1, 70, 0.8f);
+    for (int i = 0; i < 400; ++i)
+        rig.processor.pushUiEvent(zed::MidiEvent::pitchBend(0, 0.0f));
+    rig.processor.keyboardState().noteOff(1, 70, 0.0f);
+    rig.run(4);
+    CHECK_FALSE(rig.processor.noteDown(70));
+    // Letting go of everything at once (the panic button does this, then sends all notes and sounds off).
+    buttonDown = true;
+    piano.mouseDown(mouse(piano, centre(72)));
+    settle();
+    REQUIRE(rig.processor.noteDown(72));
+    rig.editor->keyboardLayer().piano().releaseAll();
+    settle();
+    CHECK_FALSE(rig.processor.noteDown(72));
+    buttonDown = false;
+    // Closing the editor while a key is held ends the note.
+    keysDown.insert('D');
+    CHECK(rig.editor->keyPressed(juce::KeyPress('d')));
+    settle();
+    REQUIRE(rig.processor.uiNoteHeld(c3 + 4));
+    rig.open();
+    rig.run(2);
+    CHECK_FALSE(rig.processor.uiNoteHeld(c3 + 4));
+    CHECK_FALSE(rig.processor.noteDown(c3 + 4));
 }

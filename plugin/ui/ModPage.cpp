@@ -416,7 +416,6 @@ void ModPage::resized() {
 
 void ModPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    g.fillAll(t.bg);
     const auto list = viewport_.getBounds();
     // The list's panel holds the count and the column titles, its top in line with the detail panel's.
     drawPanel(g, list.toFloat().expanded(4.0f, 0.0f).withTop(static_cast<float>(count_.getY()) - 4.0f).withBottom(static_cast<float>(list.getBottom()) + 4.0f), t.sunken);

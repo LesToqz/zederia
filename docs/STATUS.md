@@ -52,7 +52,30 @@
   - Core support: tables embedded in patches, typed values, history, variation, module copy and paste, the preset index and query language, incremental table builds.
   - Tests: 300 (core, plug-in, command line), all under the audio-thread guard. pluginval passes at strictness 10 with the editor, and clap-validator passes.
 
+- Interface revision after milestone 5 (2026-11-18, from hands-on feedback), on branch `m5-interface-layers`:
+  - **Four fixed layers** on every page: the header (logo plate, preset bar, page tabs), the page, the modulation dock (the eight macros; envelopes, LFOs and Flux with their chips, display and controls) and the keyboard (pitch and mod wheels, octave and velocity for the computer keys, the keys, Keys switch, Panic). The base size is now 1320 x 940 (was 1320 x 820); the macro strip is gone (the macros are in the dock).
+  - **Hardware finish**: machined panels with grain, a bevel and a drop shadow, engraved header plates, screws with hex sockets, metal knob caps with knurling, lit power buttons, inset display wells, an ivory-and-lacquer keyboard. Two theme metrics drive it (`texture`, `metal`): Graphite full, Paper lighter, Contrast without grain.
+  - **SYNTH page reorganized**: the three oscillators side by side, each with its own table display, its main controls on one row and the rest in four tabs (Unison, Spread, Warp, Pitch); Sub and Texture below; the Stage beside them (filter response, warp curves, Sub or Texture output) with a button that opens the signal map large over the oscillators; filters and voice on the right. Nothing collapses any more.
+  - **FX page as a rack**: the chain (lane tabs, the lane's effects in order, drag to reorder or onto another lane's tab, Lane B parallel or in series) and the rack card on the left; on the right every effect of the lane as a strip with its controls in named groups (for example Delay: Delay, Left, Right, Feedback, Movement), its mix, and a display where one helps (EQ and Filter responses, Drive's curves, the Widener's correlation). Controls that do nothing in the current setting hide (rate or division by Sync, the right side while Link is on, the compressor's bands outside multiband, Drive's filter while it is off and its curve controls outside the curve modes).
+  - **Computer keys**: A W S E D F T G Y H U J K O L P ; play C to E from the chosen octave, Z and X move the octave, C and V the velocity; held keys repeat without retriggering; letters typed into a text field stay there. On by default; the Keys button and the preferences switch it.
+  - **Stuck notes fixed**: the keys count what holds each note (the mouse, any computer key) and end it with the last; a release the window never receives (mouse let go outside the window or kept by the host, a key let go while another window had focus) is caught every frame from the real button and key state; hiding or closing the editor lets go of everything; and the processor itself releases any note the screen started but no longer holds, so a release lost in a full queue still ends the note.
+  - **Fits the screen**: the editor shrinks on its first appearance, if it must, so the whole window including the keyboard fits the display.
+  - Fixed on the way: the filter display repainted every frame while idle (it hashed its settings including padding bytes); the PLAY page's chord panel was clipped at the new height.
+
 ## Measurements
+### Interface revision (2026-11-18)
+Release build, the machine in `docs/ENVIRONMENT.md` at its normal speed (`bench idle` 0.032 % against the 0.030 % baseline).
+
+| What | Result | Target |
+|---|---|---|
+| Tests | 301 of 301 pass in Release, including the new keyboard test | all |
+| Snapshot checks: 7 pages at 100, 150 and 200 % in Graphite, at 100 % in Paper and Contrast, Simple view, four overlays | 0 findings | none |
+| pluginval v1.0.4, strictness 10, Release VST3 with the editor | SUCCESS | pass |
+| Keyboard (`[editor][keys]`) | click, glissando, drag off the keys, a mouse release that never arrives, a computer key held with repeats, two keys let go while the window had no key events, octave and velocity keys, Ctrl+letter not a note, Keys off, a release lost in a full queue (400 events), letting go of everything, closing the editor with a key held: no note left sounding in any case | none hang |
+| Independent review (Codex CLI, read-only, of the uncommitted diff) | nine findings; fixed: a synthesized release could later swallow a host note of the same key (the late real release is now dropped), keys were not checked while the window was hidden, a layout pass rebuilt the effect strips mid-drag, a chip cache key collided with its colour, the filter display ignored quality and sample-rate changes, Drive showed curve B and Morph in single-curve mode, file dialogs could call back into a closed editor, and the signal map was too small in the Stage (now a large panel over the oscillators). Not fixed: a same-key retrigger lost when the queue is full while audio is stopped | - |
+| Standalone by hand (computer use) | a click lights and plays the key and ends on release; dragging across the keys moves the note; dragging off the keys ends it; Z and X change the octave in the real window; the window opens fitted to a 1456 x 819 screen with the keyboard visible | - |
+| Interface while animating (`[editor][perf]`, SYNTH page, two notes, two LFOs, 30 fps, 100 %) | 1.5 to 2.0 % of one core in nine runs on a slow stretch of this machine (frame clock 0.27 to 0.38 %), 18,200 px repainted per frame; one run started while the build was finishing read 2.06 %. Before the caching below: 8.7 %; the old flat interface measured 1.4 to 1.8 % | 2 % |
+
 ### Milestone 5
 Measured 2026-11-18 on the machine in `docs/ENVIRONMENT.md`, Release build unless stated.
 
@@ -309,7 +332,19 @@ Milestone 5:
 - **The AGENT page is a shell** that shows where milestone 6's controls go; it connects to nothing.
 - **A destroyed control no longer clears the hover state**: the editor holds the hovered control by a safe pointer, and the hover list follows the routes every frame while it is open, so mute, solo and remove made inside it show at once and it closes with its last route.
 
+Interface revision (2026-11-18):
+- **The base size grew to 1320 x 940** so the dock and the keyboard can stay under every page without squeezing the pages; the editor shrinks on first appearance to fit the display, so a 1080p screen at 125 % still shows the whole window.
+- **The finish is cached, not cheap**: grain, gradients and bevels cost several times a flat fill, so every static surface is drawn once into an image at the display's density (`CachedDrawing`: cards with their plates, titles and outlines; the header with the logo and the preset window; a knob's cap, and a modulated knob's whole face; modulation chips; the filter display's grid and still curve) and cards are opaque, so nothing behind them repaints. While the snapshot checks record, caches are bypassed so every text is still checked.
+- **Moving markers repaint only where they move, and secondary ones less often**: a modulated knob repaints its live dot's old and new places at the full rate; the output meter and the modulator chips' live bars update at half the frame rate, and the filter display's live curve at a third when only modulation moves it (a patch change redraws at once), as the small wave thumbnails already did.
+- **Computer keys are handled by the editor**, after its shortcuts and after any focused control or text field, so letters typed into a field never play; keys with Ctrl or Alt are never notes. The keyboard does not take focus when clicked, so typing keeps playing after a click on it.
+- **Two guards against hanging notes**: the keyboard checks the real mouse button and key state every frame (a release a host keeps from the window is caught within a frame), and the processor compares the notes the screen holds (an atomic mask set before a note-on is queued and cleared before its release is queued) with the notes it started from the screen, releasing any the screen let go.
+- **Effect strips list their controls by name** (`groupsFor` in `FxPage.cpp`); any parameter a table does not name joins a last "More" group, so a new effect parameter is never unreachable.
+
 ## Known issues
+- **Computer keys inside a host**: the plug-in hears letters only while its window has keyboard focus, and some hosts take letters first for their own typing keyboard (FL Studio's "typing keyboard to piano" sends notes to the selected channel itself). The Standalone was checked by hand; no host has been.
+- **The interface's cost is near its budget** (1.6 to 2.0 % of 2 %): the dock and keyboard add widgets to every page and each repaint has a fixed cost. A slow day on this virtual machine can push the perf test over.
+- **Cached surfaces use memory**: each card, knob cap and modulated knob face is an image at the display's density (about 6 MB in all at 100 %, four times that at 200 %).
+- **Base size changed**: hosts that stored the editor's size from before keep it until the editor reopens; the stored percentage now applies to 1320 x 940.
 - **The machine's speed varies.** It is a virtual machine; it has been seen at half speed for hours, and full benchmark runs differ by about 10 % (`full8` read 13.0 % and 14.3 % in two runs a few minutes apart). The baseline holds the slower reading. If a benchmark fails unexpectedly, check that `idle` is near its baseline before looking for a regression. The interface measurement varies more: 1.4 to 1.8 % in its own process, as `ctest` runs it, but once 2.7 % when run after the other editor tests in one process.
 - **Nobody has used the interface by hand in a host.** It was checked by the editor tests (driving the controls through their mouse and keyboard handlers), offscreen snapshots, pluginval's editor tests and the Standalone's window; no screen reader was run against it (names, roles and values are tested through the accessibility handlers).
 - **The undo history is not saved** with the host project; reopening a project starts a new history at "Project opened".

@@ -612,6 +612,7 @@ PlayPage::PlayPage(Context& ctx) : Page(ctx) {
     clipOn.power = true;
     clipOn.family = Family::Play;
     clips_->powerSwitch = &clipOn;
+    clips_->screws = false; // its left column runs to the bottom edge
     auto& slots = play(parts_.add<Segmented>(*clips_, ctx, "clip.slot", "Clip slot"));
     slots.names = {"1", "2", "3", "4", "5", "6", "7", "8"};
     slots.showLabel = false;
@@ -710,11 +711,11 @@ bool PlayPage::exportClipFile(const juce::File& file) {
     return !bytes.empty() && file.replaceWithData(bytes.data(), bytes.size());
 }
 
-void PlayPage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void PlayPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void PlayPage::resized() {
     auto area = getLocalBounds().reduced(8);
-    auto top = area.removeFromTop(area.getHeight() / 2 - 20);
+    auto top = area.removeFromTop(juce::jmax(300, area.getHeight() / 2 - 20));
     chords_->setBounds(top.removeFromRight(440));
     top.removeFromRight(8);
     arp_->setBounds(top);

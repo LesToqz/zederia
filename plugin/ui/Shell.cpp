@@ -106,7 +106,7 @@ void TopBar::resized() {
     menu.setBounds(area.removeFromLeft(28));
     area.removeFromLeft(6);
     prev.setBounds(area.removeFromLeft(22));
-    presetName.setBounds(area.removeFromLeft(250));
+    presetName.setBounds(area.removeFromLeft(212));
     next.setBounds(area.removeFromLeft(22));
     area.removeFromLeft(4);
     save.setBounds(area.removeFromLeft(62));
@@ -135,12 +135,10 @@ void TopBar::resized() {
     quality->setBounds(area.removeFromRight(96));
 }
 
-void TopBar::paint(juce::Graphics& g) {
-    const Theme& t = theme();
-    g.setColour(t.panel);
-    g.fillRect(getLocalBounds());
-    g.setColour(t.line);
-    g.fillRect(getLocalBounds().removeFromBottom(1));
+void TopBar::paint(juce::Graphics&) {} // the editor's cached header draws the plate and the preset window behind
+
+juce::Rectangle<int> TopBar::presetWindow() const {
+    return juce::Rectangle<int>(prev.getX() - 2, presetName.getY() - 1, next.getRight() - prev.getX() + 4, presetName.getHeight() + 2);
 }
 
 // --- MacroStrip --------------------------------------------------------------------------------------

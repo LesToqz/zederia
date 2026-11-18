@@ -23,14 +23,14 @@ int idx(const char* id) { return zed::Registry::get().indexOf(id); }
 
 } // namespace
 
-// The scaled content: everything is laid out at 1320 x 820 and drawn through one transform.
+// The scaled content: everything is laid out at 1320 x 940 and drawn through one transform.
 class ZederiaEditor::Root final : public juce::Component {
 public:
     explicit Root(ZederiaEditor& owner) : owner_(owner) {
         setName("root");
         setSize(kBaseWidth, kBaseHeight);
     }
-    void paint(juce::Graphics& g) override { g.fillAll(theme().bg); }
+    void paint(juce::Graphics& g) override { owner_.paintFrame(g); }
     void resized() override { owner_.applyLayout(); }
 
 private:
@@ -54,14 +54,15 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     tabs_->large = true;
     tabs_->setTitle("Pages");
     tabs_->onChange = [this](int page) { showPage(page); };
-    macros_ = std::make_unique<MacroStrip>(ctx_);
+    dock_ = std::make_unique<ModDock>(ctx_);
+    keys_ = std::make_unique<KeyboardLayer>(ctx_);
     help_ = std::make_unique<HelpStrip>();
     hoverList_ = std::make_unique<ModHoverList>(ctx_);
     palette_ = std::make_unique<CommandPalette>(ctx_);
     prefs_ = std::make_unique<PrefsPanel>(ctx_);
     history_ = std::make_unique<HistoryPanel>(ctx_);
     for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
-                                                                       &prefsButton_, macros_.get(), help_.get()})
+                                                                       &prefsButton_, dock_.get(), keys_.get(), help_.get()})
         root_->addAndMakeVisible(c);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get()})
         root_->addChildComponent(c);
@@ -113,6 +114,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     ctx_.notify = [this](const juce::String& message) { help_->message(message); };
     ctx_.reveal = [this](const juce::String& module) { revealModule(module); };
     ctx_.layoutChanged = [this] { applyLayout(); };
+    ctx_.showModulator = [this](const juce::String& source) { dock_->select(source); };
 
     processor_.session().addChangeListener(this);
     root_->addMouseListener(this, true);
@@ -132,7 +134,8 @@ ZederiaEditor::~ZederiaEditor() {
     saveUiState();
     processor_.session().removeChangeListener(this);
     root_->removeMouseListener(this);
-    processor_.keyboardState().allNotesOff(0); // keys held with the mouse must not hang
+    keys_->piano().releaseAll(); // keys held with the mouse or the computer keys must not hang
+    processor_.keyboardState().allNotesOff(0);
     processor_.stopAudition();
     ctx_.hoverParam = nullptr;
     for (auto& p : pages_)
@@ -141,6 +144,70 @@ ZederiaEditor::~ZederiaEditor() {
 }
 
 void ZederiaEditor::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+
+juce::Rectangle<int> ZederiaEditor::pageArea() const {
+    auto area = juce::Rectangle<int>(kBaseWidth, kBaseHeight).withTrimmedTop(kHeaderHeight);
+    if (ctx_.prefs.helpStrip)
+        area.removeFromBottom(kHelpStripHeight);
+    area.removeFromBottom(kKeyboardHeight + kDockHeight);
+    return area;
+}
+
+void ZederiaEditor::paintFrame(juce::Graphics& g) {
+    drawChassis(g, juce::Rectangle<float>(static_cast<float>(kBaseWidth), static_cast<float>(kBaseHeight)));
+    // The header is drawn once and kept: the meter and the CPU figure repaint over it every frame.
+    const auto area = juce::Rectangle<int>(0, 0, kBaseWidth, kHeaderHeight);
+    const auto window = topBar_ != nullptr ? topBar_->presetWindow() + topBar_->getPosition() : juce::Rectangle<int>();
+    if (g.clipRegionIntersects(area))
+        frameCache_.draw(g, area, static_cast<std::uint64_t>(window.getX()) << 32 | static_cast<std::uint64_t>(window.getRight()), true,
+                         [this, window](juce::Graphics& hg) {
+                             paintHeader(hg);
+                             if (!window.isEmpty())
+                                 drawWell(hg, window.toFloat()); // the preset name's display window
+                         });
+}
+
+void ZederiaEditor::paintHeader(juce::Graphics& g) {
+    const Theme& t = theme();
+    drawChassis(g, juce::Rectangle<float>(static_cast<float>(kBaseWidth), static_cast<float>(kHeaderHeight)));
+    // One machined plate across the top, the logo on its own plate at the left.
+    const auto header = juce::Rectangle<float>(4.0f, 4.0f, kBaseWidth - 8.0f, kHeaderHeight - 6.0f);
+    drawPanel(g, header, t.panel);
+    for (const auto& p : {juce::Point<float>(header.getRight() - 8.0f, header.getY() + 8.0f), juce::Point<float>(header.getRight() - 8.0f, header.getBottom() - 8.0f)})
+        drawScrew(g, p, 2.8f, p.y * 0.1f);
+    const auto logo = juce::Rectangle<float>(10.0f, 9.0f, static_cast<float>(kLogoWidth) - 8.0f, kHeaderHeight - 16.0f);
+    drawWell(g, logo);
+    for (const auto& p : {logo.getTopLeft().translated(7.0f, 7.0f), logo.getTopRight().translated(-7.0f, 7.0f), logo.getBottomLeft().translated(7.0f, -7.0f),
+                          logo.getBottomRight().translated(-7.0f, -7.0f)})
+        drawScrew(g, p, 2.4f, p.x * 0.05f);
+    // The wordmark, spaced out, over a small wave that turns from sine to saw.
+    const juce::String word = "ZEDERIA";
+    const juce::Font mark = font(19.0f, true);
+    float width = 0.0f;
+    for (int i = 0; i < word.length(); ++i)
+        width += juce::GlyphArrangement::getStringWidth(mark, word.substring(i, i + 1)) + (i + 1 < word.length() ? 3.0f : 0.0f);
+    float x = logo.getCentreX() - width * 0.5f;
+    const float y = logo.getY() + 9.0f;
+    g.setFont(mark);
+    for (int i = 0; i < word.length(); ++i) {
+        const juce::String ch = word.substring(i, i + 1);
+        const float w = juce::GlyphArrangement::getStringWidth(mark, ch);
+        g.setColour(juce::Colours::black.withAlpha(0.6f));
+        g.drawText(ch, juce::Rectangle<float>(x, y + 1.0f, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
+        g.setColour(t.displayLine);
+        g.drawText(ch, juce::Rectangle<float>(x, y, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
+        x += w + 3.0f;
+    }
+    juce::Path wave;
+    const float wy = logo.getBottom() - 16.0f, wx0 = logo.getX() + 22.0f, wx1 = logo.getRight() - 22.0f;
+    for (int i = 0; i <= 64; ++i) {
+        const float u = static_cast<float>(i) / 64.0f;
+        const float shape = std::sin(u * juce::MathConstants<float>::twoPi * 3.0f) * (1.0f - u) + (std::fmod(u * 3.0f, 1.0f) * 2.0f - 1.0f) * u;
+        const juce::Point<float> p(wx0 + (wx1 - wx0) * u, wy - shape * 5.0f);
+        if (i == 0) wave.startNewSubPath(p); else wave.lineTo(p);
+    }
+    strokeGlow(g, wave, t.accent(Family::Sources), 1.3f);
+}
 
 void ZederiaEditor::resized() {
     const float s = scale();
@@ -158,14 +225,15 @@ void ZederiaEditor::applyLayout() {
         return;
     const juce::ScopedValueSetter<bool> guard(layingOut_, true);
     auto area = root_->getLocalBounds();
-    topBar_->setBounds(area.removeFromTop(kTopBarHeight));
-    auto tabRow = area.removeFromTop(kTabsHeight);
+    // Header: the logo, then the preset bar over the page tabs.
+    auto header = area.removeFromTop(kHeaderHeight).withTrimmedLeft(kLogoWidth + 6).withTrimmedRight(14);
+    topBar_->setBounds(header.removeFromTop(kTopBarHeight + 4).withTrimmedTop(4));
+    auto tabRow = header.removeFromTop(kTabsHeight - 2);
     help_->setVisible(ctx_.prefs.helpStrip);
     if (ctx_.prefs.helpStrip)
         help_->setBounds(area.removeFromBottom(kHelpStripHeight));
-    macros_->setVisible(ctx_.prefs.macroStrip);
-    if (ctx_.prefs.macroStrip)
-        macros_->setBounds(area.removeFromBottom(kMacroStripHeight));
+    keys_->setBounds(area.removeFromBottom(kKeyboardHeight));
+    dock_->setBounds(area.removeFromBottom(kDockHeight));
     tabRow.reduce(8, 0);
     prefsButton_.setBounds(tabRow.removeFromRight(28).reduced(0, 3));
     tabRow.removeFromRight(6);
@@ -183,11 +251,13 @@ void ZederiaEditor::applyLayout() {
         p->setBounds(area);
         p->applySimpleView();
     }
+    dock_->applySimpleView();
+    keys_->refresh();
     modMap_.setBounds(area);
     modMap_.scope = root_.get();
     palette_->setBounds(juce::Rectangle<int>(560, 420).withCentre(root_->getLocalBounds().getCentre()).withY(80));
     prefs_->setBounds(juce::Rectangle<int>(520, 560).withCentre(root_->getLocalBounds().getCentre()));
-    history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330, kTopBarHeight + 2));
+    history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330 + kLogoWidth, kHeaderHeight - 30));
     if (isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
     applyRenderer();
@@ -215,10 +285,30 @@ void ZederiaEditor::applyRenderer() {
         peer->setCurrentRenderingEngine(wanted);
 }
 
-void ZederiaEditor::parentHierarchyChanged() { applyRenderer(); }
+void ZederiaEditor::parentHierarchyChanged() {
+    applyRenderer();
+    fitToScreen();
+}
+
+// When the editor first appears on a screen it shrinks, if it must, so the whole window, keyboard
+// included, fits on that display (a size stored for a larger screen would hide the bottom layers).
+void ZederiaEditor::fitToScreen() {
+    if (!fitPending_ || getPeer() == nullptr)
+        return;
+    fitPending_ = false;
+    const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect(getScreenBounds());
+    if (display == nullptr)
+        return;
+    const auto room = display->userBounds.toNearestInt().reduced(0, 45); // the host's title bar and borders
+    const int fit = juce::jmin(room.getWidth() * 100 / kBaseWidth, room.getHeight() * 100 / kBaseHeight);
+    const int current = juce::roundToInt(scale() * 100.0f);
+    if (fit < current)
+        setScalePercent(juce::jmax(70, fit));
+}
 
 void ZederiaEditor::visibilityChanged() {
     applyRenderer();
+    fitToScreen();
     if (isVisible() && !isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
 }
@@ -249,12 +339,7 @@ Page& ZederiaEditor::page(int id) {
         }
         root_->addChildComponent(*slot);
         slot->toBehind(&modMap_);
-        auto area = root_->getLocalBounds().withTrimmedTop(kTopBarHeight + kTabsHeight);
-        if (ctx_.prefs.helpStrip)
-            area.removeFromBottom(kHelpStripHeight);
-        if (ctx_.prefs.macroStrip)
-            area.removeFromBottom(kMacroStripHeight);
-        slot->setBounds(area);
+        slot->setBounds(pageArea());
         slot->applySimpleView();
     }
     return *slot;
@@ -275,6 +360,11 @@ void ZederiaEditor::showPage(int id) {
 }
 
 bool ZederiaEditor::revealModule(const juce::String& module) {
+    // The modulators and macros live in the dock, on every page.
+    if (module.startsWith("env") || module.startsWith("lfo") || module.startsWith("flux") || module.startsWith("macro")) {
+        dock_->select(module);
+        return true;
+    }
     static const std::vector<std::pair<juce::String, int>> where = {
         {"osc", Synth}, {"sub", Synth}, {"texture", Synth}, {"filter", Synth}, {"voice", Synth}, {"env", Synth}, {"lfo", Synth}, {"flux", Synth},
         {"macro", Synth}, {"global", Synth}, {"fx", Fx}, {"mod.", Mod}, {"arp", Play}, {"chord", Play}, {"clip", Play}, {"table", Table}};
@@ -661,6 +751,13 @@ bool ZederiaEditor::keyPressed(const juce::KeyPress& key) {
         setModMap(false);
         return true;
     }
+    // Letters nobody else took play the keyboard (a text field keeps its letters).
+    return keys_->piano().computerKeyDown(key);
+}
+
+bool ZederiaEditor::keyStateChanged(bool isKeyDown) {
+    if (!isKeyDown)
+        keys_->piano().checkHeld(); // a computer key went up: its note ends now, not at the next frame
     return false;
 }
 
@@ -684,6 +781,7 @@ void ZederiaEditor::timerCallback() {
     if (!isShowing()) { // hidden or minimised: nothing animates; look again twice a second
         if (getTimerInterval() < 400)
             startTimer(500);
+        keys_->piano().checkHeld(); // a key let go while the window was hidden still ends its note
         return;
     }
     const int interval = 1000 / juce::jmax(15, ctx_.prefs.frameCap);
@@ -751,7 +849,8 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
         for (auto& p : pages_)
             if (p != nullptr)
                 p->structureChanged();
-        macros_->refreshNames();
+        dock_->refreshNames();
+        dock_->reloadShapes();
         topBar_->refresh();
         processor_.engine().collectGarbage();
     }
@@ -764,8 +863,11 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
     tickTree(*topBar_, dirty);
     if (topBar_->tick())
         dirty.push_back(getLocalArea(&topBar_->cpuText, topBar_->cpuText.getLocalBounds()));
-    if (macros_->isVisible())
-        tickTree(*macros_, dirty);
+    // The fixed layers under the page.
+    tickTree(*dock_, dirty);
+    if (dock_->tickDock())
+        dirty.push_back(getLocalArea(dock_.get(), dock_->getLocalBounds()));
+    tickTree(*keys_, dirty);
     if (hoverList_->isVisible())
         tickTree(*hoverList_, dirty);
     if (help_->tick())
@@ -787,6 +889,7 @@ void ZederiaEditor::saveUiState() {
     state["page"] = current_;
     state["scale"] = juce::roundToInt(scale() * 100.0f);
     state["selected_source"] = ctx_.selectedSource.toStdString();
+    state["modulator"] = dock_->selected().toStdString();
     nlohmann::json pages = nlohmann::json::object();
     for (int i = 0; i < NumPages; ++i)
         if (pages_[static_cast<std::size_t>(i)] != nullptr) {
@@ -809,12 +912,15 @@ void ZederiaEditor::loadUiState() {
             pageId = juce::jlimit(0, NumPages - 1, state.value("page", 0));
             percent = state.value("scale", 0);
             ctx_.selectedSource = juce::String(state.value("selected_source", std::string()));
+            if (const juce::String modulator(state.value("modulator", std::string())); modulator.isNotEmpty())
+                dock_->select(modulator);
             if (state.contains("pages"))
                 pages = state["pages"];
         }
     } catch (const std::exception&) {
     }
     setScalePercent(percent > 0 ? percent : ctx_.prefs.defaultScale); // the resize limits may already have set a size
+    fitPending_ = true; // once on a screen: never larger than the screen
     showPage(pageId);
     if (pages.is_object())
         for (const auto& [key, value] : pages.items()) {

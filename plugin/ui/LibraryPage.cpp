@@ -609,7 +609,6 @@ void LibraryPage::resized() {
 
 void LibraryPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    g.fillAll(t.bg);
     drawPanel(g, facetView_.getBounds().toFloat().expanded(2.0f), t.panel);
     const auto right = getLocalBounds().reduced(8).withTrimmedTop(38).removeFromRight(300);
     drawPanel(g, right.toFloat(), t.panel);

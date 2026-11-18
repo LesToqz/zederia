@@ -1,6 +1,7 @@
-// The SYNTH page (plan 3.13): source cards on the left, the Stage in the centre (a large display
-// that follows focus), the filters, routing, voice, glide, character, tuning and output on the
-// right, and the modulator dock (envelopes, LFOs, Flux, with drag chips) or the keyboard below.
+// The SYNTH page (plan 3.13): the three oscillators side by side, each with its own display;
+// Sub, Texture and the Stage (filter response, warp curves, the signal map) below them; the
+// filters, routing, voice, glide, character, tuning and output on the right. The modulators and
+// macros are in the dock under every page.
 #pragma once
 
 #include "CurveEditor.h"
@@ -12,7 +13,7 @@ class SourceCard;
 class FilterCard;
 class VoiceCard;
 class Stage;
-class ModDock;
+class MapCard;
 
 class SynthPage final : public Page {
 public:
@@ -26,25 +27,21 @@ public:
     void loadState(const nlohmann::json& state) override;
     void structureChanged() override;
 
-    // Focus: what the Stage shows.
+    // Focus: what is highlighted and what the Stage shows.
     void focusSource(int source); // 0..2 oscillators, 3 Sub, 4 Texture
     void focusFilter(int slot);
-    void focusModulator(const juce::String& source); // "env2", "lfo3", "flux1"
     void focusWarpCurve(int osc, int slot);
     void showSignalMap();
-    void expandSource(int source);
+    void expandSource(int source); // the same as focusSource (the cards no longer collapse)
     int expandedSource() const { return expanded_; }
     Stage& stage() { return *stage_; }
-    ModDock& dock() { return *dock_; }
-    bool keyboardShown() const;
-    void setKeyboardShown(bool shown);
 
 private:
     std::vector<std::unique_ptr<SourceCard>> sources_;
     std::vector<std::unique_ptr<FilterCard>> filters_;
     std::unique_ptr<VoiceCard> voice_;
     std::unique_ptr<Stage> stage_;
-    std::unique_ptr<ModDock> dock_;
+    std::unique_ptr<MapCard> map_; // the signal map, over the oscillators when shown
     std::unique_ptr<juce::Component> ticker_;
     int expanded_ = 0;
 };

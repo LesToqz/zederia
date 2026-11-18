@@ -134,6 +134,8 @@ bool Theme::fromJson(const std::string& json, Theme& out, juce::String& error) {
         if (doc.contains("metrics")) {
             t.radius = doc["metrics"].value("radius", 6.0f);
             t.glow = doc["metrics"].value("glow", 0.3f);
+            t.texture = doc["metrics"].value("texture", 0.0f);
+            t.metal = doc["metrics"].value("metal", 0.0f);
         }
         out = t;
         return true;
@@ -203,6 +205,8 @@ void drawText(juce::Graphics& g, const juce::String& text, juce::Rectangle<float
         if (needed > box.getWidth() + 0.75f || size < kTextSmall - 0.01f || size > box.getHeight() + 2.0f)
             AuditRecorder::note({AuditRecorder::painting(), text, box.getWidth(), needed, size});
     }
+    if (!g.clipRegionIntersects(box.getSmallestIntegerContainer().expanded(2)))
+        return; // outside the area being repainted: laying the glyphs out would be wasted
     g.setColour(colour);
     g.setFont(font(size, bold));
     g.drawText(text, box, just, true);

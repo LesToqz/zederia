@@ -60,6 +60,7 @@ public:
     std::function<void(const juce::String& message)> notify;
     std::function<void(const juce::String& module)> reveal; // jump to a module's page and card
     std::function<void()> layoutChanged;                     // simple view or a card opened
+    std::function<void(const juce::String& source)> showModulator; // the dock shows "env2", "lfo3" ...
 
     // Locked parameters, re-read when the session changes.
     bool isLocked(int param);

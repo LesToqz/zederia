@@ -11,6 +11,23 @@
 
 namespace zui {
 
+// --- Cached drawing -----------------------------------------------------------------------------------
+
+// A static drawing (a panel with its grain, bevel and screws; a knob's cap) kept as an image at the
+// display's pixel density and redrawn only when its area, the theme or its key change, so a repaint
+// over it costs one copy. `paint` draws in the component's own coordinates.
+class CachedDrawing {
+public:
+    void draw(juce::Graphics& g, juce::Rectangle<int> area, std::uint64_t key, bool opaque, const std::function<void(juce::Graphics&)>& paint);
+    void clear() { image_ = {}; }
+
+private:
+    juce::Image image_;
+    juce::Rectangle<int> area_;
+    std::uint64_t key_ = 0;
+    juce::String theme_;
+};
+
 // --- Base -------------------------------------------------------------------------------------------
 
 class Widget : public juce::Component, public juce::SettableTooltipClient {
@@ -128,7 +145,8 @@ protected:
     virtual bool dragsValue() const { return true; }
     virtual juce::Rectangle<int> liveArea() const { return getLocalBounds(); } // where the live marker is drawn
     virtual void clicked(juce::Point<float> position, bool keyboard) { juce::ignoreUnused(position, keyboard); }
-    void drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float startAngle, float endAngle) const;
+    void drawModulation(juce::Graphics& g, juce::Point<float> centre, float radius, float startAngle, float endAngle, bool live = true) const;
+    void drawLiveMarker(juce::Graphics& g, juce::Point<float> centre, float radius) const;
     // The state decorations every control shares: lock, MIDI learn, drop target, highlight, focus.
     void drawDecorations(juce::Graphics& g, juce::Rectangle<float> area) const;
     juce::Colour accent() const;
@@ -139,6 +157,7 @@ protected:
     juce::String label_;
     double shown_ = 0.0;
     double live_ = -1.0;
+    double liveBefore_ = -1.0; // where the live marker was drawn before it last moved
     std::vector<Arc> arcs_;
     int arcsGeneration_ = -1;
     bool dragging_ = false, depthDrag_ = false, dropTarget_ = false, highlighted_ = false, locked_ = false, learning_ = false;
@@ -153,6 +172,9 @@ class Knob final : public ParamWidget {
 public:
     using ParamWidget::ParamWidget;
     void draw(juce::Graphics& g) override;
+    // When only the live value moved, just the marker's old and new places repaint.
+    juce::RectangleList<int> dirtyArea() override;
+    void drawFace(juce::Graphics& g); // everything but the live marker
     bool small = false;
     bool showValue = true;
     bool showLabel = true; // off where a caption beside it names it (the macro strip)
@@ -161,6 +183,8 @@ public:
 protected:
     juce::Rectangle<float> knobArea() const;
     juce::Rectangle<int> liveArea() const override { return knobArea().getSmallestIntegerContainer(); }
+    CachedDrawing cap_;  // the machined cap, which does not turn with the value
+    CachedDrawing face_; // a modulated knob's face, under its moving live marker
 };
 
 // A horizontal bar: route amounts, mixes, anything that reads better as a length.
@@ -323,11 +347,13 @@ public:
     juce::String moduleId; // for copy, paste, locks and module presets
     int headerHeight = 28;
     bool selectedLook = false;
+    bool screws = true; // two screws in the bottom corners (the hardware finish)
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}
 
 private:
     juce::String title_;
+    CachedDrawing background_; // panel, plate and screws; the card is opaque, so nothing behind it repaints
 };
 
 // A modulation source to drag onto any control (plan 3.7). Click selects it; hovering it lights up
@@ -347,13 +373,20 @@ public:
     void mouseExit(const juce::MouseEvent& e) override;
     bool keyPressed(const juce::KeyPress& key) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    void mouseDoubleClick(const juce::MouseEvent&) override {
+        if (onDoubleClick)
+            onDoubleClick();
+    }
     std::function<void()> onSelect;
+    std::function<void()> onDoubleClick; // macros: rename
 
 private:
+    CachedDrawing body_;
     Context& ctx_;
     juce::String source_;
     float value_ = 0.0f;
     bool dragging_ = false;
+    unsigned frames_ = 0;
 };
 
 // Peak meter, two channels side by side, with a slow fall and a held peak.
@@ -368,6 +401,7 @@ public:
 private:
     Context& ctx_;
     float level_[2] = {0, 0}, hold_[2] = {0, 0};
+    unsigned frames_ = 0;
     int holdFrames_[2] = {0, 0};
 };
 
@@ -388,10 +422,17 @@ inline constexpr int kRowGap = 6;
 // Places components left to right with the given widths and a gap; returns the area used.
 juce::Rectangle<int> placeRow(juce::Rectangle<int> area, std::initializer_list<std::pair<juce::Component*, int>> items, int gap = 4);
 
-// Draws a panel background (surfaces share radius and border).
+// Draws a panel background (surfaces share radius and border): machined, with grain and a bevel
+// as far as the theme's finish asks (Theme::texture, Theme::metal).
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour fill, bool border = true);
-// A display well: deep background, inner border, optional grid.
+// A display well: deep background, inset shading, inner border.
 void drawWell(juce::Graphics& g, juce::Rectangle<float> area);
+// The hardware finish: the editor's back plate, grain over any shape, a screw with a hex socket,
+// and an engraved nameplate strip (panel headers).
+void drawChassis(juce::Graphics& g, juce::Rectangle<float> area);
+void drawGrain(juce::Graphics& g, const juce::Path& shape, float strength);
+void drawScrew(juce::Graphics& g, juce::Point<float> centre, float radius = 3.4f, float angle = 0.5f);
+void drawPlate(juce::Graphics& g, juce::Rectangle<float> area, float radius);
 // A luminous line: a soft wide stroke under a thin bright one.
 void strokeGlow(juce::Graphics& g, const juce::Path& path, juce::Colour colour, float width = 1.5f);
 

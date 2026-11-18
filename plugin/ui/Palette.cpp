@@ -144,7 +144,7 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
                save();
                if (onThemeChanged) onThemeChanged();
            });
-    addRow("Default size", "The size new editor windows open at, in percent of 1320 x 820.", [&p] { return juce::String(p.defaultScale) + " %"; },
+    addRow("Default size", "The size new editor windows open at, in percent of 1320 x 940.", [&p] { return juce::String(p.defaultScale) + " %"; },
            [this, &p, save](Button&) {
                static const int sizes[] = {70, 85, 100, 125, 150, 175, 200, 250, 300};
                int next = sizes[0];
@@ -164,8 +164,9 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
            [&p, save](Button&) { p.tooltips = !p.tooltips; save(); });
     addRow("Help strip", "The line at the bottom that explains what is under the pointer.", [&p] { return p.helpStrip ? juce::String("Shown") : juce::String("Hidden"); },
            [this, &p, save](Button&) { p.helpStrip = !p.helpStrip; save(); if (onLayout) onLayout(); });
-    addRow("Macro strip", "The eight macros at the bottom of every page.", [&p] { return p.macroStrip ? juce::String("Shown") : juce::String("Hidden"); },
-           [this, &p, save](Button&) { p.macroStrip = !p.macroStrip; save(); if (onLayout) onLayout(); });
+    addRow("Computer keys", "Letters on the computer keyboard play notes: A W S E D F T G Y H U J K O L P ; from C; Z and X move the octave.",
+           [&p] { return p.computerKeys ? juce::String("Play notes") : juce::String("Off"); },
+           [this, &p, save](Button&) { p.computerKeys = !p.computerKeys; save(); if (onLayout) onLayout(); });
     addRow("View", "Simple view hides the advanced controls.", [&p] { return p.simpleView ? juce::String("Simple") : juce::String("Full"); },
            [this, &p, save](Button&) { p.simpleView = !p.simpleView; save(); if (onLayout) onLayout(); });
     addRow("Frame rate", "How often moving displays redraw. Lower costs less.", [&p] { return juce::String(p.frameCap) + " per second"; },

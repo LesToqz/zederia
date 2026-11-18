@@ -1442,7 +1442,7 @@ void TablePage::resized() {
     wizard_->setBounds(getLocalBounds().reduced(60, 30));
 }
 
-void TablePage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void TablePage::paint(juce::Graphics&) {} // the chassis shows through
 
 bool TablePage::reveal(const juce::String& module) {
     if (module.startsWith("table"))

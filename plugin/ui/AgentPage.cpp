@@ -73,7 +73,7 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
     setup_->headerRight.push_back(&copy);
 }
 
-void AgentPage::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
+void AgentPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void AgentPage::resized() {
     auto area = getLocalBounds().reduced(8);

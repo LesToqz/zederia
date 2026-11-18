@@ -1,11 +1,13 @@
-// The editor (plan 3.13): a 1320 x 820 vector interface scaled freely from 70 % to 300 %, with the
-// top bar, the seven pages, the macro strip, the help strip and the overlays (hover lists, the
+// The editor (plan 3.13): a 1320 x 940 vector interface scaled freely from 70 % to 300 %, in fixed
+// layers: the header (logo, preset bar, page tabs), the seven pages, the modulation dock (macros,
+// envelopes, LFOs, Flux), the keyboard and the help strip; and the overlays (hover lists, the
 // mod map, the command palette, preferences, history). Animation runs on one frame clock capped
 // by the preferences (15, 30 or 60 per second) and stops while the window is hidden; rendering is
 // in software unless the preferences allow the graphics card.
 #pragma once
 
 #include "PluginProcessor.h"
+#include "ui/Dock.h"
 #include "ui/ModOverlay.h"
 #include "ui/Palette.h"
 #include "ui/Shell.h"
@@ -26,6 +28,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress& key) override;
+    bool keyStateChanged(bool isKeyDown) override;
     void parentHierarchyChanged() override;
     void visibilityChanged() override;
     void mouseMove(const juce::MouseEvent& e) override;
@@ -62,6 +65,9 @@ public:
     juce::Component& content();
     zui::TopBar& topBar() { return *topBar_; }
     zui::HelpStrip& helpStrip() { return *help_; }
+    zui::ModDock& dock() { return *dock_; }
+    zui::KeyboardLayer& keyboardLayer() { return *keys_; }
+    juce::Rectangle<int> pageArea() const; // where pages go, between the header and the dock
     zui::CommandPalette& palette() { return *palette_; }
     zui::ModHoverList& hoverList() { return *hoverList_; }
     zui::ModMapOverlay& modMap() { return modMap_; }
@@ -73,11 +79,16 @@ public:
 
 private:
     class Root;
+    void paintFrame(juce::Graphics& g);  // the chassis, and the header (cached) under the header's parts
+    void paintHeader(juce::Graphics& g); // the header plate and the logo
+    zui::CachedDrawing frameCache_;
     void timerCallback() override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     void tickTree(juce::Component& c, std::vector<juce::Rectangle<int>>& dirty);
     void updateHover();
     void applyRenderer();
+    void fitToScreen();
+    bool fitPending_ = false;
     void stepPreset(int direction);
 
     ZederiaProcessor& processor_;
@@ -90,7 +101,8 @@ private:
         prefsButton_{"", zui::Glyph::Gear};
     std::array<std::unique_ptr<zui::Page>, NumPages> pages_;
     int current_ = Synth;
-    std::unique_ptr<zui::MacroStrip> macros_;
+    std::unique_ptr<zui::ModDock> dock_;
+    std::unique_ptr<zui::KeyboardLayer> keys_;
     std::unique_ptr<zui::HelpStrip> help_;
     std::unique_ptr<zui::ModHoverList> hoverList_;
     zui::ModMapOverlay modMap_;

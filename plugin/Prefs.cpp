@@ -82,6 +82,9 @@ bool Prefs::load(const juce::File& from) {
         flag("tooltips", tooltips);
         flag("help_strip", helpStrip);
         flag("macro_strip", macroStrip);
+        flag("computer_keys", computerKeys);
+        number("keys_octave", keysOctave, 0, 8);
+        number("keys_velocity", keysVelocity, 1, 127);
         flag("simple_view", simpleView);
         number("frame_cap", frameCap, 15, 60);
         frameCap = frameCap <= 20 ? 15 : frameCap <= 45 ? 30 : 60;
@@ -110,6 +113,9 @@ void Prefs::save() const {
     doc["tooltips"] = tooltips;
     doc["help_strip"] = helpStrip;
     doc["macro_strip"] = macroStrip;
+    doc["computer_keys"] = computerKeys;
+    doc["keys_octave"] = keysOctave;
+    doc["keys_velocity"] = keysVelocity;
     doc["simple_view"] = simpleView;
     doc["frame_cap"] = frameCap;
     doc["gpu_rendering"] = gpuRendering;
