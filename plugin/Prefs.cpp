@@ -78,10 +78,14 @@ bool Prefs::load(const juce::File& from) {
         number("default_scale", defaultScale, 70, 300);
         flag("rotary_drag", rotaryDrag);
         number("wheel", wheel, 0, 2);
-        number("text_size", textSize, 90, 130);
+        // Settings from before the 120 % text default and the hidden help strip take those defaults once.
+        const bool currentDefaults = doc.contains("defaults") && doc["defaults"].is_number() && doc["defaults"].get<int>() >= 2;
+        if (currentDefaults)
+            number("text_size", textSize, 90, 150);
         flag("double_click_types", doubleClickTypes);
         flag("tooltips", tooltips);
-        flag("help_strip", helpStrip);
+        if (currentDefaults)
+            flag("help_strip", helpStrip);
         flag("macro_strip", macroStrip);
         flag("computer_keys", computerKeys);
         // An octave and velocity saved with the earlier one-row layout, whose letters moved them while
@@ -122,6 +126,7 @@ void Prefs::save() const {
     doc["macro_strip"] = macroStrip;
     doc["computer_keys"] = computerKeys;
     doc["keys_layout"] = 2; // two rows of computer keys
+    doc["defaults"] = 2;    // text 120 % and the help strip hidden by default
     doc["keys_octave"] = keysOctave;
     doc["keys_velocity"] = keysVelocity;
     doc["key_labels"] = keyLabels;

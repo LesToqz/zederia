@@ -10,7 +10,7 @@
 namespace zui {
 
 namespace themes {
-extern const std::string_view graphite, paper, contrast; // generated from plugin/themes/*.json
+extern const std::string_view graphite; // generated from plugin/themes/graphite.json
 }
 
 namespace {
@@ -20,7 +20,7 @@ struct Registry {
     juce::StringArray order;
     juce::String current = "Graphite";
     Registry() {
-        for (const auto json : {themes::graphite, themes::paper, themes::contrast}) {
+        for (const auto json : {themes::graphite}) {
             Theme t;
             juce::String error;
             if (Theme::fromJson(std::string(json), t, error)) {
@@ -146,17 +146,6 @@ bool Theme::fromJson(const std::string& json, Theme& out, juce::String& error) {
     }
 }
 
-void Theme::addUserThemes(const juce::File& folder) {
-    auto& r = registry();
-    for (const auto& file : folder.findChildFiles(juce::File::findFiles, false, "*.json")) {
-        Theme t;
-        juce::String error;
-        if (fromJson(file.loadFileAsString().toStdString(), t, error) && r.themes.count(t.name) == 0) {
-            r.order.add(t.name);
-            r.themes[t.name] = t;
-        }
-    }
-}
 
 double contrastRatio(juce::Colour a, juce::Colour b) {
     const double la = luminance(a), lb = luminance(b);
@@ -169,7 +158,7 @@ namespace {
 std::atomic<float> gTextScale{1.0f};
 } // namespace
 
-void setTextScale(float scale) { gTextScale = juce::jlimit(0.9f, 1.3f, scale); }
+void setTextScale(float scale) { gTextScale = juce::jlimit(0.9f, 1.5f, scale); }
 float textScale() { return gTextScale.load(); }
 
 juce::Font font(float size, bool bold) {

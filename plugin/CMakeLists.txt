@@ -14,8 +14,8 @@ juce_add_plugin(Zederia
     VST3_CATEGORIES Instrument Synth
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-# Theme token files are compiled in as text (plan 3.13: "Themes are token files").
-set(ZED_THEMES graphite paper contrast)
+# The theme (Graphite, the only one) is a token file compiled in as text.
+set(ZED_THEMES graphite)
 set(ZED_THEME_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/ThemeData.cpp")
 set(theme_text "// Generated from plugin/themes/*.json by plugin/CMakeLists.txt. Do not edit.\n#include <string_view>\nnamespace zui::themes {\n")
 foreach(theme ${ZED_THEMES})

@@ -297,14 +297,7 @@ public:
             flow(body, it->second, kKnobH, 4);
     }
 
-    void draw(juce::Graphics& g) override {
-        Card::draw(g);
-        for (auto* c : chips_)
-            if (c->source() == selected_) { // the chip on show, underlined
-                g.setColour(ctx_.sourceColour(selected_));
-                g.fillRect(c->getBounds().getX() + 8, c->getBottom() + 1, c->getWidth() - 16, 2);
-            }
-    }
+    void draw(juce::Graphics& g) override { Card::draw(g); } // the chip on show is the pressed-in one
 
 private:
     bool isMulti() const { return envIndex_ > 0 && ctx_.processor.plainValue(idx("env" + juce::String(envIndex_ + 1) + ".mode")) >= 0.5; }
@@ -576,7 +569,7 @@ juce::StringArray PianoKeys::lettersFor(int semitone) {
 
 PianoKeys::PianoKeys(Context& ctx) : ctx_(ctx) {
     setTitle("Keyboard");
-    setHelp("Keyboard", juce::String("Click or drag to play. With Keys on, the computer keyboard plays too: ") + kKeysHelp);
+    setHelp("Keyboard", juce::String("Click or drag to play. The computer keyboard plays too (Computer keys in the preferences): ") + kKeysHelp);
     setWantsKeyboardFocus(false); // clicks leave the keyboard with the editor, so the computer keys keep playing
     family = Family::Play;
     keyIsDown = computerKeyIsDown;
@@ -942,7 +935,7 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
     pitch_ = std::make_unique<Wheel>(ctx, true);
     mod_ = std::make_unique<Wheel>(ctx, false);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&piano_, pitch_.get(), mod_.get(), &octDown_, &octUp_, &velDown_, &velUp_,
-                                                                       &octave_, &velocity_, &keysButton_, &panic_})
+                                                                       &octave_, &velocity_})
         addAndMakeVisible(c);
     octave_.justification = velocity_.justification = juce::Justification::centred;
     octDown_.setTitle("Octave down");
@@ -961,27 +954,17 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
     octUp_.onClick = [this] { piano_.setOctave(piano_.octave() + 1); };
     velDown_.onClick = [this] { piano_.setVelocity(piano_.velocity() - 10); };
     velUp_.onClick = [this] { piano_.setVelocity(piano_.velocity() + 10); };
-    keysButton_.toggleRole = true;
-    keysButton_.textSize = kTextSmall + 0.5f;
-    keysButton_.setHelp("Computer keys", juce::String("Lets the computer keyboard play: ") + kKeysHelp);
-    keysButton_.onClick = [this] {
-        piano_.releaseAll();
-        ctx_.prefs.computerKeys = !ctx_.prefs.computerKeys;
-        ctx_.prefs.save();
-        refresh();
-    };
-    panic_.textSize = kTextSmall + 0.5f;
-    panic_.setHelp("Panic", "Stops every note and every sound at once.");
-    panic_.onClick = [this] {
-        piano_.releaseAll();
-        ctx_.processor.keyboardState().allNotesOff(0);
-        ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 123, 0.0f));
-        ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 120, 0.0f));
-        if (ctx_.notify)
-            ctx_.notify("All notes off.");
-    };
     piano_.onSettings = [this] { refresh(); };
     refresh();
+}
+
+void KeyboardLayer::allNotesOff() {
+    piano_.releaseAll();
+    ctx_.processor.keyboardState().allNotesOff(0);
+    ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 123, 0.0f));
+    ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 120, 0.0f));
+    if (ctx_.notify)
+        ctx_.notify("All notes off.");
 }
 
 void KeyboardLayer::refresh() {
@@ -989,7 +972,6 @@ void KeyboardLayer::refresh() {
     velocity_.setText("Vel " + juce::String(piano_.velocity()));
     octave_.setTitle("Computer keys: Z plays C" + juce::String(piano_.octave()) + ", Q plays C" + juce::String(piano_.octave() + 1));
     velocity_.setTitle("Computer keys velocity " + juce::String(piano_.velocity()));
-    keysButton_.setToggled(ctx_.prefs.computerKeys);
     piano_.repaint();
 }
 
@@ -1010,11 +992,7 @@ void KeyboardLayer::resized() {
     row(column.removeFromTop(h).withSizeKeepingCentre(96, 22), octDown_, octave_, octUp_);
     row(column.withSizeKeepingCentre(96, 22), velDown_, velocity_, velUp_);
     panel.removeFromLeft(8);
-    auto right = panel.removeFromRight(78);
-    keysButton_.setBounds(right.removeFromTop(right.getHeight() / 2).withSizeKeepingCentre(78, 24));
-    panic_.setBounds(right.withSizeKeepingCentre(78, 24));
-    panel.removeFromRight(8);
-    piano_.setBounds(panel);
+    piano_.setBounds(panel); // the keys run to the right edge
 }
 
 void KeyboardLayer::paint(juce::Graphics& g) {

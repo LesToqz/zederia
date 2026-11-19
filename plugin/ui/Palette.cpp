@@ -131,43 +131,35 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
     close.setTitle("Close preferences");
     close.setTooltip("Close");
     close.ghost = true;
+    close.setWantsKeyboardFocus(false); // Escape closes it; no focus outline when it opens
     close.onClick = [this] { if (onClose) onClose(); };
     addAndMakeVisible(close);
     Prefs& p = ctx_.prefs;
     const auto save = [] { Prefs::get().save(); };
-    const auto cycle = [](const juce::StringArray& options, const juce::String& now) {
-        const int i = options.indexOf(now);
-        return options[(i + 1) % options.size()];
-    };
-    addRow("Theme", "Colours of the interface. Themes are token files; more can be added to Documents/Zederia/Themes.",
-           [&p] { return p.theme; },
-           [this, &p, save, cycle](Button&) {
-               p.theme = cycle(Theme::names(), p.theme);
-               Theme::setCurrent(p.theme);
-               save();
-               if (onThemeChanged) onThemeChanged();
-           });
-    addRow("Default size", "The size new editor windows open at, in percent of 1320 x 940.", [&p] { return juce::String(p.defaultScale) + " %"; },
-           [this, &p, save](Button&) {
-               static const int sizes[] = {70, 85, 100, 125, 150, 175, 200, 250, 300};
-               int next = sizes[0];
-               for (const int s : sizes)
-                   if (s > p.defaultScale) { next = s; break; }
-               p.defaultScale = next == sizes[0] && p.defaultScale >= 300 ? 70 : next;
-               save();
-               if (onScale) onScale(p.defaultScale);
-           });
-    addRow("Text size", "How large labels, values and lists are drawn, independent of the window size. Where a larger text has no room it "
-                        "stays at the normal size.",
-           [&p] {
-               return juce::String(p.textSize < 100 ? "Small" : p.textSize == 100 ? "Normal" : p.textSize <= 115 ? "Large" : "Largest") + " (" +
-                      juce::String(p.textSize) + " %)";
-           },
-           [this, &p, save](Button&) {
-               p.textSize = p.textSize < 100 ? 100 : p.textSize < 115 ? 115 : p.textSize < 130 ? 130 : 90;
-               save();
-               if (onThemeChanged) onThemeChanged(); // fonts are part of the look
-           });
+    addStepRow("Default size", "The size new editor windows open at, in percent of 1320 x 940. - and + step through the sizes.",
+               [&p] { return juce::String(p.defaultScale) + " %"; },
+               [this, &p, save](int direction) {
+                   static const int sizes[] = {70, 85, 100, 125, 150, 175, 200, 250, 300};
+                   int at = 0;
+                   for (int i = 0; i < 9; ++i)
+                       if (sizes[i] <= p.defaultScale)
+                           at = i;
+                   if (direction < 0 && sizes[at] == p.defaultScale)
+                       --at;
+                   else if (direction > 0)
+                       ++at;
+                   p.defaultScale = sizes[juce::jlimit(0, 8, at)];
+                   save();
+                   if (onScale) onScale(p.defaultScale);
+               });
+    addStepRow("Text size", "How large labels, values and lists are drawn, independent of the window size, from 90 to 150 % in steps of 5. "
+                            "Where a larger text has no room it stays as large as fits, never below 100 %.",
+               [&p] { return juce::String(p.textSize) + " %" + (p.textSize == 120 ? juce::String("  (default)") : juce::String()); },
+               [this, &p, save](int direction) {
+                   p.textSize = juce::jlimit(90, 150, (p.textSize / 5 + direction) * 5);
+                   save();
+                   if (onThemeChanged) onThemeChanged(); // fonts are part of the look
+               });
     addRow("Knob drag", "Vertical: drag up and down. Around: follow the angle of the pointer around the knob.",
            [&p] { return p.rotaryDrag ? juce::String("Around") : juce::String("Vertical"); }, [&p, save](Button&) { p.rotaryDrag = !p.rotaryDrag; save(); });
     addRow("Mouse wheel", "What the wheel does over a control.", [&p] { return juce::String(p.wheel == 0 ? "Scrolls the page" : p.wheel == 1 ? "Changes values" : "Fine changes"); },
@@ -243,6 +235,26 @@ void PrefsPanel::addRow(const juce::String& label, const juce::String& help, std
     rows_.push_back(std::move(row));
 }
 
+void PrefsPanel::addStepRow(const juce::String& label, const juce::String& help, std::function<juce::String()> current, std::function<void(int)> step) {
+    addRow(label, help, std::move(current), [](Button&) {}); // the value itself only shows
+    Row* r = rows_.back().get();
+    r->value->setInterceptsMouseClicks(false, false);
+    r->value->setWantsKeyboardFocus(false);
+    r->step = std::move(step);
+    for (const int direction : {-1, 1}) {
+        auto& b = direction < 0 ? r->minus : r->plus;
+        b = std::make_unique<Button>("", direction < 0 ? Glyph::Minus : Glyph::Plus);
+        b->setTitle((direction < 0 ? "Smaller " : "Larger ") + label.toLowerCase());
+        b->setTooltip(b->getTitle());
+        b->setHelp(label, help);
+        b->onClick = [this, r, direction] {
+            r->step(direction);
+            refresh();
+        };
+        addAndMakeVisible(*b);
+    }
+}
+
 void PrefsPanel::refresh() {
     for (auto& r : rows_)
         r->value->setText(r->current());
@@ -257,7 +269,13 @@ void PrefsPanel::resized() {
     for (auto& r : rows_) {
         auto line = area.removeFromTop(28);
         line.removeFromLeft(labelW);
-        r->value->setBounds(line.removeFromLeft(juce::jmin(line.getWidth(), 300)).reduced(0, 2));
+        auto box = line.removeFromLeft(juce::jmin(line.getWidth(), 300)).reduced(0, 2);
+        if (r->minus != nullptr) { // - value +
+            r->minus->setBounds(box.removeFromLeft(32));
+            r->plus->setBounds(box.removeFromRight(32));
+            box.reduce(4, 0);
+        }
+        r->value->setBounds(box);
         area.removeFromTop(2);
     }
     auto line = area.removeFromTop(28);

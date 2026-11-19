@@ -212,7 +212,7 @@ TEST_CASE("editor: theme colours have the contrast they need", "[editor][theme]"
         CHECK(findings.empty());
     }
     zui::Theme::setCurrent("Graphite");
-    CHECK(zui::Theme::names().size() >= 3);
+    CHECK(zui::Theme::names() == juce::StringArray{"Graphite"}); // the only theme
 }
 
 TEST_CASE("editor: every parameter of the registry can be reached from the interface", "[editor][reach]") {
@@ -929,7 +929,7 @@ TEST_CASE("editor: larger text sizes keep every page free of clipped or truncate
     Rig rig("arp_fx.zpreset", true);
     rig.frames(4);
     static const char* const names[] = {"synth", "fx", "mod", "table", "play", "library", "agent"};
-    for (const int size : {115, 130}) {
+    for (const int size : {120, 150}) {
         rig.ctx().prefs.textSize = size;
         rig.editor->applyTheme();
         CHECK(zui::textScale() == Catch::Approx(size / 100.0));
@@ -949,11 +949,48 @@ TEST_CASE("editor: larger text sizes keep every page free of clipped or truncate
     }
     // The preference survives the settings file (this test process's own).
     rig.ctx().prefs.textSize = 115;
+    rig.ctx().prefs.helpStrip = true;
     Prefs::get().save();
     Prefs other;
     REQUIRE(other.load(Prefs::file()));
     CHECK(other.textSize == 115);
+    CHECK(other.helpStrip);
+    // A new settings file starts at 120 % text with the help strip hidden; one written before those
+    // defaults takes them once.
+    CHECK(Prefs().textSize == 120);
+    CHECK_FALSE(Prefs().helpStrip);
+    const juce::File old = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_old_settings_" + juce::Uuid().toString() + ".json");
+    REQUIRE(old.replaceWithText("{\"format\": \"zederia.settings\", \"text_size\": 130, \"help_strip\": true, \"tooltips\": false}"));
+    Prefs before;
+    REQUIRE(before.load(old));
+    CHECK(before.textSize == 120);
+    CHECK_FALSE(before.helpStrip);
+    CHECK_FALSE(before.tooltips); // everything else is kept
+    old.deleteFile();
+    // The preferences step the text size with - and + (5 % a step, 90 to 150 %).
+    rig.ctx().prefs.textSize = 120;
+    rig.editor->showPrefs();
+    std::vector<zui::Button*> buttons;
+    collect(rig.editor->content(), buttons);
+    zui::Button *larger = nullptr, *smaller = nullptr;
+    for (auto* b : buttons) {
+        if (b->getTitle() == "Larger text size") larger = b;
+        if (b->getTitle() == "Smaller text size") smaller = b;
+    }
+    REQUIRE(larger != nullptr);
+    REQUIRE(smaller != nullptr);
+    larger->onClick();
+    CHECK(rig.ctx().prefs.textSize == 125);
+    CHECK(zui::textScale() == Catch::Approx(1.25));
+    for (int i = 0; i < 10; ++i)
+        larger->onClick();
+    CHECK(rig.ctx().prefs.textSize == 150);
+    for (int i = 0; i < 20; ++i)
+        smaller->onClick();
+    CHECK(rig.ctx().prefs.textSize == 90);
+    rig.editor->closeOverlays();
     rig.ctx().prefs.textSize = 100;
+    rig.ctx().prefs.helpStrip = false;
     Prefs::get().save();
     rig.editor->applyTheme();
     CHECK(zui::textScale() == 1.0f);

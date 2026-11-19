@@ -42,7 +42,6 @@ juce::StringArray ZederiaEditor::pageNames() { return {"SYNTH", "FX", "MOD", "TA
 ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     : juce::AudioProcessorEditor(processor), processor_(processor), ctx_(processor), modMap_(ctx_) {
     Theme::setCurrent(ctx_.prefs.theme);
-    Theme::addUserThemes(ctx_.prefs.userContentFolder().getChildFile("Themes"));
     setTextScale(static_cast<float>(ctx_.prefs.textSize) / 100.0f);
     lnf_.applyTheme();
     setLookAndFeel(&lnf_);
@@ -59,6 +58,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     dock_ = std::make_unique<ModDock>(ctx_);
     keys_ = std::make_unique<KeyboardLayer>(ctx_);
     help_ = std::make_unique<HelpStrip>();
+    markOverlay(*help_); // while hidden in the preferences it shows its messages over the keyboard's lower edge
     hoverList_ = std::make_unique<ModHoverList>(ctx_);
     palette_ = std::make_unique<CommandPalette>(ctx_);
     prefs_ = std::make_unique<PrefsPanel>(ctx_);
@@ -231,9 +231,13 @@ void ZederiaEditor::applyLayout() {
     auto header = area.removeFromTop(kHeaderHeight).withTrimmedLeft(kLogoWidth + 6).withTrimmedRight(14);
     topBar_->setBounds(header.removeFromTop(kTopBarHeight + 4).withTrimmedTop(4));
     auto tabRow = header.removeFromTop(kTabsHeight - 2);
-    help_->setVisible(ctx_.prefs.helpStrip);
+    // A hidden help strip still shows messages ("Saved ...", errors) over the bottom edge for a few seconds.
+    help_->messageOnly = !ctx_.prefs.helpStrip;
+    help_->setVisible(ctx_.prefs.helpStrip || help_->showingMessage());
     if (ctx_.prefs.helpStrip)
         help_->setBounds(area.removeFromBottom(kHelpStripHeight));
+    else
+        help_->setBounds(area.withTop(area.getBottom() - kHelpStripHeight));
     keys_->setBounds(area.removeFromBottom(kKeyboardHeight));
     dock_->setBounds(area.removeFromBottom(kDockHeight));
     tabRow.reduce(8, 0);
@@ -447,7 +451,7 @@ void ZederiaEditor::showPrefs() {
     closeOverlays();
     prefs_->refresh();
     prefs_->setVisible(true);
-    prefs_->toFront(true);
+    prefs_->toFront(false); // the keyboard stays with the editor (Escape closes the panel): no focus outline in it
 }
 
 void ZederiaEditor::toggleHistory() {
@@ -488,10 +492,9 @@ std::vector<CommandPalette::Entry> ZederiaEditor::paletteEntries() {
     action("Mutate", "small changes", [this] { ctx_.session.mutate(0.5); });
     action("Mod map", "Ctrl+M", [this] { setModMap(!modMapShown()); });
     action("Simple view", "hide advanced controls", [this] { ctx_.prefs.simpleView = !ctx_.prefs.simpleView; Prefs::get().save(); applyLayout(); });
-    action("Preferences", "theme, size, behaviour", [this] { showPrefs(); });
+    action("Preferences", "size, text size, behaviour", [this] { showPrefs(); });
+    action("All notes off", "stops every note and sound", [this] { keys_->allNotesOff(); });
     action("FX off", "bypass the whole rack", [this] { ctx_.session.setValue(idx("global.fx_off"), ctx_.processor.plainValue(idx("global.fx_off")) >= 0.5 ? 0.0 : 1.0); });
-    for (const auto& themeName : Theme::names())
-        action("Theme " + themeName, "colours", [this, themeName] { ctx_.prefs.theme = themeName; Prefs::get().save(); applyTheme(); });
     for (const int s : {70, 100, 125, 150, 200, 300})
         action("Size " + juce::String(s) + " %", "window size", [this, s] { setScalePercent(s); });
     const zed::Patch patch = processor_.snapshot();
@@ -749,6 +752,49 @@ void ZederiaEditor::savePresetAs() {
         where->setText(defaultSaveLocation(), juce::dontSendNotification);
         where->setTitle("Location");
     }
+    // A folder button under the location opens Explorer's folder picker inside the Presets folder.
+    struct Browse {
+        zui::Button button{"Choose folder...", zui::Glyph::Folder};
+        std::unique_ptr<juce::FileChooser> chooser;
+    };
+    auto browse = std::make_shared<Browse>();
+    browse->button.setSize(170, 26);
+    browse->button.setWantsKeyboardFocus(false); // no focus outline when Explorer's picker hands the window back
+    browse->button.textSize = kTextSmall + 0.5f;
+    browse->button.setHelp("Choose folder", "Pick the folder in Explorer; it must be inside the Presets folder.");
+    juce::Component::SafePointer<juce::AlertWindow> dialogPointer(dialog.get());
+    browse->button.onClick = [browse = std::weak_ptr<Browse>(browse), dialogPointer, presets] {
+        auto parts = browse.lock();
+        if (parts == nullptr || dialogPointer == nullptr)
+            return;
+        juce::String error;
+        auto* where = dialogPointer->getComboBoxComponent("location");
+        juce::File start = LibraryPage::resolveLocation(presets, where != nullptr ? where->getText() : juce::String(), error);
+        if (!start.isDirectory())
+            start = presets.getChildFile(LibraryPage::userPresetsName());
+        parts->chooser = std::make_unique<juce::FileChooser>("Save the preset in this folder", start);
+        parts->chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                    [dialogPointer, presets](const juce::FileChooser& fc) {
+                                        const juce::File chosen = fc.getResult();
+                                        if (chosen == juce::File() || dialogPointer == nullptr)
+                                            return;
+                                        if (chosen != presets && !chosen.isAChildOf(presets)) {
+                                            juce::AlertWindow::showAsync(juce::MessageBoxOptions{}
+                                                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                                                             .withTitle("Choose a folder inside Presets")
+                                                                             .withMessage("The library shows presets saved in " + presets.getFullPathName() +
+                                                                                          ". Choose that folder or one inside it.")
+                                                                             .withButton("OK", 1),
+                                                                         [](int) {});
+                                            return;
+                                        }
+                                        if (auto* where = dialogPointer->getComboBoxComponent("location"))
+                                            where->setText(chosen == presets ? juce::String("Presets")
+                                                                             : chosen.getRelativePathFrom(presets).replaceCharacter('\\', '/'),
+                                                           juce::dontSendNotification);
+                                    });
+    };
+    dialog->addCustomComponent(&browse->button);
     juce::StringArray types{"808", "bass", "synth", "lead", "pad", "pluck", "keys", "arp", "seq", "chord", "drum", "fx", "texture"};
     if (!meta.type.empty())
         types.addIfNotAlreadyThere(str(meta.type));
@@ -765,7 +811,8 @@ void ZederiaEditor::savePresetAs() {
     dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     juce::Component::SafePointer<ZederiaEditor> safe(this);
-    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safe, dialog, presets](int result) {
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safe, dialog, presets, browse](int result) {
+        juce::ignoreUnused(browse); // the folder button lives as long as the dialog
         if (result != 1 || safe == nullptr)
             return;
         const juce::String name = dialog->getTextEditorContents("name");

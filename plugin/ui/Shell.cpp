@@ -246,12 +246,18 @@ void HelpStrip::show(const juce::String& title, const juce::String& text, const 
 void HelpStrip::message(const juce::String& text) {
     message_ = text;
     messageUntil_ = juce::Time::getMillisecondCounterHiRes() + 4000.0;
+    if (messageOnly) { // the strip is hidden: it shows over the bottom edge while the message lasts
+        setVisible(true);
+        toFront(false);
+    }
     repaint();
 }
 
 bool HelpStrip::tick() {
     if (message_.isNotEmpty() && juce::Time::getMillisecondCounterHiRes() > messageUntil_) {
         message_.clear();
+        if (messageOnly)
+            setVisible(false);
         repaint();
         return true;
     }
@@ -291,6 +297,7 @@ HistoryPanel::HistoryPanel(Context& ctx) : ctx_(ctx) {
     close.setTitle("Close history");
     close.setTooltip("Close");
     close.ghost = true;
+    close.setWantsKeyboardFocus(false); // Escape closes it; no focus outline when it opens
     close.onClick = [this] { if (onClose) onClose(); };
     addAndMakeVisible(close);
 }

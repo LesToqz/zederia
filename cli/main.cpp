@@ -72,7 +72,7 @@ Usage: zederia-cli <command> [options]
   ui-snapshot                  Render editor pages offscreen to PNG and check them (plan 6.1)
       --page NAME|all          synth fx mod table play library agent kit, or all (default all)
       --scale LIST             percentages, comma separated (default 100,150,200)
-      --theme NAME|all         Graphite (default), Paper, Contrast, or all
+      --theme NAME|all         Graphite (the only theme), or all
       --out DIR                folder for the images (default ui-snapshots)
       --patch FILE             a patch to load first
       --content DIR            factory content folder

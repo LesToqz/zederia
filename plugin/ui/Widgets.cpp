@@ -1175,7 +1175,7 @@ void Button::draw(juce::Graphics& g) {
             g.setColour(acc);
             g.drawRoundedRectangle(area, 4.0f, 1.0f);
         }
-    } else if (!ghost || over) {
+    } else if (!ghost) { // ghost buttons (page tabs, list rows, icon buttons) draw no box, not even under the pointer
         g.setColour(down ? t.sunken : over ? t.raised.brighter(0.08f) : t.raised);
         g.fillRoundedRectangle(area, 4.0f);
         g.setColour(over ? t.lineStrong : t.line);
@@ -1420,14 +1420,14 @@ void DragChip::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat().reduced(0.5f);
     const juce::Colour c = ctx_.sourceColour(source_);
     const bool selected = ctx_.selectedSource == source_;
-    const bool over = isMouseOver();
-    // The chip itself changes only with selection, hover and its name: kept as an image, so the
-    // live value's bar repaints over a copy.
-    const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u) | (over ? 2u : 0u);
+    // The chip itself changes only with selection and its name: kept as an image, so the live
+    // value's bar repaints over a copy. The pointer over it changes nothing; the selected chip is
+    // pressed in (darker, with a dark rim), not coloured.
+    const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u);
     body_.draw(g, getLocalBounds(), key, false, [&](juce::Graphics& cg) {
-        cg.setColour(selected ? c.withAlpha(0.22f) : t.raised);
+        cg.setColour(selected ? t.sunken : t.raised);
         cg.fillRoundedRectangle(area, area.getHeight() * 0.5f);
-        cg.setColour(selected || over ? c : t.line);
+        cg.setColour(selected ? juce::Colours::black.withAlpha(t.dark ? 0.7f : 0.35f) : t.line);
         cg.drawRoundedRectangle(area, area.getHeight() * 0.5f, selected ? 1.4f : 1.0f);
         auto inner = area.reduced(area.getHeight() * 0.35f, 0.0f);
         cg.setColour(c);

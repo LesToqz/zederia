@@ -85,6 +85,8 @@ public:
     void message(const juce::String& text); // stays a few seconds
     bool tick();
     bool pinned = false;
+    bool messageOnly = false; // hidden in the preferences: shown only while a message lasts
+    bool showingMessage() const { return message_.isNotEmpty(); }
     juce::String title() const { return title_; }
     juce::String text() const { return text_; }
 

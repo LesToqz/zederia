@@ -137,7 +137,8 @@ public:
     PianoKeys& piano() { return piano_; }
     Wheel& pitchWheel() { return *pitch_; }
     Wheel& modWheel() { return *mod_; }
-    void refresh(); // octave, velocity and the computer-keys switch as the preferences hold them
+    void refresh(); // octave and velocity as the preferences hold them
+    void allNotesOff(); // stops every note and every sound (the command palette's "All notes off")
 
 private:
     Context& ctx_;
@@ -145,7 +146,6 @@ private:
     std::unique_ptr<Wheel> pitch_, mod_;
     Button octDown_{"", Glyph::Minus}, octUp_{"", Glyph::Plus}, velDown_{"", Glyph::Minus}, velUp_{"", Glyph::Plus};
     Caption octave_{"Oct 3", kTextSmall, false}, velocity_{"Vel 100", kTextSmall, false};
-    Button keysButton_{"Keys", Glyph::Keyboard}, panic_{"Panic", Glyph::Stop};
     CachedDrawing background_;
 };
 
