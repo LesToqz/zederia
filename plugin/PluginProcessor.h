@@ -21,6 +21,7 @@
 
 class ZederiaProcessor;
 class Session;
+class AgentLink;
 
 // A host parameter backed by one registry entry. Values live in the engine's parameter store in
 // plain units; the host sees them normalized through the entry's range and skew.
@@ -222,6 +223,11 @@ public:
     double currentSampleRate() const { return sampleRate_; }
     // Plays a short phrase through the instrument (library audition). Note times in seconds.
     void audition(const std::vector<zed::NoteSpec>& notes);
+    // An agent's audition (milestone 6): the output is held at or below `capGain` (peak) while it
+    // plays and for two seconds after its last note.
+    void audition(const std::vector<zed::NoteSpec>& notes, float capGain);
+    // Agent Link (milestone 6): off by default; the AGENT page switches it.
+    AgentLink& agentLink() { return *agentLink_; }
     void stopAudition();
     bool auditioning() const { return auditionLeft_.load(std::memory_order_relaxed) > 0; }
 
@@ -313,7 +319,10 @@ private:
     std::atomic<bool> hostPlaying_{false};
     struct AuditionPlan {
         std::vector<zed::MidiEvent> events; // offsets in samples from the start of the plan
+        float capGain = 1.0f;               // agent auditions: the output's peak is held at or below this
+        std::int64_t capUntil = 0;          // samples from the start of the plan
     };
+    float auditionGain_ = 1.0f;             // audio thread: the gain that holds the cap
     zed::rt::Handoff<AuditionPlan> auditionPlan_;
     std::int64_t auditionPos_ = 0; // audio thread
     std::size_t auditionNext_ = 0; // audio thread
@@ -326,6 +335,8 @@ private:
     std::unique_ptr<TableBuilder> tableBuilder_;
     std::atomic<double> tableLatencyMs_{0.0};
     std::unique_ptr<Session> session_;
+    std::unique_ptr<AgentLink> agentLink_;
+    bool forceAgentLink_ = false; // ZEDERIA_AGENT_LINK=1 (automated live-link tests)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaProcessor)
 };

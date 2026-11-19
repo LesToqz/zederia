@@ -54,4 +54,11 @@ if(ZED_BUILD_PLUGIN)
     endif()
 endif()
 
-# cpp-httplib (${ZED_CPP_HTTPLIB_TAG}) is pinned for the agent bridge and is fetched when milestone 6 adds it.
+# cpp-httplib: the agent server's local HTTP endpoint (127.0.0.1 only, behind a flag). Header-only; used
+# without TLS, compression or any other optional library.
+zed_fetch(cpp_httplib https://github.com/yhirose/cpp-httplib.git ${ZED_CPP_HTTPLIB_TAG})
+add_library(zed_httplib INTERFACE)
+target_include_directories(zed_httplib SYSTEM INTERFACE ${cpp_httplib_SOURCE_DIR})
+if(WIN32)
+    target_link_libraries(zed_httplib INTERFACE ws2_32 crypt32)
+endif()

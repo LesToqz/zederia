@@ -36,6 +36,10 @@ public:
     // A change the processor makes itself (rack edits that keep tails, table imports): the state
     // before and after becomes one step. `action` returns false when nothing happened.
     bool perform(const juce::String& label, const std::function<bool()>& action);
+    // An agent's change (milestone 6): the instrument takes `state` (as a preset load when
+    // `asPreset`, so locked parameters stay) and the result is one step labelled with the
+    // client's name. Returns false when nothing changed.
+    bool applyAgentState(const juce::String& label, const juce::String& origin, const zed::Patch& state, bool asPreset);
     // Increments whenever the history or the patch's structure changes through the session.
     int generation() const { return generation_; }
 

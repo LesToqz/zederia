@@ -437,6 +437,30 @@ bool buildTableRecipe(const J& recipe, Wavetable& out, std::string& error) {
     return true;
 }
 
+bool applyTableSteps(const J& steps, Wavetable& table, std::string& error) {
+    if (!steps.is_array() || steps.empty()) {
+        error = "\"operations\" must be a list of steps";
+        return false;
+    }
+    Wavetable work = table;
+    int number = 0;
+    for (const J& step : steps) {
+        ++number;
+        std::string problem;
+        if (!step.is_object() || !tableStep(step, work, problem)) {
+            error = "operation " + std::to_string(number) + (step.is_object() ? " (" + stringOr(step, "op", "?") + ")" : "") + ": " +
+                    (step.is_object() ? problem : "an operation must be an object such as {\"op\": \"process\", \"name\": \"normalize\"}");
+            return false;
+        }
+    }
+    for (Frame& frame : work.frames)
+        for (float& s : frame)
+            if (!std::isfinite(s))
+                s = 0.0f;
+    table = std::move(work);
+    return true;
+}
+
 bool buildTextureRecipe(const J& recipe, WavData& out, std::string& error) {
     out = WavData{};
     if (recipeKind(recipe) != "texture") {

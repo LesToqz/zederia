@@ -1,4 +1,5 @@
 #include "zederia/util/Image.h"
+#include "zederia/util/Compress.h"
 
 #include <algorithm>
 #include <array>
@@ -474,6 +475,54 @@ bool decodeImage(std::span<const std::uint8_t> bytes, ImageData& out, std::strin
     if (!ok)
         out = ImageData{};
     return ok;
+}
+
+namespace {
+
+std::uint32_t crc32Of(const std::uint8_t* data, std::size_t size, std::uint32_t crc = 0xFFFFFFFFu) {
+    for (std::size_t i = 0; i < size; ++i) {
+        crc ^= data[i];
+        for (int k = 0; k < 8; ++k)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return crc;
+}
+
+void pngChunk(std::vector<std::uint8_t>& out, const char* type, std::span<const std::uint8_t> data) {
+    const auto put32 = [&](std::uint32_t v) {
+        for (int s = 24; s >= 0; s -= 8)
+            out.push_back(static_cast<std::uint8_t>(v >> s));
+    };
+    put32(static_cast<std::uint32_t>(data.size()));
+    const std::size_t start = out.size();
+    out.insert(out.end(), type, type + 4);
+    out.insert(out.end(), data.begin(), data.end());
+    put32(crc32Of(out.data() + start, out.size() - start) ^ 0xFFFFFFFFu);
+}
+
+} // namespace
+
+std::vector<std::uint8_t> encodePngRgb(int width, int height, std::span<const std::uint8_t> rgb) {
+    std::vector<std::uint8_t> out = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    if (width <= 0 || height <= 0 || rgb.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3u)
+        return {};
+    std::vector<std::uint8_t> header;
+    for (const int v : {width, height})
+        for (int s = 24; s >= 0; s -= 8)
+            header.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(v) >> s));
+    header.insert(header.end(), {8, 2, 0, 0, 0}); // 8 bits, RGB, deflate, no filter choice, no interlace
+    pngChunk(out, "IHDR", header);
+    std::vector<std::uint8_t> raw;
+    const std::size_t row = static_cast<std::size_t>(width) * 3u;
+    raw.reserve((row + 1) * static_cast<std::size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        raw.push_back(0); // filter: none
+        const auto* line = rgb.data() + static_cast<std::size_t>(y) * row;
+        raw.insert(raw.end(), line, line + row);
+    }
+    pngChunk(out, "IDAT", deflateZlib(raw));
+    pngChunk(out, "IEND", {});
+    return out;
 }
 
 } // namespace zed

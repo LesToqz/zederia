@@ -348,7 +348,11 @@ RenderResult renderOffline(const Patch& patch, std::span<const SeqEvent> events,
 
     const std::int64_t lastEvent = events.empty() ? 0 : std::max<std::int64_t>(events.back().sample, 0);
     const double tail = settings.tailSeconds >= 0.0 ? settings.tailSeconds : engine.tailSeconds();
-    const std::int64_t total = lastEvent + static_cast<std::int64_t>(std::ceil(tail * engine.sampleRate())) + 1;
+    const std::int64_t total =
+        std::max(lastEvent + static_cast<std::int64_t>(std::ceil(tail * engine.sampleRate())) + 1,
+                 static_cast<std::int64_t>(std::ceil(std::max(0.0, settings.minSeconds) * engine.sampleRate())));
+    const auto progressEvery = static_cast<std::int64_t>(engine.sampleRate() * 0.05);
+    std::int64_t nextProgress = progressEvery;
 
     RenderResult result;
     result.sampleRate = engine.sampleRate();
@@ -380,6 +384,15 @@ RenderResult renderOffline(const Patch& patch, std::span<const SeqEvent> events,
         engine.process(args);
         for (int i = 0; i < made; ++i)
             result.midiOut.push_back({pos + midiOut[static_cast<std::size_t>(i)].offset, midiOut[static_cast<std::size_t>(i)]});
+        if (settings.progress && pos + frames >= nextProgress) {
+            nextProgress += progressEvery;
+            if (!settings.progress(static_cast<double>(pos + frames) / static_cast<double>(total))) {
+                result.cancelled = true;
+                result.left.resize(static_cast<std::size_t>(pos + frames));
+                result.right.resize(static_cast<std::size_t>(pos + frames));
+                break;
+            }
+        }
     }
     return result;
 }

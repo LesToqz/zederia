@@ -31,6 +31,8 @@ add_executable(zederia_tests
     core/test_play.cpp
     core/test_golden.cpp
     core/test_editing.cpp
+    core/test_analysis.cpp
+    core/test_theory.cpp
 )
 target_link_libraries(zederia_tests PRIVATE zederia_core Catch2::Catch2 zederia_warnings)
 target_compile_definitions(zederia_tests PRIVATE
@@ -78,6 +80,27 @@ add_test(NAME cli.table_commands
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TableCommands.cmake)
 add_test(NAME core.no_raw_locks
          COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR}/core -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/NoRawLocks.cmake)
+
+# The agent server (plan 6.1: protocol): scripted sessions per revision and transport, schemas,
+# error paths, the sandbox, token and origin checks, cancellation, and the live link.
+add_executable(zederia_mcp_tests support/TestMain.cpp mcp/test_mcp_protocol.cpp mcp/test_mcp_transport.cpp mcp/test_mcp_live.cpp)
+target_link_libraries(zederia_mcp_tests PRIVATE zederia_mcp_lib Catch2::Catch2 zederia_warnings)
+if(MSVC)
+    target_compile_definitions(zederia_mcp_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(zederia_mcp_tests PRIVATE ZED_MCP_EXE="$<TARGET_FILE:zederia-mcp>")
+    target_compile_options(zederia_mcp_tests PRIVATE /bigobj)
+endif()
+if(ZED_BUILD_PLUGIN)
+    target_compile_definitions(zederia_mcp_tests PRIVATE ZED_STANDALONE_EXE="$<TARGET_FILE:Zederia_Standalone>")
+    add_dependencies(zederia_mcp_tests Zederia_Standalone)
+endif()
+add_dependencies(zederia_mcp_tests zederia-mcp)
+catch_discover_tests(zederia_mcp_tests TEST_PREFIX "mcp." TEST_SPEC "~[standalone]" PROPERTIES TIMEOUT 600)
+catch_discover_tests(zederia_mcp_tests TEST_PREFIX "mcp." TEST_SPEC "[standalone]" PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+# The real program over its standard streams, in both generations.
+add_test(NAME mcp.stdio_process
+         COMMAND ${CMAKE_COMMAND} -DMCP=$<TARGET_FILE:zederia-mcp> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/mcp_stdio
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/McpStdio.cmake)
 
 if(ZED_BUILD_PLUGIN)
     add_subdirectory(plugin)
