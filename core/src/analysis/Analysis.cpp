@@ -30,6 +30,20 @@ std::vector<double> monoOf(const Audio& a) {
     return m;
 }
 
+// RMS level over `window` samples every `hop` samples, linear amplitude.
+std::vector<double> slidingEnvelope(const Audio& a, int window, int hop) {
+    const std::size_t n = std::min(a.left.size(), a.right.size());
+    std::vector<double> prefix(n + 1, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+        prefix[i + 1] = prefix[i] + 0.5 * (static_cast<double>(a.left[i]) * a.left[i] + static_cast<double>(a.right[i]) * a.right[i]);
+    std::vector<double> env;
+    for (std::size_t start = 0; start < n; start += static_cast<std::size_t>(hop)) {
+        const std::size_t end = std::min(n, start + static_cast<std::size_t>(window));
+        env.push_back(std::sqrt((prefix[end] - prefix[start]) / static_cast<double>(std::max<std::size_t>(1, end - start))));
+    }
+    return env;
+}
+
 // RMS level per hop (window = hop), linear amplitude.
 std::vector<double> envelope(const Audio& a, int hop) {
     const std::size_t n = std::min(a.left.size(), a.right.size());
@@ -158,17 +172,22 @@ double yinPeriod(const std::vector<double>& x, std::size_t start, int size, int 
     if (maxLag >= size / 2 || minLag < 2)
         return 0.0;
     const int w = size / 2;
-    // Autocorrelation through the FFT.
+    // The cross term of d(tau): r(tau) = sum over j < w of x[j] x[j + tau], the first half-frame
+    // against the frame, through the FFT (correlation = inverse of conj(A) B).
     const int n = dsp::nextPowerOfTwo(size * 2);
-    std::vector<Complex> buf(static_cast<std::size_t>(n), 0.0);
+    std::vector<Complex> half(static_cast<std::size_t>(n), 0.0), buf(static_cast<std::size_t>(n), 0.0);
     for (int i = 0; i < size; ++i) {
         const std::size_t idx = start + static_cast<std::size_t>(i);
-        buf[static_cast<std::size_t>(i)] = idx < x.size() ? x[idx] : 0.0;
+        const double v = idx < x.size() ? x[idx] : 0.0;
+        buf[static_cast<std::size_t>(i)] = v;
+        if (i < w)
+            half[static_cast<std::size_t>(i)] = v;
     }
     const auto& fft = dsp::Fft::forSize(n);
+    fft.forward(half.data());
     fft.forward(buf.data());
-    for (auto& c : buf)
-        c = std::norm(c);
+    for (std::size_t k = 0; k < buf.size(); ++k)
+        buf[k] = std::conj(half[k]) * buf[k];
     fft.inverse(buf.data());
     std::vector<double> energy(static_cast<std::size_t>(size + 1), 0.0);
     for (int i = 0; i < size; ++i) {
@@ -176,7 +195,7 @@ double yinPeriod(const std::vector<double>& x, std::size_t start, int size, int 
         const double v = idx < x.size() ? x[idx] : 0.0;
         energy[static_cast<std::size_t>(i + 1)] = energy[static_cast<std::size_t>(i)] + v * v;
     }
-    // d(tau) = e(0..w) + e(tau..tau+w) - 2 r(tau), approximated with the full-frame correlation.
+    // d(tau) = sum over j < w of (x[j] - x[j + tau])^2 = e(0..w) + e(tau..tau+w) - 2 r(tau).
     std::vector<double> d(static_cast<std::size_t>(maxLag + 2), 0.0);
     const double e0 = energy[static_cast<std::size_t>(w)];
     for (int tau = 1; tau <= maxLag + 1; ++tau) {
@@ -379,9 +398,9 @@ Descriptors analyze(const Audio& audio, const Options& options) {
         return d;
     }
 
-    // Time: a 1 ms envelope for attack and decay, 10 ms for the tail and the onsets.
-    const int hopFine = std::max(1, static_cast<int>(std::round(fs * 0.001)));
-    const auto fine = envelope(audio, hopFine);
+    // Time: 1 ms windows every 0.25 ms for attack and decay, 10 ms for the tail and the onsets.
+    const int hopFine = std::max(1, static_cast<int>(std::round(fs * 0.00025)));
+    const auto fine = slidingEnvelope(audio, std::max(1, static_cast<int>(std::round(fs * 0.001))), hopFine);
     const std::size_t peakAt = static_cast<std::size_t>(std::max_element(fine.begin(), fine.end()) - fine.begin());
     const double envPeak = fine[peakAt];
     {

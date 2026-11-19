@@ -70,6 +70,8 @@ public:
     J callTool(const std::string& name, const J& arguments, RequestInfo& info);
     // Problems with the structured results the server produced (should stay empty).
     std::vector<std::string> outputSchemaFailures() const;
+    // Requests that ended because the client cancelled them (for tests).
+    int cancelledCount() const { return cancelled_.load(); }
 
 private:
     J dispatch(const std::string& method, const J& params, RequestInfo& info, const J& id, int& status);
@@ -83,6 +85,7 @@ private:
     std::vector<ToolDef> tools_;
     mutable std::mutex failuresMutex_;
     std::vector<std::string> outputFailures_;
+    std::atomic<int> cancelled_{0};
 };
 
 // The agent guide (docs/AGENT_GUIDE.md), compiled into the server.

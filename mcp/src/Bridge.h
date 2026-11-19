@@ -101,7 +101,7 @@ public:
     std::string openSession(const zed::Patch& start, const std::string& name, const Call& call);
     void closeSession(const std::string& target);
     J listTargets();
-    J liveTargets(bool withStatus);
+    J liveTargets(bool withStatus, const std::string& client = "zederia-mcp");
     static bool isSession(const std::string& target) { return target.rfind("session:", 0) == 0; }
     static bool isLive(const std::string& target) { return target.rfind("live:", 0) == 0; }
     void checkTarget(const std::string& target, const std::string& argPath = "/target") const;

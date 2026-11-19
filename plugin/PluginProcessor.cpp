@@ -136,6 +136,7 @@ ZederiaProcessor::ZederiaProcessor()
     agentLink_ = std::make_unique<AgentLink>(*this);
     // Off by default (plan 4.8); ZEDERIA_AGENT_LINK=1 switches it on for automated live-link tests.
     if (juce::SystemStats::getEnvironmentVariable("ZEDERIA_AGENT_LINK", {}) == "1") {
+        forceAgentLink_ = true; // a restored project or session cannot switch it off
         std::string error;
         agentLink_->setEnabled(true, error);
     }
@@ -944,7 +945,7 @@ void ZederiaProcessor::setStateInformation(const void* data, int size) {
             engine_.setRackLocked(doc["rack_locked"].get<bool>());
         if (doc.contains("tuning_locked") && doc["tuning_locked"].is_boolean())
             engine_.setTuningLocked(doc["tuning_locked"].get<bool>());
-        if (doc.contains("agent_link") && doc["agent_link"].is_boolean() && agentLink_ != nullptr) {
+        if (doc.contains("agent_link") && doc["agent_link"].is_boolean() && agentLink_ != nullptr && !forceAgentLink_) {
             std::string error;
             agentLink_->setEnabled(doc["agent_link"].get<bool>(), error);
         }

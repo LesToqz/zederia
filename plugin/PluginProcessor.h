@@ -336,6 +336,7 @@ private:
     std::atomic<double> tableLatencyMs_{0.0};
     std::unique_ptr<Session> session_;
     std::unique_ptr<AgentLink> agentLink_;
+    bool forceAgentLink_ = false; // ZEDERIA_AGENT_LINK=1 (automated live-link tests)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaProcessor)
 };

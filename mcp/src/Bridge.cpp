@@ -336,7 +336,7 @@ J Bridge::liveRequest(const std::string& target, const std::string& method, J pa
     return liveCall(d, method, params, call, timeoutMs);
 }
 
-J Bridge::liveTargets(bool withStatus) {
+J Bridge::liveTargets(bool withStatus, const std::string& client) {
     J out = J::array();
     if (!config_.live)
         return out;
@@ -345,7 +345,7 @@ J Bridge::liveTargets(bool withStatus) {
         if (withStatus) {
             try {
                 Call quiet;
-                quiet.client = "zederia-mcp";
+                quiet.client = client; // the instance lists the agent that asked, not the server
                 t["status"] = liveCall(d, "status", J::object(), quiet, 1500);
             } catch (const ToolError& e) {
                 t["status"] = {{"reachable", false}, {"problem", e.problems.empty() ? "" : e.problems.front().problem}};

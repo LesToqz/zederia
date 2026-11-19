@@ -154,6 +154,12 @@ struct HttpServer::Impl {
         const J id = isRequest ? m["id"] : J();
         const Server::Era era = Server::eraOf(m);
 
+        // Revision 2026-07-28 defines no notifications from the client over HTTP (closing a stream
+        // cancels); one that arrives anyway is accepted and ignored.
+        if (!isRequest && era != Server::Era::Legacy && req.get_header_value("MCP-Protocol-Version") == kModernVersion) {
+            res.status = 202;
+            return;
+        }
         std::shared_ptr<LegacyChannel> channel;
         std::string sessionId;
         if (era == Server::Era::Modern) {

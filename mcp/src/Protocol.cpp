@@ -206,13 +206,13 @@ J Server::callTool(const std::string& name, const J& arguments, RequestInfo& inf
         if (token.is_null())
             return;
         std::lock_guard<std::mutex> lock(progressMutex);
-        const double f = std::clamp(fraction, 0.0, 1.0);
-        if (f <= last + 1e-9) // progress must increase
+        const double f = std::round(std::clamp(fraction, 0.0, 1.0) * 1000.0) / 1000.0;
+        if (f <= last) // progress must increase (as sent, after rounding)
             return;
         last = f;
         info.notify({{"jsonrpc", "2.0"},
                      {"method", "notifications/progress"},
-                     {"params", {{"progressToken", token}, {"progress", std::round(f * 1000.0) / 1000.0}, {"total", 1.0}, {"message", message}}}});
+                     {"params", {{"progressToken", token}, {"progress", f}, {"total", 1.0}, {"message", message}}}});
     };
     try {
         ToolOutput out = tool->run(args, call);
@@ -239,6 +239,7 @@ J Server::callTool(const std::string& name, const J& arguments, RequestInfo& inf
         return {{"content", J::array({{{"type", "text"}, {"text", text}}, {{"type", "text"}, {"text", J{{"errors", problemsToJson(e.problems)}}.dump()}}})},
                 {"isError", true}};
     } catch (const Cancelled&) {
+        ++cancelled_;
         throw;
     } catch (const std::exception& e) {
         return textResult(name + " failed: " + e.what() + ". This is a fault in the server; try again or report it.", true);

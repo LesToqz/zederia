@@ -328,13 +328,13 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                         "server":{"type":"object","required":["name","version","protocol_versions"]},
                         "permissions":{"type":"object"},"sessions":{"type":"integer"},"live_targets":{"type":"array"},
                         "folders":{"type":"object"},"limits":{"type":"object"}}})json"),
-                     true, false, true, [&bridge](const J&, Call&) {
+                     true, false, true, [&bridge](const J&, Call& call) {
                          ToolOutput out;
                          J targets = bridge.listTargets();
                          int sessions = 0;
                          for (const auto& t : targets)
                              sessions += t.value("kind", "") == "session" ? 1 : 0;
-                         const J live = bridge.liveTargets(true);
+                         const J live = bridge.liveTargets(true, call.client);
                          out.structured = {
                              {"server", {{"name", "zederia-mcp"}, {"version", zed::kVersion}, {"protocol_versions", {"2026-07-28", "2025-11-25", "2025-06-18"}}}},
                              {"permissions", zed::link::toJson(bridge.permissions())},
