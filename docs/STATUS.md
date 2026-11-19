@@ -65,7 +65,75 @@
   - **Fits the screen**: the editor shrinks on its first appearance, if it must, so the whole window including the keyboard fits the display.
   - Fixed on the way: the filter display repainted every frame while idle (it hashed its settings including padding bytes); the PLAY page's chord panel was clipped at the new height.
 
+- Milestone 6 (the agent bridge), tagged `m6-done`:
+  - **Protocol revisions supported: 2026-07-28** (the current revision: stateless, `server/discover`, per-request `_meta`, `resultType`, cache hints, the HTTP headers) **and 2025-11-25 and 2025-06-18** (the `initialize` handshake). Both generations are served by one process and on one HTTP endpoint at the same time.
+  - **Clients verified:**
+    - **Codex CLI 0.170.0** (handshake revision 2025-06-18) ran example sessions 1 and 3 of plan 4.10 end to end. The preset, the loops and the MIDI files exist (Measurements).
+    - **Claude Code 2.1.322** (it probes with `server/discover` at 2026-07-28) connects and lists the tools (`claude mcp list`: Connected). Its command-line program is not signed in on this machine, so it ran no session; see Known issues.
+    - The Antigravity CLI is not installed.
+  - `zederia-mcp`:
+    - stdio (the default) and Streamable HTTP on 127.0.0.1 (`--http`), with an Origin check, a Host check and a bearer token.
+    - 26 tools with input and output schemas, annotations and structured results; validation errors carry JSON pointers and fixes.
+    - Progress and cancellation for renders and pack exports.
+    - Resources (the guide, the patch schema, the parameter registry; templates for presets, wavetables and renders) and five prompts.
+  - Headless sessions (`session:...`) and the live link (`live:...`): each instance with Agent Link on opens a pipe only the current user can open and writes a user-only discovery file with a random token. Requests are queued to the message thread and applied through the editing session (so they reach the audio thread at block starts like any edit). Renders of a live target run in the server on a copy of its patch.
+  - Core: the analysis module (Appendix C: level, loudness to ITU-R BS.1770, time, pitch, spectrum, motion, stereo, tags), `compare_audio`, mel spectrogram PNGs, the music-theory helpers (chord symbols, roman numerals, 14 scales, voice leading, quantizing), clip checks, pack file names, PNG writing, progress, cancellation and a minimum length in the offline renderer, and recipe steps applied to an existing table.
+  - Music tools: `theory`, `write_clip` (validation; into a target's clip player, optionally switched on), loops with tail cut, separate or fold plus the `.mid`, and `export_pack` with the naming rule, one-shots and multi-sampled notes.
+  - Safety as plan 4.8:
+    - permissions on the AGENT page, stored in `%APPDATA%\Zederia\agent.json` and read on every check;
+    - the file sandbox (canonical paths, junctions resolved, `..`, network, device and stream paths, reserved names and unknown extensions refused);
+    - limits on render length, tails, sessions, pack size, clip size, request size and formula complexity;
+    - every mutating call is one undo step labelled with the client's name, and "Revert agent session" undoes everything an agent did;
+    - auditions are level-capped on the audio thread.
+  - The AGENT page: link switch, connected clients, activity log, revert, permission switches with allowed folders and the audition cap, and copy buttons for the Claude Code (`claude mcp add` and `.mcp.json`), Codex and Antigravity snippets. The top bar's indicator follows the link.
+  - `docs/AGENT_GUIDE.md`, compiled into the server as `zederia://guide/agent`, covers parameter semantics, recipes, the design loop, reading the analysis, loudness and naming conventions, music tools, wavetables, permissions and worked examples.
+  - Tests: 336 (core, plug-in, server), all under the audio-thread guard. They include scripted sessions per revision and transport (in-process, the real program on pipes and on files, HTTP) and every tool against its schemas. They also cover error paths, sandbox escapes including a junction, token, origin and host checks, cancellation on stdio, in-process and over HTTP, the live link in-process while audio plays, and the live link against a running Standalone.
+
 ## Measurements
+### Milestone 6
+Measured 2026-11-19 on the machine in `docs/ENVIRONMENT.md`, Release build unless stated.
+
+| What | Result | Target |
+|---|---|---|
+| Tests | 336 of 336 pass in Debug (434 s; timing budgets are checked in optimized builds only). In Release, 334 of 336 pass in the final runs: the two interface timing tests fail under the machine's load at the time (row below; they passed in the first full run with this milestone's plug-in code) | all |
+| Protocol revisions | 2026-07-28, 2025-11-25 and 2025-06-18, each in scripted sessions: in-process, the real program on its standard streams (both with input held open, one request at a time, and with whole input files), and over HTTP (2026-07-28 and 2025-11-25) | both generations |
+| Tool schemas | all 26 tools: input and output schemas use only keywords the validator understands; every tool called at least once in the conformance test, every structured result valid against its output schema, no output-schema failure logged | all valid |
+| Error paths | invalid arguments (unknown fields with suggestions, wrong types, enum typos, missing fields), unknown tools and methods, unsupported version (-32022 with the supported list), missing capabilities (-32602), bad log level, batches, parse errors, wrong ids, header mismatches (-32020), each with a JSON pointer and a fix where the agent can act | reported with fixes |
+| Sandbox | `..` (plain and inside a folder), absolute paths outside, UNC, `\\?\` and `\\.\` paths, alternate data streams, CON, NUL and COM1, trailing dots and spaces, wrong extensions, NUL bytes, empty paths and a junction pointing outside are all refused. Writes are refused when the AGENT page switches them off, and a read folder works only while "Read samples" is on | all refused |
+| Token, Origin, Host | missing, wrong or Basic credentials get 401 with `WWW-Authenticate`. A foreign Origin, an Origin that only starts with `127.0.0.1` and a non-loopback Host get 403. A loopback Origin passes. Binding to 0.0.0.0 and tokens shorter than 16 characters are refused | refused |
+| Live-link token | wrong, missing and old-protocol tokens refused; a stale patch hash is refused as "changed meanwhile" and the server retries | refused |
+| Cancellation | a 110 s render of an 8-note chord on three unison-16 oscillators (about 14 s of work), cancelled after its third progress notification: stopped and gave no response. In-process the whole test took 0.15 s including setup; on stdio (`notifications/cancelled`) 0.21 s; over HTTP (closing the event stream) 0.68 s. No file was written | stops promptly |
+| Progress | rises strictly in every notification (rounded to 0.001 before the check) | increasing |
+| Live link, in-process | agent edits reach a processor while its audio runs on another thread: parameters, routes, a clip into the clip player (switched on), and an audition (level-capped). Each step is labelled "Tests: ..." with origin "Tests", undone by the agent and by the session's undo (the user's Ctrl+Z), and "Revert agent session" restores the state from before the first edit. Permissions switched off on the AGENT page refuse edits and auditions at once. The audio-thread guard reports nothing, and the link state survives the host project | live, undoable |
+| Live link, running Standalone (`[standalone]` test) | started with the link on and its own folders, found through its discovery file (pid and host match). Edits read back, undo, render from a copy of its state (pitch A3 found), audition, and revert | live, undoable |
+| Live link by hand (the user's installed Standalone, computer use) | Agent Link switched on from the AGENT page. A server edit labelled "Darker filter" (Ladder LP 24 at 650 Hz, resonance 40 %) and a route from LFO 1 appeared on the SYNTH page with the route's arc. The AGENT page listed the client "Verification" (5 requests, 2 edits) and both actions by name, and the top bar read "Agent on". Two Ctrl+Z restored SVF LP 12 at 2.00 kHz. Switching the link off removed the discovery file | appears, undoes |
+| pluginval v1.0.4, strictness 10, Release VST3 with the editor | SUCCESS | pass |
+| clap-validator 0.4.1, Release CLAP | 44 tests: 32 passed, 0 failed, 11 skipped, 1 warning (the same as milestone 5) | pass |
+| Interface timing tests (`[perf]`) | passed in the first full run with the milestone's plug-in code in (334 of 334). In the later runs they read 2.4 to 3.4 % (budget 2 %) and a worst workshop latency of 55 to 68 ms (budget 50). At those times the Claude desktop app drawing this session used a third of the machine's eight cores and the idle benchmark read 0.036 % against its 0.030 % baseline. **Not a regression:** the milestone 5 build (`m5-done`, built again from a separate worktree) was run alternately with this one on the same machine at the same time:
+- Interface cost, five rounds with this build first: 2.05 to 2.54 % (mean 2.27) here against 1.90 to 2.67 % (mean 2.27) for milestone 5.
+- Workshop latency, four rounds: feedback 5.7 to 30.0 ms here against 6.5 to 30.1 ms, and new audio 19.3 to 63.0 ms here against 16.3 to 85.8 ms.
+
+Both builds miss the budgets under this load; see Known issues | 2 %, 16 ms, 50 ms |
+
+**Real clients.** Each was registered and checked:
+- **Claude Code 2.1.322**, registered for this project (`claude mcp add -s local`). Its health check connects (`server/discover` at 2026-07-28, then the tool list). Its command-line program reports "Not logged in", so no session ran from it here.
+- **Codex CLI 0.170.0**, given the server per run. It first ran a check over the handshake revision 2025-06-18: `get_status`, which lists 2026-07-28, 2025-11-25 and 2025-06-18; `theory` for the scale; and a render with the analysis tags.
+
+Codex then ran the example sessions of plan 4.10. Prompts and transcripts are in `build/agent-sessions/` (not in the repository).
+
+*Example session 1: "warm, slightly detuned pluck for a house track".*
+- Codex read the guide, used `describe_synth`, `list_wavetables` and `list_presets`, opened sessions, and rendered a four-note A minor phrase at 124 bpm. It made nine renders in all with seven `set_params` rounds, then saved `user:Agent/Amber Step Pluck`: five lightly detuned saws, a ladder filter, a short plate, a "Tone" macro, tags `warm`, `plucky`, `detuned`, `wide`, `analog`, `house`.
+- The analysis moved from −21.9 to −13.5 LUFS, a peak of −7.7 to −2.8 dBFS, a centroid of 360 to 764 Hz and a width of 0.110 to 0.267 (`wide`), with 0 clipped samples. The tags changed from `dark` and `sustained` to `plucky` and `wide`.
+- Files: `Documents/Zederia/Presets/Agent/Amber Step Pluck.zpreset` and `Documents/Zederia/Renders/ZED_pluck_AmberStep_Am_124bpm_{Before,Wavetable,Warmth,Level,After,ToneMax}.wav` plus three A3 one-shots, each with its analysis sidecar.
+- `apply_patch` and `set_modulation` were refused by Codex's approval rule for tools marked destructive. Codex worked round it by passing the whole patch to `open_session`. Those annotations were corrected afterwards (Decisions).
+
+*Example session 3: "eight bars of chords in F minor at 124 BPM and a melody over it".*
+- Codex used `theory` (a voice-led progression with a root bass: Fm7, D♭maj7, A♭maj7, E♭7, two bars each) and `write_clip` twice: "chords", and a "melody" from F4 to C6 in two-bar phrases. Neither clip had warnings.
+- It found the session 1 pluck with `list_presets` and designed and saved a second preset, `user:Agent/Velvet Tine` (soft keys), with four analysis rounds. It rendered each clip with both presets (tail `fold`).
+- Four loops, each exactly 8 bars (15.484 s) with 0 clipped samples: `ZED_chords_AmberStepPluck_Fmin_124bpm` (−17.7 LUFS, peak −2.5 dBFS), `ZED_melody_AmberStepPluck_Fmin_124bpm` (−12.4 LUFS, −1.2 dBFS), `ZED_chords_VelvetTine_Fmin_124bpm` (−12.6 LUFS, −1.6 dBFS) and `ZED_melody_VelvetTine_Fmin_124bpm` (−12.4 LUFS, −5.8 dBFS).
+- Files: each loop's `.wav` and `.mid` in `Documents/Zederia/Renders/`, the two clips in `Documents/Zederia/Clips/Agent/`, and `Velvet Tine.zpreset` in `Documents/Zederia/Presets/Agent/`.
+- Codex's approval rule refused only `close_session`, which is marked destructive.
+
 ### Interface follow-up (2026-11-19: no click highlight, header without Undo and Redo, pitch wheel, two-row computer keys)
 Release build. Nothing under `core/` changed; the golden fingerprints of the reference patches are unchanged.
 
@@ -354,7 +422,61 @@ Interface revision (2026-11-18):
 - **Two guards against hanging notes**: the keyboard checks the real mouse button and key state every frame (a release a host keeps from the window is caught within a frame), and the processor compares the notes the screen holds (an atomic mask set before a note-on is queued and cleared before its release is queued) with the notes it started from the screen, releasing any the screen let go.
 - **Effect strips list their controls by name** (`groupsFor` in `FxPage.cpp`); any parameter a table does not name joins a last "More" group, so a new effect parameter is never unreachable.
 
+Milestone 6:
+- **The specification was read first** (modelcontextprotocol.io, revision 2026-07-28 and its changelog, the TypeScript schema; revision 2025-11-25 for the handshake). The plan's summary in 4.3 matches it. Where the specification is more precise or differs, it was followed:
+  - Error codes come from the reserved range: -32020 HeaderMismatch, -32021 MissingRequiredClientCapability, -32022 UnsupportedProtocolVersion. "Resource not found" is -32602, not the older -32002.
+  - Cache hints (`ttlMs`, `cacheScope`) are required on `server/discover` and `resources/read` as well as on the list results.
+  - On HTTP in 2026-07-28, closing a request's event stream is the cancellation; `notifications/cancelled` is for stdio, and the handshake revisions use it on HTTP too. `ping` and `logging/setLevel` no longer exist in 2026-07-28.
+  - Change notifications come only through `subscriptions/listen`. This server's lists never change while it runs, so it acknowledges no notification types and keeps the stream open until the client closes it or the server ends.
+  - Structured results are also given as JSON text ("for backwards compatibility"), after the plan's short summary line.
+  - Logging, Roots and Sampling are deprecated in 2026-07-28 and are not used. Multi round-trip input (`input_required`) is not needed by any tool.
+  - `UnsupportedProtocolVersionError` lists all three supported revisions, modern first, as the specification's example does.
+  - A 2026-07-28 notification POSTed over HTTP (the revision defines none) is accepted with 202 and ignored.
+- **Which revisions the installed clients speak was observed, not assumed.** A logging stdio server showed Claude Code 2.1.322 probing with `server/discover` at 2026-07-28 and falling back to `initialize` at 2025-11-25, and Codex 0.170.0 sending `initialize` at 2025-06-18 only.
+- **One process serves both generations.** stdio has one handshake state per process; HTTP has one per `Mcp-Session-Id` and none for 2026-07-28 requests. A request is modern when its `_meta` carries the protocol version. Handshake results carry no `resultType` or cache hints (fields their revisions do not define).
+- **The protocol code is a library inside `mcp/`** (`zederia_mcp_lib`), so the conformance tests drive it in-process. Nothing of the protocol is in the plug-in or the core.
+- **Live edits are whole-patch transactions**:
+  - The server reads the instance's patch with a hash, applies the tool's change to a copy, and sends the result with that hash.
+  - The instance applies it through `Session::applyAgentState` as one step labelled "<client>: <label>" with the client as origin, and refuses it if its patch changed in between; the server then retries up to three times.
+  - The plug-in needs only five requests (`status`, `get_patch`, `put_patch`, `history`, `audition`), and headless and live targets share every tool's code.
+  - Edits reach the audio thread the way the interface's do: parameter values through the store at the next block, structure through the hand-overs.
+- **The link thread never edits**: it checks the token (constant-time), queues the request and waits up to 8 s. The message thread runs it from an async call, with the processor's 30 Hz timer as a fallback. Renders of live targets run in the server on the copy it read: never on the instance's audio or message thread.
+- **Pipe and file security**:
+  - The pipe's security descriptor admits only the current user's SID, and remote clients are refused.
+  - The first instance is created with the "first instance" flag, and one instance always listens, so the name is never free for another process to take.
+  - The client connects at the identification level only.
+  - Discovery files and the permissions file are written with the same user-only descriptor, via a temporary file and a replace. Files of processes that have ended are removed when listed.
+- **Permissions live in one user-wide file** (`%APPDATA%\Zederia\agent.json`). The AGENT page writes it and the server and every instance read it on each check, so a switch applies at once and to every agent. Command-line `--allow-read` and `--allow-write` folders count as the user's explicit choice and are allowed even while the page's "write in allowed folders" switch is off. Read and edit apply to live targets: a headless session is the agent's own.
+- **Annotations**:
+  - `readOnlyHint` for the tools that change nothing.
+  - `destructiveHint` only where something cannot be got back: `close_session` (the session's history), `tag_presets` (rewrites preset files) and `edit_wavetable` (can rewrite a user table in place).
+  - Edits of a target are undo steps, so `apply_patch`, `set_params`, `set_modulation`, `set_shape`, `history` and `load_preset` are not destructive. Codex refuses tools marked destructive when no one can approve them, which is how session 1 found the first, too broad, marking.
+  - `save_preset` and `render_audio` overwrite only with an explicit `overwrite: true` and are not marked destructive.
+  - `openWorldHint` is false everywhere: no tool reaches the network.
+- **Headless sessions live in the server process** (lost when it ends, removed after 2 hours unused, at most 16), as the specification's guidance on stateful tools suggests. Clips are files (`Documents/Zederia/Clips/Agent/<id>.json`), so a clip id survives a restarted server. Tables made by agents are saved as `user:Agent/<name>` and are also kept inside the patch of the target they are loaded into, so every instance plays them alike.
+- **Analysis choices**:
+  - Loudness follows ITU-R BS.1770 (K-weighting, 400 ms blocks, absolute and relative gates).
+  - Pitch uses YIN on 4096-sample frames within 20 dB of the peak; the result is the median of confident frames. A spread above a semitone marks the pitch as `varies`, which turns off the harmonic measures.
+  - Attack uses 1 ms windows every 0.25 ms.
+  - Tag thresholds are listed in the agent guide.
+  - Comparison distance = spectral + envelope/2 + |loudness|/2 (dB), similarity = 1/(1 + distance/6).
+- **Loops**: a clip renders exactly its bars at its tempo. `fold` adds the tail (trimmed below -90 dBFS) onto the loop's start, wrapping if longer. `separate` writes `<name>_tail.wav`. A clip transposes by the smallest move between tonics (-6 to +5 semitones), with notes kept in range by octaves.
+- **The HTTP endpoint**:
+  - It streams `tools/call` in 2026-07-28 always (and any request with a progress token), so a closed stream can cancel. An SSE comment every 250 ms during long work finds a closed stream.
+  - It never sends CORS headers, so a browser page cannot read its answers even from an allowed origin.
+  - Without `--token` a random token is made and written to `%LOCALAPPDATA%\Zederia\mcp-http.json` (user-only).
+- **Audition cap**: the processor holds an agent audition's output peak at or below the cap (-12 dBFS by default) with a gain that drops at once and recovers slowly, for the phrase and two seconds after it. It needs no allocation.
+- **`ZEDERIA_AGENT_LINK=1`** switches the link on at start and keeps it on through a restored session or project. It is only for automated live-link tests; `ZEDERIA_LOCAL_DIR` and `ZEDERIA_SETTINGS_DIR` give tests their own discovery and permission folders.
+- **Real-client verification ran through Codex.** Claude Code's command-line program is not signed in here, and signing in is the user's step.
+
 ## Known issues
+- **Claude Code ran no session here.** Its command-line program on this machine is not signed in. `claude mcp list` connects to the server, which exercises `server/discover` at 2026-07-28 and the tool list. To run session 1 yourself: sign in with `claude` once, then in this folder run `claude -p "Make a warm, slightly detuned pluck for a house track with the zederia tools" --allowedTools mcp__zederia`.
+- **The Antigravity CLI is not installed**, so its configuration path and protocol revision were not checked.
+- **The live link is Windows-only** in this version (named pipes); elsewhere the server lists no live targets.
+- **Interface timing tests are load-sensitive.** They passed in this milestone's first full run and failed in later runs while the desktop app used a third of the CPU (2.4 to 3.4 % against 2 %, 55 to 68 ms against 50 ms). The milestone 5 build fails them equally at the same time (Measurements), so this is the machine, not the code. Rerun `scripts/test.ps1 -Filter "[perf]"` on a quiet machine before release.
+- **A patch carrying a large edited table** is sent whole over the pipe for every live edit (read and write), a few hundred kilobytes for a 64-frame table. Edits stay well under the 8 s timeout but are slower than for reference tables.
+- **The audition cap** steps the gain down within one block when a peak arrives, which can click faintly. It is a safety cap, not a limiter.
+- **The multi-note "noisy" mistake is fixed but other tags can mislead on phrases**: brightness and decay describe the whole render. The guide says to judge harmonic measures on a single held note.
 - **Computer keys inside a host**: the plug-in hears letters only while its window has keyboard focus, and some hosts take letters first for their own typing keyboard (FL Studio's "typing keyboard to piano" sends notes to the selected channel itself). The Standalone was checked by hand; no host has been.
 - **The interface's cost is near its budget** (1.6 to 2.0 % of 2 %): the dock and keyboard add widgets to every page and each repaint has a fixed cost. A slow day on this virtual machine can push the perf test over.
 - **Cached surfaces use memory**: each card, knob cap and modulated knob face is an image at the display's density (about 6 MB in all at 100 %, four times that at 200 %).
@@ -392,4 +514,5 @@ Interface revision (2026-11-18):
 - Inno Setup not installed (needed by milestone 7). JUCE licence choice is open.
 
 ## Next
-- Milestone 6 (the agent bridge): the local link and `zederia-mcp` per plan section 4, against the current Model Context Protocol specification. The interface side is ready for it: the AGENT page's places for the link switch, clients, activity log, permissions and revert; the session (named undo steps, locks, A/B) for agent edits to go through; and the core's editing support (`ValueText`, `History`, `Variation`, `Modules`, `PresetIndex`) for the server to share.
+- Milestone 7 (factory content and release). The agent tools are ready for designing the factory presets: brief, edit, render, analysis, adjust, save; loudness and naming conventions are in `docs/AGENT_GUIDE.md`. The installer must place `zederia-mcp.exe` in `%LOCALAPPDATA%\Programs\Zederia\` (the AGENT page's snippets point there).
+- To run the example sessions from Claude Code as well: sign in its command-line program (`claude`), then use the `.mcp.json` or `claude mcp add` snippet from the AGENT page (already registered for this folder).

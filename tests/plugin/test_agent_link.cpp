@@ -79,15 +79,23 @@ TEST_CASE("live link: agent edits reach a playing instance, are labelled undo st
     zmcp::Server server(bridge);
     zmcp::LegacyChannel channel;
     int id = 1;
+    AudioThread* playing = nullptr; // set once audio runs: every call then lets two more blocks play
     const auto call = [&](const std::string& tool, const J& args) {
         J req = {{"jsonrpc", "2.0"}, {"id", id++}, {"method", "tools/call"}, {"params", {{"name", tool}, {"arguments", args}, {"_meta", Rig::meta()}}}};
-        return withMessageThread(p, [&] {
+        J result = withMessageThread(p, [&] {
             zmcp::RequestInfo info;
             return server.handle(req, &channel, info)["result"];
         });
+        if (playing != nullptr) {
+            const int target = playing->blocks.load() + 2;
+            while (playing->blocks.load() < target)
+                p.serviceMessageThread();
+        }
+        return result;
     };
 
     AudioThread audio(p); // the instance plays while the agent works
+    playing = &audio;
     p.pushUiEvent(zed::MidiEvent::noteOn(0, 60, 0.8f));
 
     const J targets = call("list_targets", J::object())["structuredContent"]["targets"];
