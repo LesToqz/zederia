@@ -192,6 +192,7 @@ void ParamWidget::beginEdit() {
     if (!dragging_) {
         dragging_ = true;
         ctx_.session.beginGesture(param_);
+        repaint(); // the value shows in the accent while it is held
     }
 }
 
@@ -206,6 +207,7 @@ void ParamWidget::endEdit() {
     if (dragging_) {
         dragging_ = false;
         ctx_.session.endGesture(param_);
+        repaint(); // a click without a move changes no value, so nothing else would clear the accent
     }
 }
 
@@ -493,6 +495,7 @@ void ParamWidget::mouseUp(const juce::MouseEvent&) {
     if (depthDrag_) {
         depthDrag_ = false;
         ctx_.session.endGesture(zed::Registry::get().modAmount(depthRoute_));
+        repaint();
         return;
     }
     endEdit();
@@ -515,12 +518,16 @@ void ParamWidget::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
     stepBy(w.deltaY > 0 ? 1 : -1, ctx_.prefs.wheel == 2 || e.mods.isShiftDown());
 }
 
+// Widgets do not repaint on mouse activity by themselves (it would repaint every control the
+// pointer crosses), but a control draws its hover ring and its held value: those repaint here.
 void ParamWidget::mouseEnter(const juce::MouseEvent&) {
+    repaint();
     if (ctx_.hoverParam)
         ctx_.hoverParam(this);
 }
 
 void ParamWidget::mouseExit(const juce::MouseEvent&) {
+    repaint();
     if (ctx_.hoverParam)
         ctx_.hoverParam(nullptr);
 }
@@ -1174,7 +1181,7 @@ void Button::draw(juce::Graphics& g) {
         g.setColour(over ? t.lineStrong : t.line);
         g.drawRoundedRectangle(area, 4.0f, 1.0f);
     }
-    const juce::Colour ink = !isEnabled() ? t.textFaint : accentStyle ? t.bg : t.text;
+    const juce::Colour ink = !isEnabled() ? t.textFaint : accentStyle ? t.bg : dimText && !over ? t.textDim : t.text;
     auto content = area.reduced(6.0f, 0.0f);
     if (glyph != Glyph::None) {
         const float s = std::min(14.0f, area.getHeight() - 8.0f);
@@ -1186,8 +1193,8 @@ void Button::draw(juce::Graphics& g) {
             content.removeFromLeft(s + 5.0f);
     }
     if (text_.isNotEmpty())
-        drawText(g, text_, content, fittingSize(text_, content.getWidth(), textSize), ink,
-                 glyph != Glyph::None || leftAlign ? juce::Justification::centredLeft : juce::Justification::centred);
+        drawText(g, text_, content, fittingSize(text_, content.getWidth(), textSize, boldText), ink,
+                 glyph != Glyph::None || leftAlign ? juce::Justification::centredLeft : juce::Justification::centred, boldText);
     drawFocus(g, getLocalBounds().toFloat());
 }
 
@@ -1569,6 +1576,12 @@ TextField::TextField(const juce::String& placeholderText, const juce::String& ac
 
 void TextField::paintOverChildren(juce::Graphics& g) { juce::TextEditor::paintOverChildren(g); }
 
+void TextField::lookAndFeelChanged() {
+    juce::TextEditor::lookAndFeelChanged();
+    setFont(font(kTextBody));
+    applyFontToAllText(font(kTextBody));
+}
+
 // --- Helpers -----------------------------------------------------------------------------------------
 
 juce::Rectangle<int> placeRow(juce::Rectangle<int> area, std::initializer_list<std::pair<juce::Component*, int>> items, int gap) {
@@ -1595,7 +1608,8 @@ void CachedDrawing::draw(juce::Graphics& g, juce::Rectangle<int> area, std::uint
     const float scale = juce::jmax(1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
     const int w = juce::jmax(1, juce::roundToInt(static_cast<float>(area.getWidth()) * scale));
     const int h = juce::jmax(1, juce::roundToInt(static_cast<float>(area.getHeight()) * scale));
-    if (!image_.isValid() || image_.getWidth() != w || image_.getHeight() != h || area != area_ || key != key_ || theme_ != theme().name) {
+    if (!image_.isValid() || image_.getWidth() != w || image_.getHeight() != h || area != area_ || key != key_ || theme_ != theme().name ||
+        textScale_ != textScale()) {
         image_ = juce::Image(opaque ? juce::Image::RGB : juce::Image::ARGB, w, h, true, juce::SoftwareImageType());
         juce::Graphics ig(image_);
         ig.addTransform(juce::AffineTransform::translation(static_cast<float>(-area.getX()), static_cast<float>(-area.getY()))
@@ -1604,6 +1618,7 @@ void CachedDrawing::draw(juce::Graphics& g, juce::Rectangle<int> area, std::uint
         area_ = area;
         key_ = key;
         theme_ = theme().name;
+        textScale_ = textScale();
     }
     g.drawImage(image_, area.toFloat()); // at the display's density: one pixel of the image per pixel
 }

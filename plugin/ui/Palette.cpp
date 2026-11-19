@@ -2,6 +2,9 @@
 
 #include "Audit.h"
 
+#include "../AgentLink.h"
+#include "../PluginProcessor.h"
+
 namespace zui {
 
 // --- CommandPalette ----------------------------------------------------------------------------------
@@ -154,6 +157,17 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
                save();
                if (onScale) onScale(p.defaultScale);
            });
+    addRow("Text size", "How large labels, values and lists are drawn, independent of the window size. Where a larger text has no room it "
+                        "stays at the normal size.",
+           [&p] {
+               return juce::String(p.textSize < 100 ? "Small" : p.textSize == 100 ? "Normal" : p.textSize <= 115 ? "Large" : "Largest") + " (" +
+                      juce::String(p.textSize) + " %)";
+           },
+           [this, &p, save](Button&) {
+               p.textSize = p.textSize < 100 ? 100 : p.textSize < 115 ? 115 : p.textSize < 130 ? 130 : 90;
+               save();
+               if (onThemeChanged) onThemeChanged(); // fonts are part of the look
+           });
     addRow("Knob drag", "Vertical: drag up and down. Around: follow the angle of the pointer around the knob.",
            [&p] { return p.rotaryDrag ? juce::String("Around") : juce::String("Vertical"); }, [&p, save](Button&) { p.rotaryDrag = !p.rotaryDrag; save(); });
     addRow("Mouse wheel", "What the wheel does over a control.", [&p] { return juce::String(p.wheel == 0 ? "Scrolls the page" : p.wheel == 1 ? "Changes values" : "Fine changes"); },
@@ -198,8 +212,8 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
                    }
                });
            });
-    addRow("Agent link", "Lets AI agents work on this instance (arrives with the agent bridge).", [] { return juce::String("Off (not available yet)"); },
-           [](Button&) {});
+    addRow("Agent link", "Lets AI agents work on this instance. Switch it, and connect an agent, on the AGENT page.",
+           [this] { return ctx_.processor.agentLink().enabled() ? juce::String("On (AGENT page)") : juce::String("Off (AGENT page)"); }, [](Button&) {});
     offlineQuality = std::make_unique<ChoiceBox>(ctx, "global.quality_offline", "Offline quality");
     offlineQuality->labelAbove = false;
     addAndMakeVisible(*offlineQuality);

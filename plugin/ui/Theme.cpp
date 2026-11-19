@@ -1,5 +1,6 @@
 #include "Theme.h"
 
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -164,8 +165,15 @@ double contrastRatio(juce::Colour a, juce::Colour b) {
 
 // --- Text -------------------------------------------------------------------------------------------
 
+namespace {
+std::atomic<float> gTextScale{1.0f};
+} // namespace
+
+void setTextScale(float scale) { gTextScale = juce::jlimit(0.9f, 1.3f, scale); }
+float textScale() { return gTextScale.load(); }
+
 juce::Font font(float size, bool bold) {
-    return juce::Font(juce::FontOptions(chosenFace(), size, bold ? juce::Font::bold : juce::Font::plain));
+    return juce::Font(juce::FontOptions(chosenFace(), size * textScale(), bold ? juce::Font::bold : juce::Font::plain));
 }
 
 float textWidth(const juce::String& text, float size, bool bold) {
@@ -176,7 +184,7 @@ float textWidth(const juce::String& text, float size, bool bold) {
         std::unordered_map<juce::String, float> values;
     };
     static Widths cache;
-    const juce::String key = text + "\x1f" + juce::String(size, 2) + (bold ? "b" : "");
+    const juce::String key = text + "\x1f" + juce::String(size * textScale(), 2) + (bold ? "b" : "");
     {
         const std::lock_guard<std::mutex> lock(cache.mutex);
         if (const auto it = cache.values.find(key); it != cache.values.end())
@@ -200,13 +208,28 @@ void drawText(juce::Graphics& g, const juce::String& text, juce::Rectangle<float
               juce::Justification just, bool bold) {
     if (text.isEmpty())
         return;
-    if (AuditRecorder::active()) {
-        const float needed = textWidth(text, size, bold);
-        if (needed > box.getWidth() + 0.75f || size < kTextSmall - 0.01f || size > box.getHeight() + 2.0f)
-            AuditRecorder::note({AuditRecorder::painting(), text, box.getWidth(), needed, size});
-    }
-    if (!g.clipRegionIntersects(box.getSmallestIntegerContainer().expanded(2)))
+    const bool auditing = AuditRecorder::active();
+    const bool visible = g.clipRegionIntersects(box.getSmallestIntegerContainer().expanded(2));
+    if (!visible && !auditing)
         return; // outside the area being repainted: laying the glyphs out would be wasted
+    const float scale = textScale();
+    if (scale > 1.0f) {
+        // Larger text where there is room; where there is not, as large as fits, down to the size
+        // the layout was made for (which the snapshot checks have seen fit).
+        const float base = size / scale;
+        const float tallest = (box.getHeight() + 2.0f) / scale;
+        if (size > tallest)
+            size = std::max(base, tallest);
+        while (size > base && textWidth(text, size, bold) > box.getWidth())
+            size = std::max(base, size - 0.25f);
+    }
+    if (auditing) { // what is drawn: the width at the size used, the height in pixels
+        const float needed = textWidth(text, size, bold);
+        if (needed > box.getWidth() + 0.75f || size < kTextSmall / scale - 0.01f || size * scale > box.getHeight() + 2.0f)
+            AuditRecorder::note({AuditRecorder::painting(), text, box.getWidth(), needed, size * scale});
+    }
+    if (!visible)
+        return;
     g.setColour(colour);
     g.setFont(font(size, bold));
     g.drawText(text, box, just, true);

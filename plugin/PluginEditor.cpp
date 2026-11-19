@@ -43,6 +43,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     : juce::AudioProcessorEditor(processor), processor_(processor), ctx_(processor), modMap_(ctx_) {
     Theme::setCurrent(ctx_.prefs.theme);
     Theme::addUserThemes(ctx_.prefs.userContentFolder().getChildFile("Themes"));
+    setTextScale(static_cast<float>(ctx_.prefs.textSize) / 100.0f);
     lnf_.applyTheme();
     setLookAndFeel(&lnf_);
     setTitle("Zederia");
@@ -183,7 +184,7 @@ void ZederiaEditor::paintHeader(juce::Graphics& g) {
         drawScrew(g, p, 2.4f, p.x * 0.05f);
     // The wordmark, spaced out, over a small wave that turns from sine to saw.
     const juce::String word = "ZEDERIA";
-    const juce::Font mark = font(19.0f, true);
+    const juce::Font mark = font(19.0f / textScale(), true); // the wordmark is artwork: the text size leaves it alone
     float width = 0.0f;
     for (int i = 0; i < word.length(); ++i)
         width += juce::GlyphArrangement::getStringWidth(mark, word.substring(i, i + 1)) + (i + 1 < word.length() ? 3.0f : 0.0f);
@@ -257,7 +258,7 @@ void ZederiaEditor::applyLayout() {
     modMap_.setBounds(area);
     modMap_.scope = root_.get();
     palette_->setBounds(juce::Rectangle<int>(560, 420).withCentre(root_->getLocalBounds().getCentre()).withY(80));
-    prefs_->setBounds(juce::Rectangle<int>(520, 600).withCentre(root_->getLocalBounds().getCentre()));
+    prefs_->setBounds(juce::Rectangle<int>(520, 640).withCentre(root_->getLocalBounds().getCentre()));
     history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330 + kLogoWidth, kHeaderHeight - 30));
     if (isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
@@ -266,8 +267,10 @@ void ZederiaEditor::applyLayout() {
 
 void ZederiaEditor::applyTheme() {
     Theme::setCurrent(ctx_.prefs.theme);
+    setTextScale(static_cast<float>(ctx_.prefs.textSize) / 100.0f);
     lnf_.applyTheme();
     sendLookAndFeelChange();
+    applyLayout(); // some parts size themselves to their text
     repaint();
 }
 
@@ -694,37 +697,110 @@ void ZederiaEditor::showMainMenu() {
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&topBar_->menu));
 }
 
+juce::String ZederiaEditor::defaultSaveLocation() const {
+    // The folder of the current preset when it is one of yours in User Presets (saving again keeps
+    // it in its pack), otherwise User Presets: a free or an agent's preset is saved as your copy.
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    const juce::File user = presets.getChildFile(LibraryPage::userPresetsName());
+    const juce::File current = ctx_.session.currentPreset();
+    if (current.existsAsFile() && current.isAChildOf(user))
+        return current.getParentDirectory().getRelativePathFrom(presets).replaceCharacter('\\', '/');
+    return LibraryPage::userPresetsName();
+}
+
+bool ZederiaEditor::savePresetTo(const juce::String& name, const juce::String& location, const juce::String& type, const juce::String& tags,
+                                 juce::String& error, juce::File* saved) {
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    const juce::File folder = LibraryPage::resolveLocation(presets, location, error);
+    if (folder == juce::File())
+        return false;
+    zed::PatchMeta m = processor_.meta();
+    m.name = name.trim().toStdString();
+    if (m.name.empty())
+        m.name = "Untitled";
+    m.type = type.trim().toLowerCase().toStdString();
+    m.tags.clear();
+    for (const auto& t : juce::StringArray::fromTokens(tags, ",", ""))
+        if (t.trim().isNotEmpty())
+            m.tags.push_back(t.trim().toLowerCase().toStdString());
+    if (m.author.empty())
+        m.author = ctx_.prefs.author.toStdString();
+    const juce::File file = folder.getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
+    if (!ctx_.session.savePresetFile(file, m, error))
+        return false;
+    if (saved != nullptr)
+        *saved = file;
+    if (auto& library = pages_[static_cast<std::size_t>(Library)]; library != nullptr)
+        static_cast<LibraryPage&>(*library).rescan(); // the new preset shows at once
+    return true;
+}
+
 void ZederiaEditor::savePresetAs() {
-    auto dialog = std::make_shared<juce::AlertWindow>("Save preset", "Saved in your Presets folder.", juce::MessageBoxIconType::NoIcon);
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    LibraryPage::makeDefaultFolders(presets);
     const auto meta = processor_.meta();
+    auto dialog = std::make_shared<juce::AlertWindow>(
+        "Save preset", "Location is a folder in\n" + presets.getFullPathName() + "\nType User Presets/My Pack to make a folder for a pack.",
+        juce::MessageBoxIconType::NoIcon);
     dialog->addTextEditor("name", str(meta.name), "Name");
-    dialog->addTextEditor("type", str(meta.type), "Type (bass, lead, pad ...)");
+    dialog->addComboBox("location", LibraryPage::folderPaths(presets), "Location");
+    if (auto* where = dialog->getComboBoxComponent("location")) {
+        where->setEditableText(true);
+        where->setText(defaultSaveLocation(), juce::dontSendNotification);
+        where->setTitle("Location");
+    }
+    juce::StringArray types{"808", "bass", "synth", "lead", "pad", "pluck", "keys", "arp", "seq", "chord", "drum", "fx", "texture"};
+    if (!meta.type.empty())
+        types.addIfNotAlreadyThere(str(meta.type));
+    dialog->addComboBox("type", types, "Type");
+    if (auto* type = dialog->getComboBoxComponent("type")) {
+        type->setEditableText(true);
+        type->setText(str(meta.type), juce::dontSendNotification);
+        type->setTitle("Type");
+    }
     juce::StringArray tags;
     for (const auto& t : meta.tags)
         tags.add(str(t));
     dialog->addTextEditor("tags", tags.joinIntoString(", "), "Tags, separated by commas");
     dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    dialog->enterModalState(true, juce::ModalCallbackFunction::create([this, dialog](int result) {
-        if (result != 1)
+    juce::Component::SafePointer<ZederiaEditor> safe(this);
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safe, dialog, presets](int result) {
+        if (result != 1 || safe == nullptr)
             return;
-        zed::PatchMeta m = processor_.meta();
-        m.name = dialog->getTextEditorContents("name").trim().toStdString();
-        if (m.name.empty())
-            m.name = "Untitled";
-        m.type = dialog->getTextEditorContents("type").trim().toLowerCase().toStdString();
-        m.tags.clear();
-        for (const auto& t : juce::StringArray::fromTokens(dialog->getTextEditorContents("tags"), ",", ""))
-            if (t.trim().isNotEmpty())
-                m.tags.push_back(t.trim().toLowerCase().toStdString());
-        if (m.author.empty())
-            m.author = ctx_.prefs.author.toStdString();
-        const juce::File file = ctx_.userFolder().getChildFile("Presets").getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
+        const juce::String name = dialog->getTextEditorContents("name");
+        const juce::String location = dialog->getComboBoxComponent("location") != nullptr ? dialog->getComboBoxComponent("location")->getText() : juce::String();
+        const juce::String type = dialog->getComboBoxComponent("type") != nullptr ? dialog->getComboBoxComponent("type")->getText() : juce::String();
+        const juce::String tags = dialog->getTextEditorContents("tags");
+        const auto save = [safe, name, location, type, tags] {
+            if (safe == nullptr)
+                return;
+            juce::String error;
+            juce::File file;
+            if (safe->savePresetTo(name, location, type, tags, error, &file))
+                safe->help_->message("Saved " + file.getFullPathName());
+            else
+                safe->help_->message(error);
+        };
+        // Replacing another preset of the same name asks first; saving the open preset again does not.
         juce::String error;
-        if (ctx_.session.savePresetFile(file, m, error))
-            help_->message("Saved " + file.getFullPathName());
-        else
-            help_->message(error);
+        const juce::File folder = LibraryPage::resolveLocation(presets, location, error);
+        const juce::String legal = juce::File::createLegalFileName(name.trim().isEmpty() ? juce::String("Untitled") : name.trim());
+        const juce::File target = folder == juce::File() ? juce::File() : folder.getChildFile(legal + ".zpreset");
+        if (target.existsAsFile() && target != safe->ctx_.session.currentPreset()) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions{}
+                                             .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                             .withTitle("Replace preset")
+                                             .withMessage("\"" + legal + "\" already exists in " + folder.getFullPathName() + ". Replace it?")
+                                             .withButton("Replace", 1)
+                                             .withButton("Cancel", 0),
+                                         [save](int replace) {
+                                             if (replace == 1)
+                                                 save();
+                                         });
+            return;
+        }
+        save();
     }), false);
 }
 

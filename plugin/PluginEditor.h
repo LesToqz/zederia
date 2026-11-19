@@ -56,6 +56,11 @@ public:
     void openParamMenu(zui::ParamWidget& widget);
     void showMainMenu();
     void savePresetAs();
+    // What the save dialog does: name, location inside the Presets folder ("User Presets/My Pack";
+    // missing folders are made), type and comma-separated tags. False with a message on failure.
+    bool savePresetTo(const juce::String& name, const juce::String& location, const juce::String& type, const juce::String& tags, juce::String& error,
+                      juce::File* saved = nullptr);
+    juce::String defaultSaveLocation() const; // the dialog's first location
     void closeOverlays();
 
     // --- Frame clock --------------------------------------------------------------------------------

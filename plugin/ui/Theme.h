@@ -57,6 +57,12 @@ inline constexpr float kTextBody = 12.5f;
 inline constexpr float kTextTitle = 14.0f;
 inline constexpr float kTextLarge = 17.0f;
 
+// The text size preference: every size below is multiplied by it when text is drawn or measured
+// (0.9 to 1.3; 1 is the size the layout was made for). drawText() keeps enlarged text inside its
+// box by giving back as much of the enlargement as it must, never going below the base size.
+void setTextScale(float scale);
+float textScale();
+
 juce::Font font(float size, bool bold = false);
 float textWidth(const juce::String& text, float size, bool bold = false);
 // Draws one line in a box. Text that does not fit is drawn with an ellipsis (and recorded by an audit).

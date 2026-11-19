@@ -1,5 +1,7 @@
 #include "AgentPage.h"
 
+#include "Audit.h"
+
 #include "../AgentLink.h"
 #include "../PluginProcessor.h"
 #include "../Session.h"
@@ -18,6 +20,13 @@ juce::String fitLine(juce::String text, float width, float size) {
     while (text.length() > 1 && textWidth(text + dots, size) > width)
         text = text.dropLastCharacters(1);
     return text + dots;
+}
+
+// A configuration written on several lines, shown on one.
+juce::String oneLine(const juce::String& text) {
+    juce::StringArray words = juce::StringArray::fromTokens(text, " \r\n\t", "\"");
+    words.removeEmptyStrings();
+    return words.joinIntoString(" ");
 }
 
 } // namespace
@@ -62,6 +71,125 @@ private:
     juce::StringArray lines_;
 };
 
+// The Connect panel: one block per agent client with its configuration and a prompt to copy.
+class AgentPage::ConnectPanel final : public Card {
+public:
+    struct Client {
+        juce::String name, where;
+        std::function<juce::String()> config, prompt;
+    };
+
+    explicit ConnectPanel(AgentPage& owner) : Card("Connect an agent", Family::Neutral), owner_(owner) {
+        markOverlay(*this);
+        screws = false;
+        clients_ = {{"Claude Code", "Config: save it as .mcp.json in the folder you start Claude Code in. The prompt adds Zederia for every project.", claudeJson,
+                     claudePrompt},
+                    {"Codex", "Config: add it to config.toml in the .codex folder of your user profile (%USERPROFILE%\\.codex\\config.toml).", codexToml,
+                     codexPrompt},
+                    {"Antigravity", "Config: add it to mcp_config.json (the /mcp command shows where that file is).", antigravityJson, antigravityPrompt}};
+        auto& close = parts_.add<Button>(*this, "", Glyph::Close);
+        close.ghost = true;
+        close.setTitle("Close the Connect panel");
+        close.setTooltip("Close");
+        close.setBounds(0, 0, 24, 22);
+        close.onClick = [this] { owner_.showConnect(false); };
+        headerRight.push_back(&close);
+        for (const auto& c : clients_) {
+            auto& config = parts_.add<Button>(*this, "Copy config", Glyph::Copy);
+            config.textSize = kTextSmall + 0.5f;
+            config.setTitle("Copy the " + c.name + " config");
+            config.setHelp("Copy config", "Copies the " + c.name + " configuration for this computer's zederia-mcp to the clipboard.");
+            const auto text = c.config;
+            const juce::String name = c.name;
+            config.onClick = [this, text, name] {
+                owner_.ctx_.session.copyText(text());
+                if (owner_.ctx_.notify)
+                    owner_.ctx_.notify("Copied the " + name + " config. Paste it into the file named beside it, then restart " + name + ".");
+            };
+            auto& prompt = parts_.add<Button>(*this, "Copy prompt", Glyph::Wand);
+            prompt.textSize = kTextSmall + 0.5f;
+            prompt.accentStyle = true;
+            prompt.setTitle("Copy the prompt for " + c.name);
+            prompt.setHelp("Copy prompt", "Copies a request to paste into " + c.name + ": it checks the server, adds Zederia to its own settings and tells you when to restart.");
+            const auto request = c.prompt;
+            prompt.onClick = [this, request, name] {
+                owner_.ctx_.session.copyText(request());
+                if (owner_.ctx_.notify)
+                    owner_.ctx_.notify("Copied the prompt. Paste it into " + name + ": it sets Zederia up itself.");
+            };
+            config_.push_back(&config);
+            prompt_.push_back(&prompt);
+        }
+        auto& link = parts_.add<Button>(*this, "Agent link off");
+        link.toggleRole = true;
+        link.textSize = kTextSmall + 0.5f;
+        link.setHelp("Agent link", "Lets agents reach this window's sound (live:... in list_targets). Not needed for headless sessions.");
+        link.onClick = [this] { owner_.toggleLink(); };
+        link_ = &link;
+    }
+
+    void setLinkState(bool on) {
+        link_->setToggled(on);
+        link_->setText(on ? "Agent link on" : "Agent link off");
+    }
+
+    void resized() override {
+        Card::resized();
+        auto area = body();
+        area.removeFromTop(kIntroHeight);
+        for (std::size_t i = 0; i < clients_.size(); ++i) {
+            auto block = area.removeFromTop(kBlockHeight);
+            auto buttons = block.removeFromBottom(26).withTrimmedBottom(0);
+            config_[i]->setBounds(buttons.removeFromLeft(130));
+            buttons.removeFromLeft(8);
+            prompt_[i]->setBounds(buttons.removeFromLeft(130));
+            area.removeFromTop(kBlockGap);
+        }
+        link_->setBounds(area.removeFromTop(26).removeFromLeft(130));
+    }
+
+    void draw(juce::Graphics& g) override {
+        Card::draw(g);
+        const Theme& t = theme();
+        auto area = body().toFloat();
+        auto intro = area.removeFromTop(static_cast<float>(kIntroHeight));
+        drawText(g, "Pick your agent. Copy prompt: paste it into the agent and it sets Zederia up by itself.", intro.removeFromTop(17.0f), kTextSmall + 0.5f, t.text);
+        drawText(g, "Copy config: paste it into the agent's settings file yourself. Restart the agent afterwards so Zederia's tools load.",
+                 intro.removeFromTop(17.0f), kTextSmall + 0.5f, t.textDim);
+        const bool found = juce::File(serverPath()).existsAsFile();
+        drawText(g, fitLine((found ? "Server: " : "Not found yet: ") + serverPath() + (found ? juce::String() : juce::String("  (install Zederia first)")),
+                            intro.getWidth(), kTextSmall + 0.5f),
+                 intro.removeFromTop(17.0f), kTextSmall + 0.5f, found ? t.textDim : t.warning);
+        for (const auto& c : clients_) {
+            auto block = area.removeFromTop(static_cast<float>(kBlockHeight));
+            drawText(g, c.name, block.removeFromTop(20.0f), kTextTitle, t.text, juce::Justification::centredLeft, true);
+            drawText(g, fitLine(c.where, block.getWidth(), kTextSmall + 0.5f), block.removeFromTop(17.0f), kTextSmall + 0.5f, t.textDim);
+            block.removeFromTop(2.0f);
+            const auto well = block.removeFromTop(24.0f);
+            g.setColour(t.sunken);
+            g.fillRoundedRectangle(well, 4.0f);
+            g.setColour(t.line);
+            g.drawRoundedRectangle(well.reduced(0.5f), 4.0f, 1.0f);
+            drawText(g, fitLine(oneLine(c.config()), well.getWidth() - 16.0f, kTextSmall), well.reduced(8.0f, 0.0f), kTextSmall, t.text);
+            area.removeFromTop(static_cast<float>(kBlockGap));
+        }
+        drawText(g, "Agents reach this window's sound only while the link is on; their own sessions need no link.",
+                 area.removeFromTop(26.0f).withTrimmedLeft(140.0f), kTextSmall + 0.5f, t.textDim);
+    }
+
+    static constexpr int kIntroHeight = 58, kBlockHeight = 96, kBlockGap = 10;
+    static constexpr int kPanelHeight = 28 + 12 + kIntroHeight + 3 * (kBlockHeight + kBlockGap) + 26 + 6;
+
+private:
+    AgentPage& owner_;
+    Parts parts_;
+    std::vector<Client> clients_;
+    std::vector<Button*> config_, prompt_;
+    Button* link_ = nullptr;
+};
+
+// --- What the buttons copy -------------------------------------------------------------------------------
+
 juce::String AgentPage::serverPath() {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getParentDirectory()
@@ -74,13 +202,57 @@ juce::String AgentPage::serverPath() {
 }
 
 juce::String AgentPage::claudeJson() {
-    return "{ \"mcpServers\": { \"zederia\": { \"command\": \"" + serverPath() + "\", \"args\": [\"--stdio\"] } } }";
+    return "{\n  \"mcpServers\": {\n    \"zederia\": {\n      \"command\": \"" + serverPath() + "\",\n      \"args\": [\"--stdio\"]\n    }\n  }\n}\n";
 }
-juce::String AgentPage::claudeCommand() { return "claude mcp add zederia -- \"" + serverPath() + "\" --stdio"; }
+juce::String AgentPage::claudeCommand() { return "claude mcp add zederia -s user -- \"" + serverPath() + "\" --stdio"; }
 juce::String AgentPage::codexToml() {
     return "[mcp_servers.zederia]\ncommand = \"" + serverPath() + "\"\nargs = [\"--stdio\"]\n";
 }
 juce::String AgentPage::antigravityJson() { return claudeJson(); }
+
+namespace {
+
+juce::String promptHead(const juce::String& client) {
+    return "Set up the Zederia MCP server for me in " + client + ".\n\n"
+           "Zederia is a wavetable synthesizer. Its MCP server is a program on this computer:\n  " + AgentPage::serverPath() +
+           "\nIt speaks MCP over stdio when it is started with the argument --stdio.\n\n"
+           "1. Check that the file exists. If it does not, stop and tell me that Zederia has to be installed first.\n";
+}
+
+juce::String promptTail(const juce::String& restart) {
+    return "Then tell me what you did, and that I need to " + restart +
+           " for the Zederia tools to appear. Once they are there, read the resource zederia://guide/agent before using them.\n\n"
+           "Do not change any other settings.\n";
+}
+
+} // namespace
+
+juce::String AgentPage::claudePrompt() {
+    return promptHead("Claude Code") + "2. Add it for my user account, so every project has it, by running:\n   " + claudeCommand() +
+           "\n   If it says a server named zederia already exists, run `claude mcp remove zederia -s user` and then the command again.\n"
+           "3. Run `claude mcp list` and check that zederia is listed as connected.\n" +
+           promptTail("start a new Claude Code session");
+}
+
+juce::String AgentPage::codexPrompt() {
+    return promptHead("Codex") +
+           "2. Add it to my Codex configuration: the file config.toml in the .codex folder of my user profile "
+           "(%USERPROFILE%\\.codex\\config.toml; create the file if it does not exist). If the file already has a [mcp_servers.zederia] table, "
+           "replace that table; otherwise add this at the end. Leave everything else in the file as it is:\n\n" +
+           codexToml() + "\n   (If your version has `codex mcp add`, the command `codex mcp add zederia -- \"" + serverPath() +
+           "\" --stdio` does the same.)\n" + promptTail("restart Codex");
+}
+
+juce::String AgentPage::antigravityPrompt() {
+    return promptHead("Antigravity") +
+           "2. Find your MCP configuration file, mcp_config.json (the /mcp command shows where it is). Inside its \"mcpServers\" object add this "
+           "entry, keeping every other server as it is:\n\n"
+           "\"zederia\": { \"command\": \"" + serverPath() + "\", \"args\": [\"--stdio\"] }\n\n"
+           "   If the file does not exist yet, create it with:\n\n" + antigravityJson() + "\n" +
+           promptTail("restart Antigravity (or reload its MCP servers)");
+}
+
+// --- The page --------------------------------------------------------------------------------------------
 
 AgentPage::AgentPage(Context& ctx) : Page(ctx) {
     setTitle("AGENT");
@@ -108,8 +280,7 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         if (link.generation() != seenGeneration_ && revert_ != nullptr && linkSwitch_ != nullptr) {
             seenGeneration_ = link.generation();
             revert_->setEnabled(link.canRevert());
-            linkSwitch_->setToggled(link.enabled());
-            linkSwitch_->setText(link.enabled() ? "Agent link on" : "Agent link off");
+            showLinkState();
         }
         juce::StringArray lines;
         const auto entries = link.activity();
@@ -137,9 +308,7 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         return lines;
     });
     setup_ = std::make_unique<LinesCard>("Client setup", [] {
-        return juce::StringArray{"Claude Code:  " + claudeCommand(), "   or in a project's .mcp.json:  " + claudeJson(),
-                                 "Codex (~/.codex/config.toml):  [mcp_servers.zederia]  command = \"" + serverPath() + "\"  args = [\"--stdio\"]",
-                                 "Antigravity CLI (mcp_config.json; /mcp shows where):  the same mcpServers entry as Claude Code"};
+        return juce::StringArray{"Connect Claude Code, Codex or Antigravity to Zederia: copy a prompt for the agent, or its config."};
     });
     for (auto* c : {link_.get(), clients_.get(), log_.get(), permissions_.get(), setup_.get()})
         addAndMakeVisible(*c);
@@ -149,16 +318,7 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
     linkSwitch.setToggled(link.enabled());
     linkSwitch.setHelp("Agent link", "Turns this instance's local link for AI agents on or off. Off by default; the top bar shows when it is on.");
     linkSwitch.setBounds(0, 0, 130, 24);
-    linkSwitch.onClick = [this] {
-        auto& l = ctx_.processor.agentLink();
-        std::string error;
-        if (!l.setEnabled(!l.enabled(), error) && ctx_.notify)
-            ctx_.notify("Agent Link could not start: " + juce::String(error));
-        linkSwitch_->setToggled(l.enabled());
-        linkSwitch_->setText(l.enabled() ? "Agent link on" : "Agent link off");
-        link_->refreshNow();
-        clients_->refreshNow();
-    };
+    linkSwitch.onClick = [this] { toggleLink(); };
     linkSwitch_ = &linkSwitch;
     link_->headerRight.push_back(&linkSwitch);
 
@@ -220,25 +380,48 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         folderButtons_.push_back(&b);
     }
 
-    // Copy buttons for the client snippets.
-    const std::vector<std::pair<juce::String, std::function<juce::String()>>> copies = {
-        {"Copy claude mcp add", claudeCommand}, {"Copy .mcp.json", claudeJson}, {"Copy Codex", codexToml}, {"Copy Antigravity", antigravityJson}};
-    for (const auto& [label, text] : copies) {
-        auto& b = parts_.add<Button>(*setup_, label, Glyph::Copy);
-        b.setHelp(label, "Copies the client configuration for this computer's zederia-mcp to the clipboard.");
-        auto make = text;
-        b.onClick = [this, make] {
-            ctx_.session.copyText(make());
-            if (ctx_.notify)
-                ctx_.notify("Copied.");
-        };
-        folderButtons_.push_back(&b);
-    }
+    // Client setup: one button; the panel it opens has each client's config and prompt.
+    auto& connect = parts_.add<Button>(*setup_, "Connect", Glyph::Link);
+    connect.accentStyle = true;
+    connect.setHelp("Connect", "Shows how to connect Claude Code, Codex or Antigravity: copy a prompt the agent follows to set Zederia up, or copy its config.");
+    connect.onClick = [this] { showConnect(!connectShown()); };
+    connectButton_ = &connect;
+    connect_ = std::make_unique<ConnectPanel>(*this);
+    addChildComponent(*connect_);
+
     refreshPermissions();
+    showLinkState();
     seenGeneration_ = link.generation();
 }
 
 AgentPage::~AgentPage() = default;
+
+void AgentPage::showConnect(bool shown) {
+    connect_->setVisible(shown);
+    if (shown)
+        connect_->toFront(false);
+    connectButton_->setToggled(shown);
+}
+
+bool AgentPage::connectShown() const { return connect_ != nullptr && connect_->isVisible(); }
+
+void AgentPage::toggleLink() {
+    auto& l = ctx_.processor.agentLink();
+    std::string error;
+    if (!l.setEnabled(!l.enabled(), error) && ctx_.notify)
+        ctx_.notify("Agent Link could not start: " + juce::String(error));
+    showLinkState();
+    link_->refreshNow();
+    clients_->refreshNow();
+}
+
+void AgentPage::showLinkState() {
+    const bool on = ctx_.processor.agentLink().enabled();
+    linkSwitch_->setToggled(on);
+    linkSwitch_->setText(on ? "Agent link on" : "Agent link off");
+    if (connect_ != nullptr)
+        connect_->setLinkState(on);
+}
 
 void AgentPage::refreshPermissions() {
     const auto p = zed::link::loadPermissions();
@@ -284,6 +467,7 @@ void AgentPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void AgentPage::resized() {
     auto area = getLocalBounds().reduced(8);
+    connect_->setBounds(juce::Rectangle<int>(780, ConnectPanel::kPanelHeight).withCentre(area.getCentre()).constrainedWithin(area));
     auto left = area.removeFromLeft(area.getWidth() / 2 - 4);
     area.removeFromLeft(8);
     link_->setBounds(left.removeFromTop(100));
@@ -309,14 +493,12 @@ void AgentPage::resized() {
         }
         permissions_->topReserve = 4 * 28 + 4;
     }
-    log_->setBounds(area.removeFromTop(area.getHeight() - 168));
+    log_->setBounds(area.removeFromTop(area.getHeight() - 100));
     area.removeFromTop(8);
     setup_->setBounds(area);
     {
         auto body = setup_->body();
-        const int w = (body.getWidth() - 3 * 8) / 4;
-        for (std::size_t i = 0; i < 4; ++i)
-            folderButtons_[3 + i]->setBounds(body.getX() + static_cast<int>(i) * (w + 8), body.getBottom() - 26, w, 24);
+        connectButton_->setBounds(body.getX(), body.getBottom() - 28, 140, 26);
     }
 }
 

@@ -8,6 +8,7 @@
 #include "PluginProcessor.h"
 #include "Prefs.h"
 #include "Session.h"
+#include "ui/AgentPage.h"
 #include "ui/Audit.h"
 #include "ui/FxPage.h"
 #include "ui/LibraryPage.h"
@@ -21,6 +22,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <chrono>
 #include <set>
 #include <thread>
@@ -54,13 +56,18 @@ struct Rig {
         processor.setPlayConfigDetails(0, 2, 48000.0, 512);
         processor.prepareToPlay(48000.0, 512);
         midi.ensureSize(4096);
+        // Every rig has a content folder of its own: the library makes its default folders in the
+        // user folder, and tests never touch the person's Documents.
+        userFolder = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_library_" + juce::Uuid().toString());
+        userFolder.createDirectory();
         if (withLibrary) {
-            userFolder = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_library_" + juce::Uuid().toString());
             const auto presets = userFolder.getChildFile("Presets").getChildFile("Tests");
             presets.createDirectory();
             for (const char* name : {"bass", "pad", "pluck", "lead", "arp_fx", "glass_pluck"})
                 presets.getChildFile(juce::String(name) + ".zpreset").replaceWithText(juce::String::fromUTF8(readPatch((std::string(name) + ".zpreset").c_str()).c_str()));
             processor.setContentFolders("", userFolder.getFullPathName().toStdString());
+        } else {
+            processor.setContentFolders(processor.library().factoryDir(), userFolder.getFullPathName().toStdString());
         }
         if (patch != nullptr) {
             REQUIRE(processor.loadPatchJson(readPatch(patch)).ok());
@@ -805,13 +812,188 @@ TEST_CASE("editor: the library searches, sorts, edits in bulk, exports and impor
     int skipped = 0;
     CHECK(lib.importPack(pack, skipped) == 0); // every sound is already there
     CHECK(skipped == 6);
-    // A preset loads and its audition phrase plays.
+    // A click on one preset loads it; Ctrl-click builds a selection for bulk edits and loads nothing.
     lib.setQuery("type:pad");
     REQUIRE(lib.resultCount() == 1);
-    lib.audition(0);
-    CHECK(rig.processor.auditioning());
-    rig.run(40);
+    lib.table().deselectAllRows();
+    lib.table().selectRowsBasedOnModifierKeys(0, {}, false);
+    CHECK(rig.processor.session().currentPreset().getFullPathName() == str(lib.result(0).path));
+    CHECK(str(rig.processor.meta().type) == "pad");
+    lib.setQuery("");
+    lib.table().deselectAllRows();
+    lib.table().selectRowsBasedOnModifierKeys(0, {}, false);
+    const juce::String first = str(lib.result(0).path);
+    CHECK(rig.processor.session().currentPreset().getFullPathName() == first);
+    lib.table().selectRowsBasedOnModifierKeys(1, juce::ModifierKeys(juce::ModifierKeys::commandModifier), false);
+    CHECK(lib.selectedRows().size() == 2);
+    CHECK(rig.processor.session().currentPreset().getFullPathName() == first);
+    // Selections the page makes itself (bulk edits, finding duplicates) load nothing.
+    lib.selectRow(2);
+    CHECK(rig.processor.session().currentPreset().getFullPathName() == first);
+    rig.run(4);
     juce::ignoreUnused(bright);
+}
+
+TEST_CASE("editor: the library shows the Presets folder as a tree, folds its sections and saves presets into folders", "[editor][library]") {
+    Rig rig(nullptr, true);
+    rig.editor->showPage(ZederiaEditor::Library);
+    auto& lib = dynamic_cast<zui::LibraryPage&>(rig.editor->page(ZederiaEditor::Library));
+    const juce::File presets = rig.userFolder.getChildFile("Presets");
+    const juce::File user = presets.getChildFile("User Presets");
+    // The folders of the free presets and User Presets are made, empty, when the library opens.
+    for (const auto& name : zui::LibraryPage::defaultFolders())
+        CHECK(presets.getChildFile(name).isDirectory());
+    const auto top = lib.visibleFolders();
+    REQUIRE(top.size() == zui::LibraryPage::defaultFolders().size() + 1); // and the tests' own folder
+    CHECK(top[0] == "808");
+    CHECK(top[1] == "Bass");
+    CHECK(top.contains("Tests"));
+    CHECK(top[top.size() - 1] == "User Presets");
+
+    // Locations as typed in the save dialog.
+    juce::String error;
+    CHECK(zui::LibraryPage::resolveLocation(presets, "", error) == user);
+    CHECK(zui::LibraryPage::resolveLocation(presets, "User Presets/My Phonk Pack", error) == user.getChildFile("My Phonk Pack"));
+    CHECK(zui::LibraryPage::resolveLocation(presets, "User Presets\\phonk1\\", error) == user.getChildFile("phonk1"));
+    CHECK(zui::LibraryPage::resolveLocation(presets, "../../Windows", error) == presets.getChildFile("Windows")); // never above Presets
+    CHECK(zui::LibraryPage::resolveLocation(presets, presets.getChildFile("Bass").getFullPathName(), error) == presets.getChildFile("Bass"));
+    const juce::File named = rig.userFolder.getChildFile("Zederia").getChildFile("Presets");
+    CHECK(zui::LibraryPage::resolveLocation(named, "\\Zederia\\Presets\\user presets\\", error) == named.getChildFile("user presets"));
+    CHECK(zui::LibraryPage::resolveLocation(named, "Presets/Bass", error) == named.getChildFile("Bass"));
+    CHECK(error.isEmpty());
+    CHECK(zui::LibraryPage::resolveLocation(presets, juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getFullPathName(), error) == juce::File());
+    CHECK(error.isNotEmpty());
+
+    // Saving into a new folder of User Presets: name, location, type and tags.
+    CHECK(rig.editor->defaultSaveLocation() == "User Presets");
+    juce::File saved;
+    error.clear();
+    REQUIRE(rig.editor->savePresetTo("Kick", "User Presets/My Phonk Pack", "808", "Hard, phonk", error, &saved));
+    CHECK(saved == user.getChildFile("My Phonk Pack").getChildFile("Kick.zpreset"));
+    CHECK(saved.existsAsFile());
+    CHECK(rig.editor->defaultSaveLocation() == "User Presets/My Phonk Pack"); // saving again stays in its pack
+    // A preset that is not one of yours is saved as your copy, in User Presets.
+    juce::String loadError;
+    REQUIRE(rig.processor.session().loadPresetFile(presets.getChildFile("Tests").getChildFile("pad.zpreset"), loadError));
+    CHECK(rig.editor->defaultSaveLocation() == "User Presets");
+    REQUIRE(rig.editor->savePresetTo("Snare", "User Presets/phonk1", "drum", "", error));
+    // The library shows them at once, each in its folder.
+    CHECK(lib.visibleFolders().contains("User Presets/My Phonk Pack"));
+    CHECK(lib.visibleFolders().contains("User Presets/phonk1"));
+    lib.setFolder("User Presets/My Phonk Pack");
+    REQUIRE(lib.resultCount() == 1);
+    CHECK(str(lib.result(0).meta.name) == "Kick");
+    CHECK(str(lib.result(0).meta.type) == "808");
+    CHECK(lib.result(0).meta.tags == std::vector<std::string>{"hard", "phonk"});
+    lib.setFolder("User Presets"); // a folder shows the presets in the folders inside it too
+    CHECK(lib.resultCount() == 2);
+    lib.setFolder("Tests");
+    CHECK(lib.resultCount() == 6);
+    lib.setFolder("Bass");
+    CHECK(lib.resultCount() == 0);
+    lib.setFolder("");
+    CHECK(lib.resultCount() == 8);
+    // A closed folder hides the folders inside it; choosing a folder inside opens the way to it.
+    lib.setFolderOpen("User Presets", false);
+    CHECK_FALSE(lib.visibleFolders().contains("User Presets/phonk1"));
+    lib.setFolder("User Presets/phonk1");
+    CHECK(lib.visibleFolders().contains("User Presets/phonk1"));
+    CHECK(lib.resultCount() == 1);
+    // Sections fold away, and the page remembers the folder, the open folders and the folded sections.
+    for (const char* key : {"presets", "show", "type", "tag", "genre"}) {
+        lib.setSectionCollapsed(key, true);
+        CHECK(lib.sectionCollapsed(key));
+    }
+    lib.setSectionCollapsed("presets", false);
+    nlohmann::json state;
+    lib.saveState(state);
+    lib.setSectionCollapsed("type", false);
+    lib.setFolder("");
+    lib.loadState(state);
+    CHECK(lib.sectionCollapsed("type"));
+    CHECK_FALSE(lib.sectionCollapsed("presets"));
+    CHECK(lib.folder() == "User Presets/phonk1");
+    CHECK(lib.resultCount() == 1);
+    // The page with folded sections and a deep folder chosen still lays out cleanly.
+    rig.frames(2);
+    std::vector<zui::Finding> findings;
+    zui::writePng(zui::renderSnapshot(*rig.editor, &findings), snapshotFolder().getChildFile("library_100_folders.png"));
+    for (auto& f : zui::checkLayout(*rig.editor))
+        findings.push_back(f);
+    for (const auto& f : findings)
+        UNSCOPED_INFO(f.kind << ": " << f.where << ": " << f.detail);
+    CHECK(findings.empty());
+}
+
+TEST_CASE("editor: larger text sizes keep every page free of clipped or truncated text", "[editor][snapshot][text]") {
+    Rig rig("arp_fx.zpreset", true);
+    rig.frames(4);
+    static const char* const names[] = {"synth", "fx", "mod", "table", "play", "library", "agent"};
+    for (const int size : {115, 130}) {
+        rig.ctx().prefs.textSize = size;
+        rig.editor->applyTheme();
+        CHECK(zui::textScale() == Catch::Approx(size / 100.0));
+        for (int page = 0; page < 7; ++page) {
+            rig.editor->showPage(page);
+            showForCheck(rig);
+            std::vector<zui::Finding> findings;
+            const auto image = zui::renderSnapshot(*rig.editor, &findings);
+            for (auto& f : zui::checkLayout(*rig.editor))
+                findings.push_back(f);
+            const juce::String file = juce::String(names[page]) + "_100_text" + juce::String(size);
+            zui::writePng(image, snapshotFolder().getChildFile(file + ".png"));
+            for (const auto& f : findings)
+                UNSCOPED_INFO(file << ": " << f.kind << ": " << f.where << ": " << f.detail);
+            CHECK(findings.empty());
+        }
+    }
+    // The preference survives the settings file (this test process's own).
+    rig.ctx().prefs.textSize = 115;
+    Prefs::get().save();
+    Prefs other;
+    REQUIRE(other.load(Prefs::file()));
+    CHECK(other.textSize == 115);
+    rig.ctx().prefs.textSize = 100;
+    Prefs::get().save();
+    rig.editor->applyTheme();
+    CHECK(zui::textScale() == 1.0f);
+}
+
+TEST_CASE("editor: the AGENT page's Connect panel offers a config and a prompt for each client", "[editor][agent]") {
+    Rig rig;
+    rig.editor->showPage(ZederiaEditor::Agent);
+    auto& agent = dynamic_cast<zui::AgentPage&>(rig.editor->page(ZederiaEditor::Agent));
+    CHECK_FALSE(agent.connectShown());
+    agent.showConnect(true);
+    CHECK(agent.connectShown());
+    rig.frames(2);
+    std::vector<zui::Finding> findings;
+    zui::writePng(zui::renderSnapshot(*rig.editor, &findings), snapshotFolder().getChildFile("overlay_connect_100.png"));
+    for (auto& f : zui::checkLayout(*rig.editor))
+        findings.push_back(f);
+    for (const auto& f : findings)
+        UNSCOPED_INFO(f.kind << ": " << f.where << ": " << f.detail);
+    CHECK(findings.empty());
+    agent.showConnect(false);
+    CHECK_FALSE(agent.connectShown());
+
+    const juce::String path = zui::AgentPage::serverPath();
+    CHECK(path.endsWith("/AppData/Local/Programs/Zederia/zederia-mcp.exe"));
+    CHECK(zui::AgentPage::codexToml() == "[mcp_servers.zederia]\ncommand = \"" + path + "\"\nargs = [\"--stdio\"]\n");
+    for (const auto& json : {zui::AgentPage::claudeJson(), zui::AgentPage::antigravityJson()}) {
+        const auto parsed = nlohmann::json::parse(json.toStdString());
+        CHECK(parsed["mcpServers"]["zederia"]["command"] == path.toStdString());
+        CHECK(parsed["mcpServers"]["zederia"]["args"] == nlohmann::json::array({"--stdio"}));
+    }
+    // Each prompt names the server, says how to add it to that client and where the guide is.
+    CHECK(zui::AgentPage::claudePrompt().contains(zui::AgentPage::claudeCommand()));
+    CHECK(zui::AgentPage::codexPrompt().contains(zui::AgentPage::codexToml()));
+    CHECK(zui::AgentPage::antigravityPrompt().contains("mcp_config.json"));
+    for (const auto& prompt : {zui::AgentPage::claudePrompt(), zui::AgentPage::codexPrompt(), zui::AgentPage::antigravityPrompt()}) {
+        CHECK(prompt.contains(path));
+        CHECK(prompt.contains("--stdio"));
+        CHECK(prompt.contains("zederia://guide/agent"));
+    }
 }
 
 TEST_CASE("editor: the PLAY page edits steps and clips, and clips go to and from MIDI files", "[editor][play]") {

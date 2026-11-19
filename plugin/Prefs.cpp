@@ -78,6 +78,7 @@ bool Prefs::load(const juce::File& from) {
         number("default_scale", defaultScale, 70, 300);
         flag("rotary_drag", rotaryDrag);
         number("wheel", wheel, 0, 2);
+        number("text_size", textSize, 90, 130);
         flag("double_click_types", doubleClickTypes);
         flag("tooltips", tooltips);
         flag("help_strip", helpStrip);
@@ -114,6 +115,7 @@ void Prefs::save() const {
     doc["default_scale"] = defaultScale;
     doc["rotary_drag"] = rotaryDrag;
     doc["wheel"] = wheel;
+    doc["text_size"] = textSize;
     doc["double_click_types"] = doubleClickTypes;
     doc["tooltips"] = tooltips;
     doc["help_strip"] = helpStrip;

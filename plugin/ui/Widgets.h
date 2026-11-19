@@ -26,6 +26,7 @@ private:
     juce::Rectangle<int> area_;
     std::uint64_t key_ = 0;
     juce::String theme_;
+    float textScale_ = 1.0f;
 };
 
 // --- Base -------------------------------------------------------------------------------------------
@@ -306,6 +307,8 @@ public:
     bool ghost = false;        // no frame until hovered
     bool toggleRole = false;   // announces itself as a toggle
     bool leftAlign = false;    // text from the left edge (lists)
+    bool boldText = false;     // section headings
+    bool dimText = false;      // the secondary text colour
     float textSize = kTextBody;
     Glyph glyph;
 
@@ -426,6 +429,7 @@ class TextField final : public juce::TextEditor {
 public:
     explicit TextField(const juce::String& placeholder, const juce::String& accessibleName);
     void paintOverChildren(juce::Graphics& g) override;
+    void lookAndFeelChanged() override; // the text size preference changed
     juce::String placeholder;
 };
 

@@ -12,6 +12,7 @@ struct Prefs {
     // Interface
     juce::String theme = "Graphite";
     int defaultScale = 100;      // percent of 1320 x 940, 70..300
+    int textSize = 100;          // percent of the text sizes the layout was made for: 90, 100, 115 or 130
     bool rotaryDrag = false;     // false: knobs follow vertical drags; true: they follow the angle around them
     int wheel = 1;               // 0 off, 1 normal, 2 fine
     bool doubleClickTypes = false; // false: double-click resets; true: it opens value entry

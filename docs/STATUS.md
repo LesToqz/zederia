@@ -64,6 +64,13 @@
   - **Stuck notes fixed**: the keys count what holds each note (the mouse, any computer key) and end it with the last; a release the window never receives (mouse let go outside the window or kept by the host, a key let go while another window had focus) is caught every frame from the real button and key state; hiding or closing the editor lets go of everything; and the processor itself releases any note the screen started but no longer holds, so a release lost in a full queue still ends the note.
   - **Fits the screen**: the editor shrinks on its first appearance, if it must, so the whole window including the keyboard fits the display.
   - Fixed on the way: the filter display repainted every frame while idle (it hashed its settings including padding bytes); the PLAY page's chord panel was clipped at the new height.
+- Interface follow-up (2026-11-19, from hands-on feedback), on branch `ui-library-agent-setup`:
+  - **Knob highlight that stayed**: a control drew its held value in the accent and its cap ring while hovered, but repainted neither when a click ended without moving the value nor when the pointer left. Any repaint during the click (the focus hand-back) left the accent drawn until something else repainted it, so a row of clicked knobs stayed lit. Controls now repaint when a gesture starts and ends and when the pointer enters and leaves.
+  - **Text size** in the preferences: Small 90 %, Normal 100 %, Large 115 %, Largest 130 %, live, independent of the window size. Where a larger text has no room it gives back as much as it must, never below the normal size, so nothing is cut off that fits at 100 %.
+  - **LIBRARY**: the left column starts with PRESETS, the Presets folder as a tree (All presets, then each folder with its count; folders with folders inside open and close with an arrow; choosing a folder shows its presets and those of the folders inside it). Every section (PRESETS, SHOW, TYPE, CHARACTER, GENRE, PACK, AUTHOR) folds away from its heading. The library makes the default folders when it opens: `808`, `Bass`, `Synth`, `Lead`, `Pad`, `Pluck`, `Keys`, `Arp`, `FX` for the free presets that come with Zederia (empty for now) and `User Presets` for your own. New folder (inside the chosen folder, or User Presets) and Show in Explorer in the toolbar; imported packs go to `User Presets/<pack name>`.
+  - **A click loads a preset**: one click (or the arrow keys) on a preset loads it; Ctrl and Shift build a selection for bulk edits and load nothing. The Audition and Load buttons are gone (double-click and Enter still load).
+  - **Save preset** asks for name, location, type and tags. The location is a folder inside `Documents\Zederia\Presets`, chosen from a list of the existing folders or typed (`User Presets/My Phonk Pack` makes the folder); it starts at User Presets, or at the current preset's folder when that preset is already one of yours. Replacing another preset of the same name asks first. The library shows the new preset at once.
+  - **AGENT, Client setup**: one line and a Connect button. Connect opens a panel with Claude Code, Codex and Antigravity, each with where its configuration goes, a preview, **Copy config** (`.mcp.json`, `config.toml` with the `[mcp_servers.zederia]` table, `mcp_config.json`) and **Copy prompt** (a request to paste into that agent: check the server file, add Zederia to its own settings, confirm, and say when to restart). The panel also has the link switch. The preferences' Agent link row shows the link's state.
 
 - Milestone 6 (the agent bridge), tagged `m6-done`:
   - **Protocol revisions supported: 2026-07-28** (the current revision: stateless, `server/discover`, per-request `_meta`, `resultType`, cache hints, the HTTP headers) **and 2025-11-25 and 2025-06-18** (the `initialize` handshake). Both generations are served by one process and on one HTTP endpoint at the same time.
@@ -133,6 +140,18 @@ Codex then ran the example sessions of plan 4.10. Prompts and transcripts are in
 - Four loops, each exactly 8 bars (15.484 s) with 0 clipped samples: `ZED_chords_AmberStepPluck_Fmin_124bpm` (−17.7 LUFS, peak −2.5 dBFS), `ZED_melody_AmberStepPluck_Fmin_124bpm` (−12.4 LUFS, −1.2 dBFS), `ZED_chords_VelvetTine_Fmin_124bpm` (−12.6 LUFS, −1.6 dBFS) and `ZED_melody_VelvetTine_Fmin_124bpm` (−12.4 LUFS, −5.8 dBFS).
 - Files: each loop's `.wav` and `.mid` in `Documents/Zederia/Renders/`, the two clips in `Documents/Zederia/Clips/Agent/`, and `Velvet Tine.zpreset` in `Documents/Zederia/Presets/Agent/`.
 - Codex's approval rule refused only `close_session`, which is marked destructive.
+
+### Interface follow-up (2026-11-19: knob highlight, text size, library folders and click to load, save locations, agent Connect panel)
+Release build. Nothing under `core/` or `mcp/` changed.
+
+| What | Result | Target |
+|---|---|---|
+| Tests | 339 of 339 pass in Release, including three new editor tests (folders and saving, text sizes, the Connect panel) and the library test's click-to-load checks; after the last change (save location, the preferences' Agent link row) the 22 editor tests were run again and pass | all |
+| Library (`[editor][library]`) | the default folders are made and ordered (free folders first, User Presets last); typed locations resolve inside Presets (relative, `\Zederia\Presets\...`, a full path inside; `..` dropped; a folder outside refused); Kick saved to `User Presets/My Phonk Pack` with type and tags and shown at once; a folder shows its presets and its sub-folders'; closing a folder hides its folders, choosing a folder inside opens the way; folded sections, open folders and the chosen folder survive the page state; a click loads, Ctrl-click and selections made in code do not | pass |
+| Text sizes (`[editor][text]`) | all seven pages at 115 % and 130 % text: 0 snapshot findings (no clipped, truncated, overlapping or unlabeled parts); the setting survives the settings file | 0 findings |
+| Snapshots | every page at 100, 150 and 200 % and in the three themes, the overlays, the Connect panel (`overlay_connect_100.png`) and the library with folded sections and a deep folder (`library_100_folders.png`): 0 findings | none |
+| pluginval v1.0.4, strictness 10, Release VST3 with the editor | SUCCESS | pass |
+| Standalone by hand (computer use) | middle-click Pan, click Fine, click Width, middle-click Blend on OSC 2, then move away: no value or cap ring stays lit; LIBRARY shows the new folders in `Documents\Zederia\Presets` (Agent 7, User Presets 0); a click on Velvet Tine loads it; TYPE folds; the Agent folder shows its 7; Save shows Name, Location (list of the folders), Type and Tags (cancelled, nothing written); Connect opens the panel with the three clients (copy buttons not pressed); Text size steps live through 115 and 130 % and back to 100 % | - |
 
 ### Interface follow-up (2026-11-19: no click highlight, header without Undo and Redo, pitch wheel, two-row computer keys)
 Release build. Nothing under `core/` changed; the golden fingerprints of the reference patches are unchanged.
@@ -422,6 +441,14 @@ Interface revision (2026-11-18):
 - **Two guards against hanging notes**: the keyboard checks the real mouse button and key state every frame (a release a host keeps from the window is caught within a frame), and the processor compares the notes the screen holds (an atomic mask set before a note-on is queued and cleared before its release is queued) with the notes it started from the screen, releasing any the screen let go.
 - **Effect strips list their controls by name** (`groupsFor` in `FxPage.cpp`); any parameter a table does not name joins a last "More" group, so a new effect parameter is never unreachable.
 
+Interface follow-up (2026-11-19):
+- **The free presets' folders live in the user's Presets folder** (`Documents\Zederia\Presets\808`, `Bass` ...), as asked, beside `User Presets`. The library's tree merges folders by name, so factory presets installed in the factory folder under the same folder names appear in the same folders; where milestone 7 installs them is its decision (below, Next).
+- **The text size scales the font, not the layout**: boxes keep their sizes and larger text shrinks back toward the normal size where it would not fit. Scaling the layout would change every page's arrangement; the window size already scales everything. The wordmark keeps its size.
+- **The snapshot checks judge the size actually drawn**, so a text that gave back its enlargement is not reported, and one too small at 90 % is.
+- **A click loads only when it leaves one preset selected** and neither Ctrl nor Shift is held, so bulk selection still works; selections the page makes itself (rescans, Find duplicates) load nothing.
+- **Save starts at User Presets** unless the open preset is already in User Presets: saving a free or an agent's preset makes your copy instead of writing over theirs.
+- **Editor tests use a content folder of their own** (an empty temporary folder unless the test brings presets), so the library's default folders are never made in the person's Documents by a test.
+
 Milestone 6:
 - **The specification was read first** (modelcontextprotocol.io, revision 2026-07-28 and its changelog, the TypeScript schema; revision 2025-11-25 for the handshake). The plan's summary in 4.3 matches it. Where the specification is more precise or differs, it was followed:
   - Error codes come from the reserved range: -32020 HeaderMismatch, -32021 MissingRequiredClientCapability, -32022 UnsupportedProtocolVersion. "Resource not found" is -32602, not the older -32002.
@@ -470,6 +497,9 @@ Milestone 6:
 - **Real-client verification ran through Codex.** Claude Code's command-line program is not signed in here, and signing in is the user's step.
 
 ## Known issues
+- **The Connect panel's prompts were not run in the agents.** Their text is tested (server path, how to add it to each client, the guide), but no agent has followed one here yet. The Antigravity prompt asks the agent to find `mcp_config.json` itself because its location is unconfirmed (Antigravity is not installed).
+- **Agents still save outside User Presets**: `save_preset` writes to `Presets/Agent/` or `Presets/<pack>/`, which the tree shows as folders of their own.
+- **Save uses the framework's dialog** (themed by the look and feel, not the hardware finish); its Location list is editable text, so a typed folder name is made when saving.
 - **Claude Code ran no session here.** Its command-line program on this machine is not signed in. `claude mcp list` connects to the server, which exercises `server/discover` at 2026-07-28 and the tool list. To run session 1 yourself: sign in with `claude` once, then in this folder run `claude -p "Make a warm, slightly detuned pluck for a house track with the zederia tools" --allowedTools mcp__zederia`.
 - **The Antigravity CLI is not installed**, so its configuration path and protocol revision were not checked.
 - **The live link is Windows-only** in this version (named pipes); elsewhere the server lists no live targets.
@@ -514,5 +544,5 @@ Milestone 6:
 - Inno Setup not installed (needed by milestone 7). JUCE licence choice is open.
 
 ## Next
-- Milestone 7 (factory content and release). The agent tools are ready for designing the factory presets: brief, edit, render, analysis, adjust, save; loudness and naming conventions are in `docs/AGENT_GUIDE.md`. The installer must place `zederia-mcp.exe` in `%LOCALAPPDATA%\Programs\Zederia\` (the AGENT page's snippets point there).
+- Milestone 7 (factory content and release). The agent tools are ready for designing the factory presets: brief, edit, render, analysis, adjust, save; loudness and naming conventions are in `docs/AGENT_GUIDE.md`. The installer must place `zederia-mcp.exe` in `%LOCALAPPDATA%\Programs\Zederia\` (the AGENT page's snippets point there). The free presets go into the category folders the library makes (`808`, `Bass`, `Synth`, `Lead`, `Pad`, `Pluck`, `Keys`, `Arp`, `FX`); decide whether the installer copies them into `Documents\Zederia\Presets` or keeps them read-only in the factory folder under the same folder names (the tree shows both in the same folders).
 - To run the example sessions from Claude Code as well: sign in its command-line program (`claude`), then use the `.mcp.json` or `claude mcp add` snippet from the AGENT page (already registered for this folder).
