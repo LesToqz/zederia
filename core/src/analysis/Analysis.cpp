@@ -505,6 +505,8 @@ Descriptors analyze(const Audio& audio, const Options& options) {
                 var += c * c;
             }
             d.stabilityCents = std::sqrt(var / static_cast<double>(f0s.size()));
+            // Several notes: the median is only a summary, and harmonic measures against it mean nothing.
+            d.pitchVaries = d.stabilityCents > 100.0;
         }
     }
 
@@ -547,7 +549,7 @@ Descriptors analyze(const Audio& audio, const Options& options) {
             }
             d.bandShare[b] = total > 0.0 ? e / total : 0.0;
         }
-        if (d.pitched) {
+        if (d.pitched && !d.pitchVaries) {
             const double binHz = fs / kFft;
             double harmonic = 0.0;
             double devSum = 0.0, devWeight = 0.0;
@@ -637,7 +639,7 @@ Descriptors analyze(const Audio& audio, const Options& options) {
         t.push_back("wide");
     else if (d.width < 0.02)
         t.push_back("mono");
-    if (d.flatness >= 0.3 || (d.pitched && d.hnrDb < 6.0))
+    if (d.flatness >= 0.3 || (d.pitched && !d.pitchVaries && d.hnrDb < 6.0))
         t.push_back("noisy");
     if (!d.pitched)
         t.push_back("unpitched");
@@ -665,6 +667,7 @@ nlohmann::json toJson(const Descriptors& d) {
         pitch["stability_cents"] = r(d.stabilityCents, 0.1);
         pitch["inharmonicity_cents"] = r(d.inharmonicityCents, 0.1);
         pitch["confidence"] = r(d.pitchConfidence, 0.01);
+        pitch["varies"] = d.pitchVaries;
     }
     J out = {
         {"level",

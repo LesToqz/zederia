@@ -172,3 +172,21 @@ TEST_CASE("analysis: attack time of a linear ramp", "[analysis]") {
     CHECK(d.attackMs == Approx(8.0).margin(1.0)); // 10 % to 90 % of a linear ramp
     CHECK(d.decayShape == "sustained");
 }
+
+TEST_CASE("analysis: a phrase of several notes is not called noisy", "[analysis]") {
+    Signal s;
+    for (int i = 0; i < 48000 * 2; ++i) {
+        const double t = i / 48000.0;
+        const double hz = t < 1.0 ? 220.0 : 659.26; // A3, then E5
+        double v = 0.0;
+        for (int h = 1; h <= 20; ++h)
+            v += std::sin(2.0 * kPi * hz * h * t) / h;
+        s.l.push_back(static_cast<float>(0.3 * v));
+        s.r.push_back(static_cast<float>(0.3 * v));
+    }
+    const auto d = analysis::analyze(s.audio());
+    REQUIRE(d.pitched);
+    CHECK(d.pitchVaries);
+    CHECK_FALSE(hasTag(d, "noisy"));
+    CHECK(analysis::toJson(d)["pitch"]["varies"] == true);
+}

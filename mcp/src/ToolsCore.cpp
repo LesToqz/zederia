@@ -568,7 +568,7 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                      schema(R"json({"type":"object","required":["target","applied","dry_run","changes","warnings"],"properties":{"target":{"type":"string"},
                         "applied":{"type":"boolean"},"dry_run":{"type":"boolean"},"changes":{"type":"array","items":{"type":"object","required":["path"]}},
                         "warnings":{"type":"array"}}})json"),
-                     false, true, false, [&bridge](const J& a, Call& call) {
+                     false, false, false, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target");
                          bridge.checkTarget(t);
                          const bool dry = argBool(a, "dry_run", false);
@@ -668,7 +668,7 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                         "label":{"type":"string","maxLength":120}}})json"),
                      schema(R"json({"type":"object","required":["target","routes","applied"],"properties":{"target":{"type":"string"},"applied":{"type":"boolean"},
                         "routes":{"type":"array","items":{"type":"object","required":["index","source","dest","amount","polarity","curve"]}}}})json"),
-                     false, true, false, [&bridge](const J& a, Call& call) {
+                     false, false, false, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target");
                          bridge.checkTarget(t);
                          const auto& reg = Registry::get();
@@ -887,7 +887,7 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                      schema(R"json({"type":"object","required":["target","current","can_undo","can_redo","steps"],"properties":{"target":{"type":"string"},
                         "current":{"type":"integer"},"can_undo":{"type":"boolean"},"can_redo":{"type":"boolean"},
                         "steps":{"type":"array","items":{"type":"object","required":["step","label"]}}}})json"),
-                     false, true, false, [&bridge](const J& a, Call& call) {
+                     false, false, false, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target");
                          bridge.checkTarget(t);
                          const std::string action = argString(a, "action");

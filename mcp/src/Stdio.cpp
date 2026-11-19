@@ -10,6 +10,8 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace zmcp {
@@ -154,9 +156,15 @@ int runStdio(Server& server, std::FILE* in, std::FILE* out) {
     char chunk[1 << 15];
     bool tooLong = false;
     for (;;) {
-        const std::size_t n = std::fread(chunk, 1, sizeof chunk, in);
-        if (n == 0)
+        // A plain read returns what has arrived; fread would wait for a full buffer on a pipe.
+#ifdef _WIN32
+        const int got = _read(_fileno(in), chunk, static_cast<unsigned>(sizeof chunk));
+#else
+        const auto got = ::read(fileno(in), chunk, sizeof chunk);
+#endif
+        if (got <= 0)
             break;
+        const auto n = static_cast<std::size_t>(got);
         buffer.append(chunk, n);
         std::size_t start = 0;
         for (std::size_t nl; (nl = buffer.find('\n', start)) != std::string::npos; start = nl + 1) {

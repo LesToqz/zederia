@@ -242,7 +242,10 @@ These are starting points to adjust by ear, which here means by analysis.
   `tail_ms` (after the last note-off until 60 dB below its level then), `tail_complete`, and
   `transients`.
 - **pitch**: `pitched`, `fundamental_hz`, `note`, `cents_off`, `stability_cents` (spread over
-  time), `inharmonicity_cents` (how far partials 2 to 12 sit from whole multiples), `confidence`.
+  time), `inharmonicity_cents` (how far partials 2 to 12 sit from whole multiples), `confidence`,
+  and `varies`. `varies` is true when the pitch moves by more than a semitone, as in a phrase of
+  several notes. The note is then only the median, and the harmonic measures (HNR,
+  inharmonicity) are left out. Render a single held note to judge those.
 - **spectrum**: `centroid_hz` (brightness), `rolloff_hz` (85 % of the energy below), `flatness`
   (0 tonal to 1 white noise), `hnr_db` (harmonic-to-noise, pitched sounds), `bands_percent` (sub
   20-60, bass 60-250, low_mid 250-1k, high_mid 1k-4k, presence 4k-8k, air 8k-20k Hz).

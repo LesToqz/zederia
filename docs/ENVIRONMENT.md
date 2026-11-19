@@ -18,7 +18,7 @@ Verified 2026-11-10 with `scripts/check-env.ps1` (re-runnable; exits non-zero if
 | Also present | VS 2026 Insiders (not used) |
 
 Add `/Zc:__cplusplus` to MSVC flags, otherwise `__cplusplus` reads 199711 (C++20 itself works).
-Optional, not installed: clang-cl, Inno Setup (needed for milestone 7), claude, codex, agy. Node is present. Host found: FL Studio.
+Optional, not installed: clang-cl, Inno Setup (needed for milestone 7), agy. Node is present. Host found: FL Studio. The agent clients claude and codex were installed later (see Agent clients below).
 
 ## Pinned dependencies (cmake/Versions.cmake)
 | Dependency | Pin |
@@ -26,7 +26,7 @@ Optional, not installed: clang-cl, Inno Setup (needed for milestone 7), claude, 
 | JUCE | 9.0.5 |
 | Catch2 | v3.16.1 |
 | nlohmann/json | v3.12.0 |
-| cpp-httplib | v0.65.0 |
+| cpp-httplib | v0.65.0 (fetched from milestone 6 on; header-only, used without TLS) |
 | pluginval (tool) | v1.0.4 |
 | clap-validator (tool) | 0.4.1 |
 | CLAP route | clap-juce-extensions at commit 6bde108 (JUCE 9.0.5 has no native CLAP client); it brings CLAP SDK 1.2.7 as a submodule (confirmed in milestone 1: the CLAP target builds) |
@@ -45,6 +45,17 @@ Plug-in (VST3 and Standalone), console program and Catch2 test all built and ran
 pluginval v1.0.4 is in `%LOCALAPPDATA%\Programs\Zederia\tools\pluginval\pluginval.exe`; use `--validate-in-process` (`scripts/test.ps1 -Pluginval` does this at strictness 10).
 
 clap-validator 0.4.1 (the Windows build of its release `0.4.1-127-g152b982`, installed in milestone 4) is in `%LOCALAPPDATA%\Programs\Zederia\tools\clap-validator\clap-validator.exe`; `scripts/test.ps1 -ClapValidator` runs `validate` on the built CLAP and writes the log to `build\<preset>\clap-validator.log`. It logs to standard error, so the script starts it with `Start-Process` and redirects both streams.
+
+## Agent clients (checked 2026-11-19, milestone 6)
+Which protocol revisions each installed client speaks was observed with a logging test server, not taken from documentation:
+
+| Client | Version | Where | Speaks |
+|---|---|---|---|
+| Claude Code | 2.1.322 | `%USERPROFILE%\.local\bin\claude.exe` | probes with `server/discover` at 2026-07-28 and stays on it when the server answers; falls back to `initialize` at 2025-11-25 otherwise. The command-line program is not signed in on this machine, so it cannot run prompts from a script here (`claude mcp list` still connects) |
+| Codex CLI | 0.170.0 | `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe` | `initialize` at 2025-06-18 only |
+| Antigravity CLI (`agy`) | - | not installed | - |
+
+`zederia-mcp` is registered with Claude Code for this project only (`claude mcp add -s local zederia -- "%LOCALAPPDATA%/Programs/Zederia/zederia-mcp.exe" --stdio`, stored in `%USERPROFILE%\.claude.json` under this folder; `claude mcp remove -s local zederia` removes it). Codex was given the server per run with `-c mcp_servers.zederia.command=...`; nothing was written to `~/.codex/config.toml`.
 
 ## Development install locations (no administrator rights)
 - VST3: `%LOCALAPPDATA%\Programs\Common\VST3\`

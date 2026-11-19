@@ -11,6 +11,7 @@
 
 #include <fstream>
 #include <regex>
+#include <map>
 #include <set>
 
 using namespace mcptest;
@@ -45,6 +46,16 @@ TEST_CASE("mcp: the catalogue: order, names, annotations and schemas the validat
         CHECK(zmcp::validate(t["inputSchema"], J::object()).empty() == !required);
     }
     CHECK(rig.server.toolList() == list); // the same order every time
+    // Edits of a target are undo steps, so they are not destructive; what cannot be undone is.
+    std::map<std::string, bool> destructive;
+    for (const auto& t : list)
+        destructive[t["name"]] = t["annotations"]["destructiveHint"];
+    for (const char* undoable : {"apply_patch", "set_params", "set_modulation", "set_shape", "history", "load_preset"})
+        CHECK_FALSE(destructive[undoable]);
+    for (const char* lasting : {"close_session", "tag_presets", "edit_wavetable"})
+        CHECK(destructive[lasting]);
+    for (const char* reading : {"get_status", "list_targets", "describe_synth", "get_patch", "list_presets", "list_wavetables", "analyze_audio", "compare_audio", "theory", "get_clip"})
+        CHECK(list[std::distance(plan.begin(), std::find(plan.begin(), plan.end(), reading))]["annotations"]["readOnlyHint"] == true);
 }
 
 TEST_CASE("mcp: the validator reports paths and fixes", "[mcp][schema]") {

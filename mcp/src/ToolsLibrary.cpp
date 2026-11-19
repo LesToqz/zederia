@@ -454,7 +454,7 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                         "target":{"type":"string"},"preset":{"type":"string","description":"a preset id from list_presets"}}})json"),
                      schema(R"json({"type":"object","required":["target","preset","applied","summary"],"properties":{"target":{"type":"string"},"preset":{"type":"string"},
                         "applied":{"type":"boolean"},"summary":{"type":"object"}}})json"),
-                     false, true, true, [&bridge](const J& a, Call& call) {
+                     false, false, true, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target"), id = argString(a, "preset");
                          bridge.checkTarget(t);
                          const fs::path file = bridge.presetPath(id);
@@ -533,7 +533,7 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                         "rating":{"type":"integer","minimum":0,"maximum":5}}})json"),
                      schema(R"json({"type":"object","required":["changed","skipped"],"properties":{"changed":{"type":"integer"},
                         "skipped":{"type":"array","items":{"type":"object","required":["preset","reason"]}}}})json"),
-                     false, false, true, [&bridge](const J& a, Call&) {
+                     false, true, true, [&bridge](const J& a, Call&) {
                          int changed = 0;
                          J skipped = J::array();
                          for (const auto& idv : a["presets"]) {

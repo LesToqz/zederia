@@ -1,6 +1,6 @@
 # Architecture
 
-How the pieces fit as of milestone 5, and the rules every later milestone keeps.
+How the pieces fit as of milestone 6, and the rules every later milestone keeps.
 
 ## Targets
 
@@ -9,10 +9,11 @@ How the pieces fit as of milestone 5, and the rules every later milestone keeps.
 | `zederia_core` | `core/` | Static library: parameter registry, patch model, engine (sound sources, filters, modulators, the matrix, the effects rack, the play features, the output stage), effects, MIDI files and controller maps, tuning files, wavetable model and toolkit, content recipes, offline renderer, benchmarks. No interface code and no plug-in framework | nlohmann/json |
 | `Zederia` | `plugin/` | The plug-in (VST3, Standalone, CLAP): processor (MIDI out and thru, MIDI learn, programs, rack edits, clips), the editing session and the interface (`plugin/ui/`) | `zederia_core`, the plug-in framework |
 | `zederia-cli` | `cli/` | `render` (with `--midi-out`), `validate-patch`, `params`, `bench` (with `--profile`), `table ...`, `texture build`, `content build`, `clip import|export`, `ui-snapshot` | `zederia_core`; the plug-in's shared code for `ui-snapshot` |
-| `zederia-mcp` | `mcp/` | The agent server; prints its version until milestone 6 | `zederia_core` |
-| `zederia_tests`, `zederia_plugin_tests` | `tests/` | Core tests; processor and editor tests | the above, Catch2 |
+| `zederia_link` | `link/` | The local pipe protocol between instances and the server: the user-only pipe, discovery files, tokens, the agent permissions file | nlohmann/json |
+| `zederia-mcp` (`zederia_mcp_lib`) | `mcp/` | The agent server: every line of Model Context Protocol code, the tools, resources and prompts, headless sessions, the file sandbox | `zederia_core`, `zederia_link`, cpp-httplib |
+| `zederia_tests`, `zederia_plugin_tests`, `zederia_mcp_tests` | `tests/` | Core tests; processor, editor and live-link tests; protocol conformance and safety tests | the above, Catch2 |
 
-Everything that makes or describes sound lives in `zederia_core`, so the plug-in, the command-line tool and the agent server produce identical results. The core stays portable: the only platform-specific code is `rt/Denormals.h` and the SIMD wrappers in `dsp/Simd.h`. `link/` (the local pipe protocol) is added by the milestone that needs it. The repository's `content/` folder holds recipes (JSON), never audio: the factory wavetables and textures are built from them.
+Everything that makes or describes sound lives in `zederia_core`, so the plug-in, the command-line tool and the agent server produce identical results. The core stays portable: the only platform-specific code is `rt/Denormals.h` and the SIMD wrappers in `dsp/Simd.h`. `link/` holds the local pipe protocol shared by the plug-in and the agent server. The repository's `content/` folder holds recipes (JSON), never audio: the factory wavetables and textures are built from them.
 
 ## The core
 
@@ -156,6 +157,30 @@ For the interface the processor also offers: `snapshot()` and `restore()` (a who
 - **Preferences** (`plugin/Prefs.*`). One settings file per user (`%APPDATA%\Zederia\settings.json`), shared by every instance: theme, default scale, knob and wheel behaviour, tooltips, help strip, macro strip, Simple view, frame rate, graphics card, author, user folder, default preset, MPE default, recent files.
 - **Snapshots and checks** (`plugin/ui/Audit.*`, `zederia-cli ui-snapshot`). Any page painted offscreen at any scale and theme, in software and without a window, then checked: clipped, overlapping, unlabeled, zero-size or cramped controls, truncated or too small text, and theme contrast. The editor tests run the checks on every page at 100, 150 and 200 % and write the images to `build/<preset>/snapshots`.
 
+## The agent bridge
+
+```
+ agent client ──(MCP over stdio, or HTTP on 127.0.0.1 with a bearer token)──► zederia-mcp
+                                                                              Server (both protocol generations)
+                                                                                 │ tools, resources, prompts
+                                                                              Bridge ─── sandbox, permissions, clips
+                              ┌──────────────────────────────────────────────────┴───────────────────────────┐
+                    headless sessions (session:…)                                                live link (live:…)
+             Patch + History in this process; renders with                     PipeClient ──► user-only pipe ──► AgentLink
+             the same engine (OfflineRenderer)                                 (token from the discovery file)  in the instance
+                                                                                                                   │ queued to the
+                                                                                                                   ▼ message thread
+                                                                                                Session::applyAgentState: one undo
+                                                                                                step labelled with the client's name
+```
+
+- **Protocol** (`mcp/src/Protocol.*`). `Server::handle` takes one JSON-RPC message and the channel's handshake state. A request whose `_meta` carries `io.modelcontextprotocol/protocolVersion` is served statelessly by revision 2026-07-28: version and capabilities checked per request, `resultType` and the server's identity on every result, `ttlMs` and `cacheScope` on lists, `server/discover`. `initialize` selects revision 2025-11-25 or 2025-06-18 for the channel (a stdio process or an HTTP session), after which requests are served in that revision. Both can share a process. Tools come out in the catalogue's fixed order.
+- **Transports** (`Stdio.cpp`, `Http.cpp`). stdio reads newline-delimited messages, answers `initialize` in order and runs other requests on threads (at most four at a time), so `notifications/cancelled` reaches a running render. HTTP binds to the loopback interface only, refuses requests without the bearer token (401), with a foreign `Origin` or a non-loopback `Host` (403), checks the 2026-07-28 headers against the body (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, with the base64 form decoded), keeps `Mcp-Session-Id` sessions for the handshake revisions, answers `tools/call` on an event stream (progress first, closing the stream cancels) and everything else as JSON.
+- **Tools** (`Tools*.cpp`). Each has an input schema, an output schema, annotations and a handler. Arguments are checked against the input schema first (`Schema.cpp`: every problem has a JSON pointer and a fix). Handlers throw `ToolError` for anything the agent can correct, which becomes an `isError` result with the same path-and-fix list. Every structured result is checked against the tool's output schema (failures are logged and the tests require none). Results carry a one-line summary, the structured result as JSON text, and resource links or images.
+- **Targets** (`Bridge.*`). A headless session is a patch and a `History` behind a handle; an edit runs a function on a copy and pushes one step labelled `<client>: <label>`. A live target is reached through its discovery file: the server reads the patch (`get_patch`, with a hash), applies the same function, and sends the result back with the hash it started from; the instance refuses it if its patch changed meanwhile, and the server tries again. Renders of a live target run in the server, on that copy.
+- **The instance's side** (`plugin/AgentLink.*`). The link thread only checks the token and queues the request; the message thread carries it out (a prompt async call, and the processor's timer as a fallback), through the session as one labelled step, so agent edits reach the audio thread the same way the interface's do. It keeps the clients and the activity the AGENT page shows, and the state from before the first agent edit for "Revert agent session". The pipe admits the current user only (its security descriptor), refuses remote clients, keeps an instance listening at all times so its name can never be taken over, and the discovery file is readable by the current user only.
+- **Safety** (`Bridge.cpp`). Every path an agent gives is canonicalized (junctions and links resolved) and must lie inside an allowed root with an allowed extension; `..`, network and device paths, stream names, reserved device names and trailing dots or spaces are refused before that. Write roots are the user's Zederia folder (when the AGENT page allows) and the allowed folders; read roots add the factory folder and the allowed read folders. Permissions are read from `%APPDATA%\Zederia\agent.json` on every check, so a switch on the AGENT page applies at once.
+
 ## Threads and real-time rules
 
 | Thread | Does | Must never |
@@ -163,7 +188,7 @@ For the interface the processor also offers: `snapshot()` and `restore()` (a who
 | Audio | `Engine::process`: applies changed parameters at block start, renders | Allocate, free, lock, wait, log, touch files |
 | Message | Interface, the editing session, patch load and save, host notifications | Block on the audio thread |
 | Workers (from milestone 2) | Table builds (the workshop's `TableBuilder`), imports, analysis, offline renders | Touch live engine state directly |
-| Link (milestone 6) | Pipe I/O for agent commands | Apply edits directly |
+| Link | Pipe I/O for agent requests: checks the token and queues each request for the message thread | Apply edits directly |
 
 How the rules are kept:
 
@@ -191,4 +216,5 @@ Offline renders are reproducible because: all randomness comes from one seeded g
 - A control on a page: create the kit's control for the parameter (`Knob`, `Fader`, `NumberBox`, `Toggle`, `ChoiceBox`, `Segmented`) with a visible label and a help text; the reachability test fails while any registry parameter has no control on some page, and the snapshot checks catch crowding.
 - A page: derive from `zui::Page`, add it to `ZederiaEditor::PageId` and `pageNames()`, and to the snapshot list in `test_editor.cpp`.
 - A theme: a token file in `plugin/themes/` (listed in `plugin/CMakeLists.txt`); the theme test checks its contrast.
+- An agent tool: add a `ToolDef` (description, input and output schema, annotations, handler) in the matching `mcp/src/Tools*.cpp`, put its name in the order list in `buildTools`, and add a call to the "every tool runs" test in `tests/mcp/test_mcp_protocol.cpp`; the catalogue test then checks its schemas and annotations. Describe it in `docs/AGENT_GUIDE.md`.
 - A modulation source: append it to `declareSources()` and give it a position in `EngineTypes.inl` (the engine checks that the two agree when it is built); fill its value in `globalTick` (shared) or `evalVoice` (per voice).

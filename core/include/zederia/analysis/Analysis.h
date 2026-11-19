@@ -53,6 +53,7 @@ struct Descriptors {
     double stabilityCents = 0.0; // spread of the pitch over time
     double inharmonicityCents = 0.0; // mean distance of partials 2..12 from whole multiples
     double pitchConfidence = 0.0; // 0..1
+    bool pitchVaries = false;    // the pitch moves by more than a semitone (a phrase of several notes)
     // Spectrum
     double centroidHz = 0.0;
     double rolloffHz = 0.0;      // 85 % of the energy lies below
