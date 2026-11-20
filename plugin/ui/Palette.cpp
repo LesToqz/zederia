@@ -117,10 +117,7 @@ void CommandPalette::resized() {
 
 void CommandPalette::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    g.setColour(t.raised);
-    g.fillRoundedRectangle(getLocalBounds().toFloat(), t.radius);
-    g.setColour(t.focus);
-    g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), t.radius, 1.0f);
+    drawPanel(g, getLocalBounds().toFloat(), t.panel);
 }
 
 // --- PrefsPanel --------------------------------------------------------------------------------------
@@ -288,15 +285,16 @@ void PrefsPanel::resized() {
 
 void PrefsPanel::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    g.setColour(t.raised);
-    g.fillRoundedRectangle(getLocalBounds().toFloat(), t.radius);
-    g.setColour(t.lineStrong);
-    g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), t.radius, 1.0f);
+    drawPanel(g, getLocalBounds().toFloat(), t.panel);
+    drawPlate(g, getLocalBounds().withHeight(38).toFloat());
     auto area = getLocalBounds().reduced(16, 12);
     drawText(g, "PREFERENCES", area.removeFromTop(24).toFloat(), kTextTitle, t.text, juce::Justification::centredLeft, true);
     area.removeFromTop(6);
     for (const auto& r : rows_) {
-        drawText(g, r->label, area.removeFromTop(28).toFloat().withWidth(165.0f), kTextBody, t.textDim);
+        const auto row = area.removeFromTop(28).toFloat();
+        drawText(g, r->label, row.withWidth(165.0f), kTextBody, t.textDim);
+        g.setColour(t.line);
+        g.fillRect(row.withWidth(165.0f).removeFromBottom(1.0f));
         area.removeFromTop(2);
     }
     drawText(g, "Default author", area.removeFromTop(28).toFloat().withWidth(165.0f), kTextBody, t.textDim);

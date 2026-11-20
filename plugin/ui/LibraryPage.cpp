@@ -196,7 +196,7 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     table_.setMultipleSelectionEnabled(true);
     table_.setTitle("Presets");
     table_.setHelpText("Click a preset to load it. Ctrl or Shift selects several for tags, ratings, moving and export.");
-    table_.setColour(juce::ListBox::backgroundColourId, theme().panel);
+    table_.setColour(juce::ListBox::backgroundColourId, theme().sunken);
     addAndMakeVisible(table_);
     facetView_.setViewedComponent(&facetList_, false);
     facetView_.setScrollBarsShown(true, false);
@@ -935,16 +935,13 @@ void LibraryPage::showModules() {
 }
 
 void LibraryPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto toolbar = area.removeFromTop(30);
+    auto area = getLocalBounds();
+    auto toolbar = area.removeFromTop(42).reduced(8, 6);
     search_.setBounds(toolbar.removeFromLeft(470));
     toolbar.removeFromLeft(8);
     placeRow(toolbar, {{&importButton_, 112}, {&newFolder_, 104}, {&showFolder_, 136}, {&rescan_, 76}, {&duplicates_, 120}, {&modules_, 130}}, 6);
-    area.removeFromTop(8);
-    facetView_.setBounds(area.removeFromLeft(226).reduced(2)); // its panel (2 px around it) lines up with the results
-    area.removeFromLeft(8);
+    facetView_.setBounds(area.removeFromLeft(226).reduced(6, 3));
     auto right = area.removeFromRight(300);
-    area.removeFromRight(8);
     table_.setBounds(area);
     empty_->setBounds(area.withTrimmedTop(48).withHeight(104).reduced(16, 0));
     right = right.reduced(10, 8);
@@ -975,8 +972,9 @@ void LibraryPage::resized() {
 
 void LibraryPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    drawPanel(g, facetView_.getBounds().toFloat().expanded(2.0f), t.panel);
-    const auto right = getLocalBounds().reduced(8).withTrimmedTop(38).removeFromRight(300);
+    drawPlate(g, getLocalBounds().withHeight(table_.getY()).toFloat());
+    drawPanel(g, facetView_.getBounds().expanded(6, 3).toFloat(), t.panel);
+    const auto right = getLocalBounds().withTrimmedTop(table_.getY()).removeFromRight(300);
     drawPanel(g, right.toFloat(), t.panel);
     // An empty list says so in front of it (EmptyView): the list paints its own background.
 }

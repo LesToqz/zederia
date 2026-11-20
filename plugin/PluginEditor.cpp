@@ -149,7 +149,7 @@ ZederiaEditor::~ZederiaEditor() {
 void ZederiaEditor::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
 
 juce::Rectangle<int> ZederiaEditor::pageArea() const {
-    auto area = juce::Rectangle<int>(kBaseWidth, kBaseHeight).withTrimmedTop(kHeaderHeight);
+    auto area = juce::Rectangle<int>(kBaseWidth, kBaseHeight).reduced(kChassisInset, 0).withTrimmedTop(kHeaderHeight);
     if (ctx_.prefs.helpStrip)
         area.removeFromBottom(kHelpStripHeight);
     area.removeFromBottom(kKeyboardHeight + kDockHeight);
@@ -173,13 +173,10 @@ void ZederiaEditor::paintFrame(juce::Graphics& g) {
 void ZederiaEditor::paintHeader(juce::Graphics& g) {
     const Theme& t = theme();
     drawChassis(g, juce::Rectangle<float>(static_cast<float>(kBaseWidth), static_cast<float>(kHeaderHeight)));
-    // One machined plate across the top, the logo on its own plate at the left.
-    const auto header = juce::Rectangle<float>(4.0f, 4.0f, kBaseWidth - 8.0f, kHeaderHeight - 6.0f);
-    drawPanel(g, header, t.panel);
-    for (const auto& p : {juce::Point<float>(header.getRight() - 8.0f, header.getY() + 8.0f), juce::Point<float>(header.getRight() - 8.0f, header.getBottom() - 8.0f)})
-        drawScrew(g, p, 2.8f, p.y * 0.1f);
-    const auto logo = juce::Rectangle<float>(10.0f, 9.0f, static_cast<float>(kLogoWidth) - 8.0f, kHeaderHeight - 16.0f);
-    drawWell(g, logo); // the fasteners belong to the enclosure (the plate's corners), not to the logo
+    const auto header = juce::Rectangle<int>(0, 4, kBaseWidth, kHeaderHeight - 4).reduced(kChassisInset, 0).toFloat();
+    drawPanel(g, header, t.raised);
+    const auto logo = header.withWidth(static_cast<float>(kLogoWidth));
+    drawPanel(g, logo, t.bg);
     // A groove sets the output (meter and Master) apart from the preset bar and the page tabs.
     const float groove = static_cast<float>(kBaseWidth - 14 - kOutputWidth - 5);
     g.setColour(juce::Colours::black.withAlpha(0.45f));
@@ -193,7 +190,7 @@ void ZederiaEditor::paintHeader(juce::Graphics& g) {
     for (int i = 0; i < word.length(); ++i)
         width += juce::GlyphArrangement::getStringWidth(mark, word.substring(i, i + 1)) + (i + 1 < word.length() ? 3.0f : 0.0f);
     float x = logo.getCentreX() - width * 0.5f;
-    const float y = logo.getY() + 9.0f;
+    const float y = logo.getY() + 11.0f;
     g.setFont(mark);
     for (int i = 0; i < word.length(); ++i) {
         const juce::String ch = word.substring(i, i + 1);
@@ -245,6 +242,7 @@ void ZederiaEditor::applyLayout() {
         help_->setBounds(area.removeFromBottom(kHelpStripHeight));
     else
         help_->setBounds(area.withTop(area.getBottom() - kHelpStripHeight));
+    area.reduce(kChassisInset, 0);
     keys_->setBounds(area.removeFromBottom(kKeyboardHeight));
     dock_->setBounds(area.removeFromBottom(kDockHeight));
     tabRow.reduce(8, 0);

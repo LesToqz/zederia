@@ -52,6 +52,7 @@ class MacroCard final : public Card {
 public:
     explicit MacroCard(Context& ctx) : Card("Macros", Family::Modulators), ctx_(ctx) {
         moduleId = "macro";
+        walnut = true;
         screws = false;
         headerHeight = 24;
         for (int m = 0; m < zed::kNumMacros; ++m) {
@@ -93,7 +94,7 @@ public:
         const int h = (body.getHeight() - gap) / 2;
         for (int m = 0; m < zed::kNumMacros; ++m) {
             auto cell = juce::Rectangle<int>(body.getX() + (m % cols) * (w + gap), body.getY() + (m / cols) * (h + gap), w, h);
-            chips_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(18));
+            chips_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(20));
             cell.removeFromTop(2);
             polarity_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromRight(26).withSizeKeepingCentre(26, 16));
             knobs_[static_cast<std::size_t>(m)]->setBounds(cell.withSizeKeepingCentre(juce::jmin(cell.getWidth(), 40), cell.getHeight()));
@@ -132,6 +133,7 @@ class ModulatorCard final : public Card {
 public:
     explicit ModulatorCard(Context& ctx)
         : Card("Modulators", Family::Modulators), ctx_(ctx), env_(ctx, 0), scope_(ctx), lfo_(ctx, "LFO shape"), multi_(ctx, "Envelope shape") {
+        walnut = true;
         screws = false;
         headerHeight = 24;
         juce::StringArray sources;
@@ -279,16 +281,16 @@ public:
     }
 
     void layoutBody(juce::Rectangle<int> body) override {
-        auto chipRow = body.removeFromTop(20);
+        auto chipRow = body.removeFromTop(23);
         const int n = static_cast<int>(chips_.size());
-        const int w = (chipRow.getWidth() - (n - 1) * 4) / n;
+        const int w = (chipRow.getWidth() - (n - 1)) / n;
         for (auto* c : chips_) {
             c->setBounds(chipRow.removeFromLeft(w));
-            chipRow.removeFromLeft(4);
+            chipRow.removeFromLeft(1);
         }
-        body.removeFromTop(4);
-        const auto display = body.removeFromLeft(juce::jmin(330, body.getWidth() / 3));
-        body.removeFromLeft(10);
+        body.removeFromTop(5);
+        const auto display = body.removeFromLeft(body.getWidth() * 3 / 8);
+        body.removeFromLeft(12);
         const bool env = selected_.startsWith("env"), lfo = selected_.startsWith("lfo");
         const bool multi = env && isMulti();
         env_.setVisible(env && !multi);
@@ -483,9 +485,8 @@ ModDock::ModDock(Context& ctx) {
 ModDock::~ModDock() = default;
 
 void ModDock::resized() {
-    auto area = getLocalBounds().reduced(8, 4);
-    macros_->setBounds(area.removeFromLeft(292));
-    area.removeFromLeft(8);
+    auto area = getLocalBounds();
+    macros_->setBounds(area.removeFromLeft(306));
     modulators_->setBounds(area);
 }
 
@@ -1037,8 +1038,7 @@ void KeyboardLayer::refresh() {
 }
 
 void KeyboardLayer::resized() {
-    auto area = getLocalBounds().reduced(8, 4);
-    auto panel = area.reduced(8, 6);
+    auto panel = getLocalBounds().reduced(8, 6);
     pitch_->setBounds(panel.removeFromLeft(26));
     panel.removeFromLeft(4);
     mod_->setBounds(panel.removeFromLeft(26));
@@ -1059,17 +1059,11 @@ void KeyboardLayer::resized() {
 void KeyboardLayer::paint(juce::Graphics& g) {
     background_.draw(g, getLocalBounds(), static_cast<std::uint64_t>(piano_.getX()), true, [this](juce::Graphics& bg) {
         const Theme& t = theme();
-        drawChassis(bg, getLocalBounds().toFloat());
-        const auto area = getLocalBounds().reduced(8, 4).toFloat();
-        drawPanel(bg, area, t.panel);
-        drawScrew(bg, {area.getX() + 7.0f, area.getY() + 7.0f}, 2.8f, 0.2f);
-        drawScrew(bg, {area.getX() + 7.0f, area.getBottom() - 7.0f}, 2.8f, 0.7f);
-        drawScrew(bg, {area.getRight() - 7.0f, area.getY() + 7.0f}, 2.8f, 1.1f);
-        drawScrew(bg, {area.getRight() - 7.0f, area.getBottom() - 7.0f}, 2.8f, 0.4f);
-        // The keys sit in a recessed bed.
-        const auto bed = piano_.getBounds().toFloat().expanded(2.0f, 2.0f);
-        bg.setColour(juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
-        bg.fillRoundedRectangle(bed, 3.0f);
+        drawPanel(bg, getLocalBounds().toFloat(), t.raised);
+        const auto bed = piano_.getBounds().toFloat().expanded(3.0f, 3.0f);
+        drawWell(bg, bed);
+        bg.setColour(t.lamp.withAlpha(0.5f));
+        bg.fillRect(bed.reduced(3.0f, 0.0f).withY(bed.getY() + 1.0f).withHeight(1.0f));
     });
 }
 

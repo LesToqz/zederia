@@ -26,6 +26,7 @@ juce::String destName(int dest, const ZederiaProcessor& p) {
 }
 
 const char* const kCurveNames[5] = {"Linear", "Exp", "Log", "S", "Drawn"};
+constexpr int kAmountColumnWidth = 166;
 
 } // namespace
 
@@ -124,15 +125,14 @@ public:
     void resized() override {
         auto area = getLocalBounds().reduced(4, 3);
         area.removeFromLeft(4);
-        placeRow(area, {{&select_, 22}, {&number_, 24}, {&on_, 36}, {&source_, 108}, {&via_, 112}, {&amount_, 190}, {&polarity_, 38},
+        placeRow(area, {{&select_, 22}, {&number_, 24}, {&on_, 36}, {&source_, 108}, {&via_, 112}, {&amount_, kAmountColumnWidth}, {&polarity_, 38},
                         {&curve_, 66}, {&dest_, 230}, {&mute_, 26}, {&solo_, 26}, {&remove_, 24}},
                  4);
     }
     void paint(juce::Graphics& g) override {
         const Theme& t = theme();
         const auto area = getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(focused ? t.selection : t.panel);
-        g.fillRoundedRectangle(area, 4.0f);
+        drawPanel(g, area, focused ? t.selection : t.panel);
         g.setColour(colour_.withAlpha(audible_ ? 1.0f : 0.35f));
         g.fillRoundedRectangle(area.withWidth(3.0f).reduced(0.0f, 4.0f), 1.5f);
     }
@@ -431,14 +431,13 @@ void ModPage::layoutRows() {
 }
 
 void ModPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto toolbar = area.removeFromTop(30);
+    auto area = getLocalBounds();
+    auto toolbar = area.removeFromTop(42).reduced(8, 6);
     search_.setBounds(toolbar.removeFromLeft(300));
     toolbar.removeFromLeft(8);
     placeRow(toolbar, {{&add_, 104}, {&sort_, 130}, {&replace_, 140}, {&mute_, 130}, {&remove_, 150}, {&selectAll_, 110}, {&map_, 126}}, 6);
-    area.removeFromTop(8);
     auto right = area.removeFromRight(360);
-    area.removeFromRight(8);
+    area.reduce(4, 0);
     count_.setBounds(area.removeFromTop(16).withTrimmedLeft(8)); // inside the list's panel, in line with the column titles
     area.removeFromTop(22); // column titles
     viewport_.setBounds(area);
@@ -454,11 +453,13 @@ void ModPage::resized() {
 void ModPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
     const auto list = viewport_.getBounds();
-    // The list's panel holds the count and the column titles, its top in line with the detail panel's.
-    drawPanel(g, list.toFloat().expanded(4.0f, 0.0f).withTop(static_cast<float>(count_.getY()) - 4.0f).withBottom(static_cast<float>(list.getBottom()) + 4.0f), t.sunken);
+    auto surface = getLocalBounds();
+    drawPlate(g, surface.removeFromTop(count_.getY()).toFloat());
+    drawPanel(g, surface.removeFromRight(360).toFloat(), inspectorShown() ? t.panel : t.raised);
+    drawWell(g, surface.toFloat());
     auto header = juce::Rectangle<int>(list.getX() + 8, list.getY() - 22, list.getWidth(), 18);
     for (const auto& [title, w] : std::initializer_list<std::pair<const char*, int>>{
-             {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", 190}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},
+             {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", kAmountColumnWidth}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},
              {"M", 26}, {"S", 26}}) {
         drawText(g, title, header.removeFromLeft(w).toFloat(), kTextSmall, t.textDim, juce::Justification::centredLeft, true);
         header.removeFromLeft(4);
@@ -470,11 +471,6 @@ void ModPage::paint(juce::Graphics& g) {
                                                            : "No route matches \"" + search_.getText().trim() + "\".";
         const auto box = list.toFloat().withHeight(44.0f).translated(0.0f, 8.0f).reduced(12.0f, 0.0f);
         drawText(g, message, box, fittingSize(message, box.getWidth(), kTextBody), t.textDim, juce::Justification::centred);
-    }
-    // The inspector is a panel only while a route is focused.
-    if (inspectorShown()) {
-        const auto right = getLocalBounds().reduced(8).removeFromRight(360).withTrimmedTop(38);
-        drawPanel(g, right.toFloat().withTrimmedTop(-4.0f), t.panel);
     }
 }
 

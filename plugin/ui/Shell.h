@@ -14,6 +14,7 @@ namespace zui {
 inline constexpr int kBaseWidth = 1320, kBaseHeight = 940;
 inline constexpr int kTopBarHeight = 40, kTabsHeight = 30, kMacroStripHeight = 50, kHelpStripHeight = 24;
 inline constexpr int kHeaderHeight = 76, kLogoWidth = 150, kOutputWidth = 92;
+inline constexpr int kChassisInset = 4;
 
 // A page of the editor. Pages are built when first shown and kept.
 class Page : public juce::Component {

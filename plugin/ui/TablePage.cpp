@@ -1528,7 +1528,14 @@ void TablePage::resized() {
     wizard_->setBounds(getLocalBounds().reduced(60, 30));
 }
 
-void TablePage::paint(juce::Graphics&) {} // the chassis shows through
+void TablePage::paint(juce::Graphics& g) {
+    const auto area = getLocalBounds().toFloat();
+    drawPanel(g, area, theme().panel);
+    drawPlate(g, area.withBottom(static_cast<float>(stripView_.getY() - 2)));
+    drawPlate(g, area.withTop(static_cast<float>(stripView_.getY() - 2)).withBottom(static_cast<float>(rightTabs_->getY() - 4)));
+    g.setColour(theme().line);
+    g.fillRect(area.withLeft(static_cast<float>(rightTabs_->getX() - 4)).withWidth(1.0f).withTop(static_cast<float>(rightTabs_->getY() - 4)));
+}
 
 bool TablePage::reveal(const juce::String& module) {
     if (module.startsWith("table"))

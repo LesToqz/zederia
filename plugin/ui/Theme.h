@@ -34,8 +34,7 @@ struct Theme {
     juce::Colour mod[8]; // modulation route colours, chosen to stay apart under colour-blindness
     float radius = 6.0f;
     float glow = 0.3f; // strength of the soft line under luminous display curves (0: none)
-    // The hardware finish (plan 3.13 "Look"): grain on the chassis, and how much panels, knobs
-    // and screws read as machined metal (0: flat). Work surfaces have a quiet fill.
+    // Grain strength on the walnut dock and the depth of machined controls (0: flat).
     float texture = 0.0f;
     float metal = 0.0f;
 

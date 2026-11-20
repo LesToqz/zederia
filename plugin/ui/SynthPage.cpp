@@ -448,7 +448,7 @@ private:
         main_ = {{&knob("level", "Level"), kKnobW}, {&knob("pan", "Pan"), kKnobW}, {&knob("pitch", "Pitch"), kKnobW}, {&knob("fine", "Fine", true), kKnobW},
                  {&knob("start", "Start"), kKnobW},
                  {&knob("random_start", "Rnd start", true), kKnobW, 0, true}, {&knob("sends.filter_balance", "F1 / F2", true), kKnobW},
-                 {&mode, 104, kChoiceH}, {&part<Toggle>("keytrack", "Key track"), 86, 22}};
+                 {&mode, 100, kChoiceH}, {&part<Toggle>("keytrack", "Key track"), 75, 22}};
     }
 
     Context& ctx_;
@@ -900,29 +900,21 @@ SynthPage::~SynthPage() = default;
 void SynthPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void SynthPage::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds();
     auto right = area.removeFromRight(360);
-    area.removeFromLeft(0);
-    area.removeFromRight(8);
-    // Three oscillators side by side; Sub, Texture and the Stage below them.
-    auto top = area.removeFromTop(372);
+    auto top = area.removeFromTop(370);
     map_->setBounds(top);
-    area.removeFromTop(8);
-    const int oscW = (top.getWidth() - 16) / 3;
+    // Lower bays share the oscillator row's vertical seams.
+    const int oscW = top.getWidth() / 3;
     for (int i = 0; i < 3; ++i) {
         sources_[static_cast<std::size_t>(i)]->setBounds(i < 2 ? top.removeFromLeft(oscW) : top);
-        top.removeFromLeft(8);
     }
-    sources_[3]->setBounds(area.removeFromLeft(270));
-    area.removeFromLeft(8);
-    sources_[4]->setBounds(area.removeFromLeft(330));
-    area.removeFromLeft(8);
+    sources_[3]->setBounds(area.removeFromLeft(oscW));
+    sources_[4]->setBounds(area.removeFromLeft(oscW));
     stage_->setBounds(area);
     // Filters and the voice on the right.
-    for (auto& f : filters_) {
+    for (auto& f : filters_)
         f->setBounds(right.removeFromTop(136));
-        right.removeFromTop(8);
-    }
     voice_->setBounds(right);
 }
 

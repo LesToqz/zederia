@@ -121,7 +121,7 @@ void TopBar::resized() {
     menu.setBounds(area.removeFromLeft(28));
     area.removeFromLeft(6);
     prev.setBounds(area.removeFromLeft(22));
-    presetName.setBounds(area.removeFromLeft(212));
+    presetName.setBounds(area.removeFromLeft(264));
     next.setBounds(area.removeFromLeft(22));
     area.removeFromLeft(4);
     save.setBounds(area.removeFromLeft(62));

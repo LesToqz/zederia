@@ -746,12 +746,11 @@ bool PlayPage::exportClipFile(const juce::File& file) {
 void PlayPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void PlayPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto top = area.removeFromTop(juce::jmax(300, area.getHeight() / 2 - 20));
+    auto area = getLocalBounds();
+    constexpr int minClipHeight = 276; // includes the clip information row when the help strip is visible
+    auto top = area.removeFromTop(juce::jmin(300, area.getHeight() - minClipHeight));
     chords_->setBounds(top.removeFromRight(440));
-    top.removeFromRight(8);
     arp_->setBounds(top);
-    area.removeFromTop(8);
     clips_->setBounds(area);
 }
 

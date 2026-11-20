@@ -20,7 +20,7 @@
 
 namespace zui {
 
-inline constexpr int kDockHeight = 168, kKeyboardHeight = 78;
+inline constexpr int kDockHeight = 194, kKeyboardHeight = 78;
 
 class MacroCard;
 class ModulatorCard;

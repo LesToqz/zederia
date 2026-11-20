@@ -550,7 +550,7 @@ public:
             bg.fillAll(t.bg);
             drawPanel(bg, area, t.panel);
             // The name plate: the effect's name, its address in the rack and its power.
-            drawPlate(bg, area.withWidth(122.0f).reduced(3.0f), t.radius - 1.0f);
+            drawPlate(bg, area.withWidth(122.0f).reduced(1.0f));
         });
         const bool on = ctx_.processor.plainValue(reg().fxSlotOn(lane_, slot_)) >= 0.5;
         drawText(g, effectName(type_).toUpperCase(), juce::Rectangle<float>(36.0f, 10.0f, 82.0f, 20.0f), fittingSize(effectName(type_).toUpperCase(), 82.0f, kTextBody, true), on ? t.text : t.textDim,
@@ -798,12 +798,7 @@ public:
     void resized() override { add_.setBounds(getLocalBounds().reduced(14, 0).withSizeKeepingCentre(200, 28).withX(122 + 10)); }
     void paint(juce::Graphics& g) override {
         const Theme& t = theme();
-        juce::Path outline, dashed;
-        outline.addRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), t.radius);
-        const float dashes[] = {4.0f, 4.0f};
-        juce::PathStrokeType(1.0f).createDashedStroke(dashed, outline, dashes, 2);
-        g.setColour(t.lineStrong);
-        g.fillPath(dashed);
+        drawPanel(g, getLocalBounds().toFloat(), t.raised);
         drawText(g, address(), juce::Rectangle<float>(14.0f, 0.0f, 100.0f, static_cast<float>(getHeight())), kTextSmall, t.textDim);
     }
 
@@ -864,17 +859,17 @@ public:
         viewport_.setBounds(getLocalBounds());
         layoutStrips();
     }
-    void paint(juce::Graphics&) override {} // the chassis shows through: an empty bay recedes
+    void paint(juce::Graphics& g) override { drawWell(g, getLocalBounds().toFloat()); }
     int strips() const { return static_cast<int>(strips_.size()); }
 
 private:
     void layoutStrips() {
-        const int width = viewport_.getWidth() - viewport_.getScrollBarThickness() - 2;
+        const int width = viewport_.getWidth() - viewport_.getScrollBarThickness();
         int y = 0;
         for (auto& s : strips_) {
             const int h = s->layoutAt(width);
             s->setBounds(0, y, width, h);
-            y += h + 8;
+            y += h;
         }
         const int count = static_cast<int>(strips_.size());
         const bool room = lane_ >= 0 && count < zed::kNumFxSlots;
@@ -882,9 +877,9 @@ private:
         if (room) {
             bay_.setLane(lane_, count);
             bay_.setBounds(0, y, width, 52);
-            y += 52 + 8;
+            y += 52;
         }
-        content_.setSize(juce::jmax(1, width), juce::jmax(1, y - 8));
+        content_.setSize(juce::jmax(1, width), juce::jmax(1, y));
         repaint();
     }
     Context& ctx_;
@@ -1030,11 +1025,9 @@ int FxPage::slotType(int lane, int slot) const {
 void FxPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void FxPage::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds();
     auto left = area.removeFromLeft(236);
-    area.removeFromLeft(8);
     rackCard_->setBounds(left.removeFromBottom(214));
-    left.removeFromBottom(8);
     lanes_.front()->setBounds(left);
     detail_->setBounds(area);
 }

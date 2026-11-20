@@ -667,7 +667,7 @@ juce::Rectangle<float> Knob::knobArea() const {
 
 float Knob::radius() const {
     const auto area = knobArea();
-    return std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (trackInset >= 0.0f ? trackInset : small ? 5.0f : 7.0f));
+    return std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (trackInset >= 0.0f ? trackInset : small ? 4.0f : 4.5f));
 }
 
 juce::RectangleList<int> Knob::dirtyArea() {
@@ -715,15 +715,15 @@ void Knob::drawFace(juce::Graphics& g) {
     const double n = norm();
     const bool active = isEnabled() && !bypassed_;
     // Track and value arc: the value in the control ink, graphite while the module is off.
-    strokeArc(g, c, radius, kStartAngle, kEndAngle, 2.4f, t.metal > 0.0f && t.dark ? t.sunken : t.line);
+    strokeArc(g, c, radius, kStartAngle, kEndAngle, 1.8f, t.sunken);
     const float zero = angleFor(isBipolar(d) ? d.toNormalized(0.0) : 0.0);
-    strokeArc(g, c, radius, zero, angleFor(n), 2.6f, ink());
+    strokeArc(g, c, radius, zero, angleFor(n), 2.0f, ink());
     if (isBipolar(d)) { // the centre of a bipolar range, marked on the scale
         g.setColour(t.textDim.withAlpha(0.8f));
         g.drawLine(juce::Line<float>(c.getPointOnCircumference(radius + 2.0f, zero), c.getPointOnCircumference(radius + 4.0f, zero)), 1.0f);
     }
     // Body and pointer.
-    const float body = radius - 4.5f;
+    const float body = radius - 2.8f;
     const auto bodyBox = juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(c);
     const float a = angleFor(n);
     if (t.metal > 0.0f) {
@@ -733,8 +733,8 @@ void Knob::drawFace(juce::Graphics& g) {
         cap_.draw(g, bodyBox.expanded(2.0f, 3.0f).getSmallestIntegerContainer(), hot ? 1u : 0u, false, [&](juce::Graphics& cg) {
             cg.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.22f));
             cg.fillEllipse(bodyBox.expanded(1.0f).translated(0.0f, 1.6f));
-            const juce::Colour skirt = t.dark ? t.raised.darker(0.25f) : t.raised.darker(0.12f);
-            cg.setGradientFill(juce::ColourGradient(skirt.brighter(0.45f * t.metal), c.x, bodyBox.getY(), skirt.darker(0.35f * t.metal), c.x,
+            const juce::Colour skirt = t.raised;
+            cg.setGradientFill(juce::ColourGradient(skirt.interpolatedWith(t.control, 0.24f * t.metal), c.x, bodyBox.getY(), skirt.darker(0.52f * t.metal), c.x,
                                                     bodyBox.getBottom(), false));
             cg.fillEllipse(bodyBox);
             if (body > 9.0f) { // the knurling
@@ -746,16 +746,16 @@ void Knob::drawFace(juce::Graphics& g) {
                 }
             }
             const auto cap = bodyBox.reduced(body > 9.0f ? 2.6f : 1.5f);
-            const juce::Colour top = t.dark ? t.raised.brighter(0.18f) : t.panel.brighter(0.05f);
-            cg.setGradientFill(juce::ColourGradient(top.brighter(0.35f * t.metal), cap.getCentreX(), cap.getY(),
-                                                    top.darker(0.25f * t.metal), cap.getCentreX(), cap.getBottom() + cap.getHeight() * 0.3f, true));
+            const juce::Colour top = t.raised.interpolatedWith(t.control, 0.18f * t.metal);
+            cg.setGradientFill(juce::ColourGradient(top, cap.getCentreX(), cap.getY(),
+                                                    t.sunken, cap.getCentreX(), cap.getBottom(), false));
             cg.fillEllipse(cap);
             cg.setColour(hot ? t.control.withAlpha(0.55f) : juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
             cg.drawEllipse(bodyBox, 1.0f);
             // The light catches the upper rim only.
             juce::Path rim;
             rim.addCentredArc(c.x, c.y, cap.getWidth() * 0.5f - 0.5f, cap.getHeight() * 0.5f - 0.5f, 0.0f, -1.2f, 1.2f, true);
-            cg.setColour(juce::Colours::white.withAlpha(t.dark ? 0.16f : 0.5f));
+            cg.setColour(juce::Colours::white.withAlpha(0.28f));
             cg.strokePath(rim, juce::PathStrokeType(0.8f));
         });
         g.setColour(active ? (t.dark ? juce::Colours::white.withAlpha(0.95f) : t.text) : t.textDim);
@@ -773,7 +773,8 @@ void Knob::drawFace(juce::Graphics& g) {
     const auto bounds = getLocalBounds().toFloat();
     auto text = bounds.withTop(area.getBottom());
     if (showLabel)
-        drawText(g, label_, text.removeFromTop(labelRow), kTextSmall, t.textDim, juce::Justification::centred);
+        drawText(g, label_, text.removeFromTop(labelRow), fittingSize(label_, bounds.getWidth(), kTextSmall + 0.5f, true),
+                 t.textDim, juce::Justification::centred, true);
     if (showValue) {
         const juce::String v = valueText();
         const auto box = text.removeFromTop(valueRow());
@@ -890,37 +891,19 @@ void Toggle::draw(juce::Graphics& g) {
     const bool on = value() >= 0.5;
     auto area = getLocalBounds().toFloat();
     if (power) {
-        // On: a lit lamp with a filled glyph. Off: a hollow ring with the glyph in graphite, so the
-        // state reads without colour (the module's header also says OFF).
-        const auto circle = area.withSizeKeepingCentre(std::min(area.getWidth(), area.getHeight()) - 2.0f,
-                                                       std::min(area.getWidth(), area.getHeight()) - 2.0f);
-        if (on) {
-            if (t.metal > 0.0f) { // a lit lamp glows
-                g.setColour(t.lamp.withAlpha(0.28f));
-                g.fillEllipse(circle.expanded(1.0f));
-            }
-            g.setColour(t.lamp);
-            g.fillEllipse(circle);
-            g.setColour(t.bg);
-            g.strokePath(glyphPath(Glyph::Power, circle.reduced(circle.getWidth() * 0.22f)), juce::PathStrokeType(1.6f));
-        } else {
-            g.setColour(t.sunken);
-            g.fillEllipse(circle);
-            g.setColour(t.textFaint);
-            g.drawEllipse(circle.reduced(0.75f), 1.2f);
-            g.strokePath(glyphPath(Glyph::Power, circle.reduced(circle.getWidth() * 0.24f)), juce::PathStrokeType(1.2f));
-        }
+        const float size = std::min(area.getWidth(), area.getHeight());
+        const auto seat = area.withSizeKeepingCentre(size, size);
+        drawWell(g, seat);
+        drawPanel(g, seat.reduced(2.0f), on ? t.lamp : t.raised);
+        g.setColour(on ? t.bg : t.textDim);
+        g.strokePath(glyphPath(Glyph::Power, seat.reduced(size * 0.26f)), juce::PathStrokeType(on ? 1.55f : 1.15f));
         drawDecorations(g, area);
         return;
     }
     const auto pill = juce::Rectangle<float>(26.0f, 14.0f).withPosition(area.getX() + 1.0f, area.getCentreY() - 7.0f);
-    g.setColour(on ? ink() : t.sunken);
-    g.fillRoundedRectangle(pill, 7.0f);
-    g.setColour(on ? ink() : t.lineStrong);
-    g.drawRoundedRectangle(pill.reduced(0.5f), 7.0f, 1.0f);
+    drawWell(g, pill);
     const auto knob = juce::Rectangle<float>(10.0f, 10.0f).withCentre({on ? pill.getRight() - 7.0f : pill.getX() + 7.0f, pill.getCentreY()});
-    g.setColour(on ? t.bg : t.textDim);
-    g.fillEllipse(knob);
+    drawPanel(g, knob, on ? t.lamp : t.lineStrong);
     drawText(g, label_, area.withTrimmedLeft(32.0f), kTextSmall, on && !bypassed_ ? t.text : t.textDim);
     drawDecorations(g, area);
 }
@@ -973,10 +956,7 @@ void ChoiceBox::draw(juce::Graphics& g) {
             drawText(g, label_, area.removeFromLeft(std::min(textWidth(label_, kTextSmall) + 6.0f, area.getWidth() * 0.45f)), kTextSmall, t.textDim);
     }
     const auto box = area.withSizeKeepingCentre(area.getWidth(), std::min(area.getHeight(), 22.0f));
-    g.setColour(t.raised);
-    g.fillRoundedRectangle(box, 4.0f);
-    g.setColour(isMouseOver() ? t.lineStrong.brighter(0.2f) : t.line);
-    g.drawRoundedRectangle(box.reduced(0.5f), 4.0f, 1.0f);
+    drawWell(g, box);
     const auto& d = def();
     const int index = static_cast<int>(std::lround(value() - d.min));
     auto inner = box.reduced(6.0f, 0.0f);
@@ -1017,24 +997,21 @@ void Segmented::draw(juce::Graphics& g) {
     const auto area = segmentArea();
     const int count = static_cast<int>(d.max - d.min) + 1;
     const int current = static_cast<int>(std::lround(value() - d.min));
-    g.setColour(t.sunken);
-    g.fillRoundedRectangle(area, 4.0f);
+    drawWell(g, area);
     const float w = area.getWidth() / static_cast<float>(count);
-    // The chosen segment is a raised key in the control ink with dark bold text, the others recessed
-    // with dim text: the choice reads by brightness alone. In a module that is off it is graphite.
     const bool active = isEnabled() && !bypassed_;
     for (int i = 0; i < count; ++i) {
         const auto seg = juce::Rectangle<float>(area.getX() + w * static_cast<float>(i), area.getY(), w, area.getHeight());
         if (i == current) {
-            g.setColour(active ? t.control : t.lineStrong);
-            g.fillRoundedRectangle(seg.reduced(1.5f), 3.0f);
+            const auto key = seg.reduced(1.0f);
+            drawPanel(g, key, active ? t.selection : t.raised);
+            g.setColour(active ? t.lamp.withAlpha(0.9f) : t.lineStrong);
+            g.fillRect(key.reduced(3.0f, 1.0f).removeFromBottom(1.0f));
         }
         const juce::String name = i < static_cast<int>(names.size()) ? names[static_cast<std::size_t>(i)] : choiceName(d, i);
         drawText(g, name, seg.reduced(3.0f, 0.0f), fittingSize(name, seg.getWidth() - 6.0f, kTextSmall + 0.5f, i == current),
-                 i == current ? (active ? t.bg : t.text) : t.textDim, juce::Justification::centred, i == current);
+                 i == current ? t.text : t.textDim, juce::Justification::centred, i == current);
     }
-    g.setColour(t.line);
-    g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
     drawDecorations(g, getLocalBounds().toFloat());
 }
 
@@ -1278,18 +1255,11 @@ void Button::draw(juce::Graphics& g) {
         return;
     }
     if (accentStyle) { // the primary action: the control ink, dark text
-        g.setColour(!isEnabled() ? t.raised : down ? t.control.darker(0.2f) : over ? t.control.brighter(0.1f) : t.control);
-        g.fillRoundedRectangle(area, 4.0f);
+        drawPanel(g, area, !isEnabled() ? t.raised : down ? t.control.darker(0.2f) : over ? t.control.brighter(0.1f) : t.control);
     } else if (toggled_ && !tab) {
-        g.setColour(t.selection);
-        g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(t.control.withAlpha(0.75f));
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        drawPanel(g, area, t.selection);
     } else if (!ghost && !tab) { // ghost buttons (list rows, icon buttons) and tabs draw no box, not even under the pointer
-        g.setColour(down ? t.sunken : over ? t.raised.brighter(0.08f) : t.raised);
-        g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(over && isEnabled() ? t.lineStrong : t.line);
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        drawPanel(g, area, down ? t.sunken : over && isEnabled() ? t.raised.brighter(0.12f) : t.raised);
     }
     const juce::Colour ink = !isEnabled() ? (accentStyle ? t.textDim : t.textFaint.withAlpha(0.7f))
                              : accentStyle ? t.bg
@@ -1454,8 +1424,6 @@ void TabStrip::resized() {
         tab->textSize = size;
         const int w = static_cast<int>((textWidth(tab->text(), size, true) + (large ? 30.0f : 16.0f)) * stretch);
         tab->setBounds(area.removeFromLeft(w));
-        if (large)
-            area.removeFromLeft(2);
     }
 }
 
@@ -1465,17 +1433,11 @@ void TabStrip::draw(juce::Graphics& g) {
         return;
     const auto b = tabs_[static_cast<std::size_t>(selected_)]->getBounds().toFloat();
     if (large) {
-        // The page on show sits in a recessed seat: dark, shaded from the top, with a lit lower lip.
-        const auto seat = b.reduced(0.0f, 2.0f);
-        g.setColour(t.sunken);
-        g.fillRoundedRectangle(seat, 4.0f);
-        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.5f), 0.0f, seat.getY(), juce::Colours::transparentBlack, 0.0f,
-                                               seat.getY() + 6.0f, false));
-        g.fillRoundedRectangle(seat.withHeight(6.0f), 4.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.7f));
-        g.drawRoundedRectangle(seat.reduced(0.5f), 4.0f, 1.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.08f));
-        g.fillRect(seat.getX() + 4.0f, seat.getBottom(), seat.getWidth() - 8.0f, 1.0f);
+        for (const auto& tab : tabs_)
+            if (tab->isVisible())
+                drawPanel(g, tab->getBounds().toFloat(), tab->toggled() ? t.selection : t.raised);
+        g.setColour(t.lamp);
+        g.fillRect(b.reduced(1.0f, 0.0f).removeFromBottom(2.0f));
         return;
     }
     // A module's own groups: a hairline under the strip, a light underline under the chosen group.
@@ -1487,11 +1449,15 @@ void TabStrip::draw(juce::Graphics& g) {
 
 // --- Card --------------------------------------------------------------------------------------------
 
+namespace {
+void drawWalnut(juce::Graphics& g, juce::Rectangle<float> area, int originX);
+}
+
 Card::Card(juce::String title, Family f) : title_(std::move(title)) {
     family = f;
     setTitle(title_);
     setAccessible(true);
-    setOpaque(true); // it paints every pixel (its corners in the chassis colour)
+    setOpaque(true);
 }
 
 juce::Rectangle<int> Card::header() const { return getLocalBounds().removeFromTop(headerHeight); }
@@ -1542,14 +1508,16 @@ void Card::draw(juce::Graphics& g) {
     // Everything here changes only with the title, the header's layout and the power state: one
     // copy per repaint.
     std::uint64_t key = static_cast<std::uint64_t>(title_.hashCode64());
-    for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, headerHeight, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
+    for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, walnut ? getX() + 1 : 0, headerHeight, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
                         juce::roundToInt(right), static_cast<int>(family), bypassShown_ ? 1 : 0})
         key = key * 1099511628211ull + static_cast<std::uint64_t>(v + 1);
     background_.draw(g, getLocalBounds(), key, true, [&](juce::Graphics& bg) {
-        bg.fillAll(t.bg); // the corners outside the rounded panel: the chassis
-        drawPanel(bg, area, t.panel);
+        if (walnut)
+            drawWalnut(bg, area, -getX());
+        else
+            drawPanel(bg, area, t.panel);
         if (t.metal > 0.0f) {
-            drawPlate(bg, header().toFloat().reduced(1.0f, 0.0f).withTrimmedTop(1.0f), t.radius);
+            drawPlate(bg, header().toFloat().reduced(1.0f, 0.0f).withTrimmedTop(1.0f));
             if (screws && !collapsed && getHeight() > 90 && getWidth() > 120) {
                 const float inset = 7.0f;
                 drawScrew(bg, {inset, area.getBottom() - inset}, 2.8f, 0.3f);
@@ -1568,18 +1536,12 @@ void Card::draw(juce::Graphics& g) {
             h.removeFromLeft(2.0f);
         const juce::String title = title_.toUpperCase();
         h = h.withRight(std::min(right, h.getRight()));
-        const float titleW = std::min(textWidth(title, kTextSmall + 0.5f, true) + 2.0f, h.getWidth());
-        drawText(bg, title, h.removeFromLeft(titleW), kTextSmall + 0.5f, bypassShown_ ? t.textDim : t.text, juce::Justification::centredLeft, true);
-        if (bypassShown_ && offMark && h.getWidth() > 40.0f) { // a module that is off says so in words, beside its name
+        const float titleW = std::min(textWidth(title, kTextBody, true) + 2.0f, h.getWidth());
+        drawText(bg, title, h.removeFromLeft(titleW), kTextBody, bypassShown_ ? t.textDim : t.text, juce::Justification::centredLeft, true);
+        if (bypassShown_ && offMark && h.getWidth() > 40.0f) {
             h.removeFromLeft(8.0f);
             const auto badge = h.removeFromLeft(textWidth("OFF", kTextSmall, true) + 12.0f).withSizeKeepingCentre(textWidth("OFF", kTextSmall, true) + 12.0f, 16.0f);
-            bg.setColour(t.textFaint);
-            bg.drawRoundedRectangle(badge.reduced(0.5f), 3.0f, 1.0f);
             drawText(bg, "OFF", badge, kTextSmall, t.textDim, juce::Justification::centred, true);
-        }
-        if (!collapsed) {
-            bg.setColour(t.line);
-            bg.fillRect(juce::Rectangle<float>(area.getX() + 1.0f, static_cast<float>(headerHeight) - 1.0f, area.getWidth() - 2.0f, 1.0f));
         }
     });
     if (drawHeaderExtra && !headerExtraArea.isEmpty())
@@ -1640,19 +1602,14 @@ void DragChip::draw(juce::Graphics& g) {
     const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u) |
                               (open_ ? 2u : 0u);
     body_.draw(g, getLocalBounds(), key, false, [&](juce::Graphics& cg) {
-        const float radius = area.getHeight() * 0.5f;
-        cg.setColour(open_ ? t.raised.brighter(0.22f) : t.raised);
-        cg.fillRoundedRectangle(area, radius);
+        drawPanel(cg, area, open_ ? t.selection : t.raised);
         if (selected) {
             cg.setColour(c);
-            cg.drawRoundedRectangle(area.reduced(0.8f), radius - 0.8f, 1.6f);
-        } else {
-            cg.setColour(open_ ? t.control.withAlpha(0.55f) : t.line);
-            cg.drawRoundedRectangle(area, radius, 1.0f);
+            cg.drawRect(area.reduced(0.8f), 1.3f);
         }
-        auto inner = area.reduced(area.getHeight() * 0.35f, 0.0f);
-        cg.setColour(c);
-        cg.fillEllipse(inner.removeFromLeft(7.0f).withSizeKeepingCentre(7.0f, 7.0f));
+        auto inner = area.reduced(5.0f, 0.0f);
+        cg.setColour(open_ || selected ? c : c.withMultipliedSaturation(0.6f));
+        cg.fillRect(inner.removeFromLeft(6.0f).withSizeKeepingCentre(5.0f, 5.0f));
         inner.removeFromLeft(4.0f);
         cg.setColour(selected ? c : t.textDim);
         cg.fillPath(glyphPath(Glyph::Grip, inner.removeFromRight(8.0f).withSizeKeepingCentre(8.0f, 11.0f)));
@@ -1673,7 +1630,7 @@ void DragChip::draw(juce::Graphics& g) {
     const float x1 = v >= 0 ? (source_.startsWith("lfo") || source_.startsWith("flux") ? mid + v * half : area.getX() + 8.0f + v * (area.getWidth() - 16.0f)) : mid;
     g.setColour(c);
     g.fillRect(juce::Rectangle<float>(std::min(x0, x1), area.getBottom() - 2.5f, std::abs(x1 - x0), 1.5f));
-    drawFocus(g, area, area.getHeight() * 0.5f);
+    drawFocus(g, area, t.radius);
 }
 
 void DragChip::mouseDown(const juce::MouseEvent&) { dragging_ = false; }
@@ -1856,50 +1813,57 @@ void CachedDrawing::draw(juce::Graphics& g, juce::Rectangle<int> area, std::uint
 
 namespace {
 
-// A tile of fine grain with faint horizontal brushing, made once. Panels and the chassis draw it
-// over their fill at a low opacity; tiles are anchored at the editor's origin so neighbouring
-// panels line up.
-const juce::Image& grainTile(bool dark) {
-    static juce::Image tiles[2];
-    juce::Image& tile = tiles[dark ? 1 : 0];
-    if (tile.isNull()) {
-        constexpr int kSize = 192;
-        tile = juce::Image(juce::Image::ARGB, kSize, kSize, true, juce::SoftwareImageType());
-        juce::Random random(dark ? 0x5eed : 0x5eee);
-        std::vector<float> streak(kSize);
-        for (int y = 0; y < kSize; ++y) // brushing: each row a little lighter or darker than the next
-            streak[static_cast<std::size_t>(y)] = (random.nextFloat() - 0.5f) * 0.5f;
-        juce::Image::BitmapData data(tile, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < kSize; ++y)
-            for (int x = 0; x < kSize; ++x) {
-                const float v = (random.nextFloat() - 0.5f) + streak[static_cast<std::size_t>(y)];
-                const auto alpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(std::abs(v) * 255.0f)));
-                data.setPixelColour(x, y, (v > 0 ? juce::Colours::white : juce::Colours::black).withAlpha(alpha));
+// Long, periodic fibres make the grain continuous across the adjoining dock panels.
+const juce::Image& walnutTile() {
+    static const auto image = [] {
+        constexpr int width = 768, height = 192;
+        constexpr float turn = juce::MathConstants<float>::twoPi;
+        juce::Image tile(juce::Image::ARGB, width, height, true, juce::SoftwareImageType());
+        const juce::Colour light(0xff906749), shade(0xff100b08);
+        {
+            juce::Image::BitmapData data(tile, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < height; ++y) {
+                const float row = static_cast<float>(y) * turn / height;
+                for (int x = 0; x < width; ++x) {
+                    const float along = static_cast<float>(x) * turn / width;
+                    const float fibre = row + 0.068f * std::sin(along * 2.0f + row * 3.0f)
+                                            + 0.043f * std::sin(along * 3.0f - row * 4.0f);
+                    const float grain = 0.51f * std::sin(18.0f * fibre + std::sin(8.0f * fibre))
+                                      + 0.30f * std::sin(51.0f * fibre + along)
+                                      + 0.19f * std::sin(77.0f * fibre - along * 4.0f);
+                    data.setPixelColour(x, y, (grain > 0.0f ? light : shade).withAlpha(std::abs(grain) * 0.26f));
+                }
             }
-    }
-    return tile;
+        }
+        return tile;
+    }();
+    return image;
+}
+
+void bevel(juce::Graphics& g, juce::Rectangle<float> area, float light) {
+    g.setColour(juce::Colours::black.withAlpha(0.68f));
+    g.fillRect(area.removeFromBottom(1.0f));
+    g.fillRect(area.removeFromRight(1.0f));
+    g.setColour(juce::Colours::white.withAlpha(light));
+    g.fillRect(area.removeFromTop(1.0f));
+    g.fillRect(area.removeFromLeft(1.0f));
+}
+
+void drawWalnut(juce::Graphics& g, juce::Rectangle<float> area, int originX) {
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff573e30), 0.0f, area.getY(),
+                                           juce::Colour(0xff31221b), 0.0f, area.getBottom(), false));
+    g.fillRect(area);
+    g.setTiledImageFill(walnutTile(), originX, 0, theme().texture);
+    g.fillRect(area);
+    bevel(g, area, 0.16f);
 }
 
 } // namespace
 
-void drawGrain(juce::Graphics& g, const juce::Path& shape, float strength) {
-    const Theme& t = theme();
-    const float alpha = strength * t.texture;
-    if (alpha <= 0.0f)
-        return;
-    g.saveState();
-    g.setTiledImageFill(grainTile(t.dark), 0, 0, juce::jlimit(0.0f, 1.0f, alpha));
-    g.fillPath(shape);
-    g.restoreState();
-}
-
 void drawChassis(juce::Graphics& g, juce::Rectangle<float> area) {
-    const Theme& t = theme();
-    g.setColour(t.bg);
+    g.setColour(theme().bg);
     g.fillRect(area);
-    juce::Path p;
-    p.addRectangle(area);
-    drawGrain(g, p, t.dark ? 0.05f : 0.04f); // the enclosure is the one textured surface
+    bevel(g, area, 0.14f);
 }
 
 void drawScrew(juce::Graphics& g, juce::Point<float> c, float radius, float angle) {
@@ -1932,54 +1896,28 @@ void drawScrew(juce::Graphics& g, juce::Point<float> c, float radius, float angl
 
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour fill, bool border) {
     const Theme& t = theme();
-    // A soft drop shadow under machined panels.
-    if (t.metal > 0.0f && border) {
-        g.setColour(juce::Colours::black.withAlpha((t.dark ? 0.35f : 0.12f) * t.metal));
-        g.fillRoundedRectangle(area.translated(0.0f, 1.5f), t.radius);
-    }
     if (t.metal > 0.0f)
-        g.setGradientFill(juce::ColourGradient(fill.brighter(0.07f * t.metal), area.getX(), area.getY(), fill.darker(0.10f * t.metal), area.getX(),
-                                               area.getBottom(), false));
+        g.setGradientFill(juce::ColourGradient(fill.brighter(0.17f * t.metal), area.getX(), area.getY(), fill.darker(0.15f * t.metal),
+                                               area.getX(), area.getBottom(), false));
     else
         g.setColour(fill);
-    g.fillRoundedRectangle(area, t.radius); // a labelled work surface: a quiet fill, no grain
-    if (border) {
-        g.setColour(t.line);
-        g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.0f);
-        if (t.metal > 0.0f) { // the lit top edge of a bevel
-            g.setColour(juce::Colours::white.withAlpha((t.dark ? 0.07f : 0.5f) * t.metal));
-            g.drawHorizontalLine(static_cast<int>(area.getY() + 1.0f), area.getX() + t.radius, area.getRight() - t.radius);
-        }
-    }
+    g.fillRect(area);
+    if (border)
+        bevel(g, area, 0.19f * t.metal);
 }
 
-void drawPlate(juce::Graphics& g, juce::Rectangle<float> area, float radius) {
-    const Theme& t = theme();
-    const juce::Colour base = t.dark ? t.bg.brighter(0.05f) : t.raised.darker(0.04f);
-    g.setGradientFill(juce::ColourGradient(base.brighter(0.08f * t.metal), area.getX(), area.getY(), base.darker(0.08f * t.metal), area.getX(),
-                                           area.getBottom(), false));
-    juce::Path plate;
-    plate.addRoundedRectangle(area.getX(), area.getY(), area.getWidth(), area.getHeight(), radius, radius, true, true, false, false);
-    g.fillPath(plate);
-    // An engraved line under the plate: dark groove, light lip.
-    g.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.18f));
-    g.fillRect(area.getX() + 1.0f, area.getBottom() - 1.0f, area.getWidth() - 2.0f, 1.0f);
-    g.setColour(juce::Colours::white.withAlpha(t.dark ? 0.05f : 0.4f));
-    g.fillRect(area.getX() + 1.0f, area.getBottom(), area.getWidth() - 2.0f, 1.0f);
+void drawPlate(juce::Graphics& g, juce::Rectangle<float> area) {
+    drawPanel(g, area, theme().raised);
 }
 
 void drawWell(juce::Graphics& g, juce::Rectangle<float> area) {
     const Theme& t = theme();
     g.setColour(t.display);
-    g.fillRoundedRectangle(area, 4.0f);
-    // One inset edge: the rim, and the shade the panel casts into the well from above.
-    if (t.metal > 0.0f) {
-        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.5f * t.metal), area.getX(), area.getY(), juce::Colours::transparentBlack,
-                                               area.getX(), area.getY() + 4.0f, false));
-        g.fillRoundedRectangle(area.withHeight(std::min(4.0f, area.getHeight())), 4.0f);
-    }
-    g.setColour(t.dark ? juce::Colours::black.withAlpha(0.75f) : t.line);
-    g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
+    g.fillRect(area);
+    g.setColour(juce::Colours::black.withAlpha(0.7f));
+    g.drawRect(area, 1.0f);
+    g.setColour(juce::Colours::white.withAlpha(0.16f * t.metal));
+    g.fillRect(area.reduced(1.0f, 0.0f).removeFromBottom(1.0f));
 }
 
 void strokeGlow(juce::Graphics& g, const juce::Path& path, juce::Colour colour, float width) {

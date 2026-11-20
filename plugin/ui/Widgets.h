@@ -396,6 +396,7 @@ public:
     juce::String moduleId; // for copy, paste, locks and module presets
     int headerHeight = 28;
     bool screws = false; // screws in the bottom corners: only on the outer enclosure, not on work surfaces
+    bool walnut = false;
     bool offMark = true; // an OFF mark beside the title while the module is off (the oscillators show it in their display instead)
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}
@@ -490,9 +491,8 @@ void drawWell(juce::Graphics& g, juce::Rectangle<float> area);
 // The hardware finish: the editor's back plate, grain over any shape, a screw with a hex socket,
 // and an engraved nameplate strip (panel headers).
 void drawChassis(juce::Graphics& g, juce::Rectangle<float> area);
-void drawGrain(juce::Graphics& g, const juce::Path& shape, float strength);
 void drawScrew(juce::Graphics& g, juce::Point<float> centre, float radius = 3.4f, float angle = 0.5f);
-void drawPlate(juce::Graphics& g, juce::Rectangle<float> area, float radius);
+void drawPlate(juce::Graphics& g, juce::Rectangle<float> area);
 // A luminous line: a soft wide stroke under a thin bright one.
 void strokeGlow(juce::Graphics& g, const juce::Path& path, juce::Colour colour, float width = 1.5f);
 

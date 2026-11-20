@@ -477,14 +477,11 @@ void AgentPage::addFolder(bool write) {
 void AgentPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void AgentPage::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds();
     connect_->setBounds(juce::Rectangle<int>(780, ConnectPanel::kPanelHeight).withCentre(area.getCentre()).constrainedWithin(area));
-    auto left = area.removeFromLeft(area.getWidth() / 2 - 4);
-    area.removeFromLeft(8);
+    auto left = area.removeFromLeft(area.getWidth() / 2);
     link_->setBounds(left.removeFromTop(100));
-    left.removeFromTop(8);
     clients_->setBounds(left.removeFromTop(100));
-    left.removeFromTop(8);
     permissions_->setBounds(left);
     // One labelled checkbox per row at the top of the card, the audition cap and the folders below.
     {
@@ -501,8 +498,7 @@ void AgentPage::resized() {
         }
         permissions_->topReserve = static_cast<int>(permButtons_.size()) * 26 + 6 + 24 + 10;
     }
-    log_->setBounds(area.removeFromTop(area.getHeight() - 100));
-    area.removeFromTop(8);
+    log_->setBounds(area.removeFromTop(area.getHeight() - 92));
     setup_->setBounds(area);
     {
         auto body = setup_->body();
