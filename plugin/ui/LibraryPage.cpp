@@ -129,10 +129,55 @@ juce::File LibraryPage::resolveLocation(const juce::File& presets, const juce::S
     return folder;
 }
 
+// --- The empty results -----------------------------------------------------------------------------------
+
+// In front of the list while it has no rows: what is empty, what to do about it and the action
+// that does it, beside the message. A screen reader reads the message as the view's name.
+class LibraryPage::EmptyView final : public Widget {
+public:
+    EmptyView() {
+        setAccessible(true);
+        markOverlay(*this); // it sits over the empty list
+        action.textSize = kTextSmall + 0.5f;
+        addAndMakeVisible(action);
+    }
+    void set(const juce::String& title, const juce::String& text, const juce::String& actionText, Glyph glyph, std::function<void()> onAction) {
+        title_ = title;
+        text_ = text;
+        setTitle(title + ". " + text);
+        action.setText(actionText);
+        action.glyph = glyph;
+        action.onClick = std::move(onAction);
+        resized();
+        repaint();
+    }
+    void resized() override {
+        const int w = static_cast<int>(textWidth(action.text(), kTextSmall + 0.5f)) + 44;
+        action.setBounds(juce::Rectangle<int>(juce::jmin(w, getWidth()), 26).withCentre({getWidth() / 2, 70}));
+    }
+    void draw(juce::Graphics& g) override {
+        const Theme& t = theme();
+        const auto area = getLocalBounds().toFloat();
+        drawText(g, title_, area.withHeight(22.0f).translated(0.0f, 4.0f), kTextTitle, t.text, juce::Justification::centred, true);
+        drawText(g, text_, area.withHeight(18.0f).translated(0.0f, 28.0f), fittingSize(text_, area.getWidth(), kTextBody), t.textDim, juce::Justification::centred);
+    }
+    bool hasVisibleLabel() const override { return true; }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override {
+        return std::make_unique<juce::AccessibilityHandler>(*this, juce::AccessibilityRole::staticText);
+    }
+    juce::String message() const { return title_ + ". " + text_; }
+    Button action{"Import pack", Glyph::Folder};
+
+private:
+    juce::String title_, text_;
+};
+
 // --- The page ------------------------------------------------------------------------------------------
 
 LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     setTitle("LIBRARY");
+    empty_ = std::make_unique<EmptyView>();
+    addChildComponent(*empty_);
     addAndMakeVisible(search_);
     search_.onTextChange = [this] { filter(); };
     auto& header = table_.getHeader();
@@ -317,8 +362,53 @@ void LibraryPage::filter() {
     table_.updateContent();
     table_.repaint();
     refreshDetail();
-    repaint(); // the empty-folder message
+    refreshEmpty();
 }
+
+LibraryPage::Empty LibraryPage::emptyState() const {
+    if (resultCount() > 0)
+        return Empty::None;
+    if (presets_.empty())
+        return Empty::Library;
+    if (folderFilter_.isNotEmpty() && search_.getText().trim().isEmpty() && facetFilters_.empty())
+        return Empty::Folder;
+    return Empty::Search;
+}
+
+juce::String LibraryPage::emptyMessage() const { return emptyState() == Empty::None ? juce::String() : empty_->message(); }
+
+Button* LibraryPage::emptyAction() { return emptyState() == Empty::None ? nullptr : &empty_->action; }
+
+void LibraryPage::clearSearch() {
+    search_.setText({}, false);
+    facetFilters_.clear();
+    rebuildFacets();
+    filter();
+}
+
+void LibraryPage::refreshEmpty() {
+    const Empty state = emptyState();
+    switch (state) {
+    case Empty::Library:
+        empty_->set("No presets yet", "Save a sound from the top bar, or bring in presets from a pack or a folder.", "Import pack", Glyph::Folder,
+                    [this] { if (importButton_.onClick) importButton_.onClick(); });
+        break;
+    case Empty::Folder:
+        empty_->set("This folder is empty", "Save a preset into " + folderFilter_.fromLastOccurrenceOf("/", false, false) + " from the top bar (Save).",
+                    "Show all presets", Glyph::None, [this] { setFolder({}); });
+        break;
+    case Empty::Search:
+        empty_->set("No preset matches", juce::String("Nothing in ") + (folderFilter_.isEmpty() ? juce::String("the library") : folderFilter_.fromLastOccurrenceOf("/", false, false)) +
+                        " matches the search and filters.", "Clear search", Glyph::Close, [this] { clearSearch(); });
+        break;
+    case Empty::None: break;
+    }
+    empty_->setVisible(state != Empty::None);
+    if (state != Empty::None)
+        empty_->toFront(false);
+}
+
+bool LibraryPage::selectionToolsShown() const { return favourite_.isVisible(); }
 
 void LibraryPage::setFolder(const juce::String& relative) {
     folderFilter_ = relative;
@@ -771,10 +861,16 @@ void LibraryPage::filesDropped(const juce::StringArray& files, int, int) {
 
 void LibraryPage::refreshDetail() {
     const auto rows = selectedRows();
+    // The tools that edit presets show only while there are presets to edit.
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&tagField_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
+        c->setVisible(!rows.empty());
+    for (auto& s : stars_)
+        s.setVisible(!rows.empty());
     if (rows.empty()) {
         detailTitle_.setText(juce::String(resultCount()) + " of " + juce::String(static_cast<int>(presets_.size())) + " presets");
-        detailText_.setText(problems_.empty() ? juce::String("Click a preset to load it; Ctrl or Shift selects several to edit together.")
-                                              : juce::String(static_cast<int>(problems_.size())) + " files could not be read.");
+        detailText_.setText(!problems_.empty() ? juce::String(static_cast<int>(problems_.size())) + " files could not be read."
+                            : resultCount() == 0 ? juce::String()
+                                                 : juce::String("Click a preset to load it; Ctrl or Shift selects several to edit together."));
         favourite_.setToggled(false);
         for (auto& s : stars_)
             s.setToggled(false);
@@ -850,6 +946,7 @@ void LibraryPage::resized() {
     auto right = area.removeFromRight(300);
     area.removeFromRight(8);
     table_.setBounds(area);
+    empty_->setBounds(area.withTrimmedTop(48).withHeight(104).reduced(16, 0));
     right = right.reduced(10, 8);
     detailTitle_.setBounds(right.removeFromTop(22));
     detailText_.setBounds(right.removeFromTop(36));
@@ -881,14 +978,7 @@ void LibraryPage::paint(juce::Graphics& g) {
     drawPanel(g, facetView_.getBounds().toFloat().expanded(2.0f), t.panel);
     const auto right = getLocalBounds().reduced(8).withTrimmedTop(38).removeFromRight(300);
     drawPanel(g, right.toFloat(), t.panel);
-    if (resultCount() == 0) {
-        juce::String message = "No preset matches.";
-        if (presets_.empty())
-            message = "No presets yet: save one from the top bar, or import a pack.";
-        else if (folderFilter_.isNotEmpty() && search_.getText().isEmpty() && facetFilters_.empty())
-            message = "This folder is empty. Save a preset into it from the top bar (Save).";
-        drawText(g, message, table_.getBounds().toFloat().withHeight(80.0f).translated(0.0f, 40.0f), kTextBody, t.textDim, juce::Justification::centred);
-    }
+    // An empty list says so in front of it (EmptyView): the list paints its own background.
 }
 
 void LibraryPage::saveState(nlohmann::json& state) const {

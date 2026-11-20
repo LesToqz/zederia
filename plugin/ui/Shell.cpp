@@ -7,7 +7,25 @@ namespace zui {
 
 // --- TopBar ------------------------------------------------------------------------------------------
 
-TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
+OutputPanel::OutputPanel(Context& ctx) : meter(ctx) {
+    setTitle("Output");
+    meter.vertical = true;
+    master = std::make_unique<Knob>(ctx, "global.master", "Master");
+    master->valueSize = kValueText;
+    master->labelRow = 12.0f;
+    master->trackInset = 3.5f; // a cap of about 23 px at 100 %
+    addAndMakeVisible(meter);
+    addAndMakeVisible(*master);
+}
+
+void OutputPanel::resized() {
+    auto area = getLocalBounds();
+    meter.setBounds(area.removeFromLeft(14).withSizeKeepingCentre(14, juce::jmin(area.getHeight() - 6, 56)));
+    area.removeFromLeft(4);
+    master->setBounds(area);
+}
+
+TopBar::TopBar(Context& ctx) : ctx_(ctx) {
     setTitle("Top bar");
     menu.setTitle("Menu");
     menu.setHelp("Menu", "Init, open and save presets, MIDI learn and controller maps, programs, preferences, theme and size.");
@@ -30,13 +48,10 @@ TopBar::TopBar(Context& ctx) : meter(ctx), ctx_(ctx) {
     quality->showLabel = false;
     quality->setHelp("Quality", "Oversampling while playing: Draft costs least, Ultra the most. Offline renders use the offline quality (preferences).");
     fxOff = std::make_unique<Toggle>(ctx, "global.fx_off", "FX off");
-    master = std::make_unique<Knob>(ctx, "global.master", "Master");
-    master->small = true;
-    master->showValue = false;
     cpuText.setTitle("CPU");
     agent.setTitle("Agent link");
     for (juce::Component* c : std::initializer_list<juce::Component*>{&menu, &prev, &next, &presetName, &save, &history, &abA, &abB,
-                                                                       &abCopy, quality.get(), &cpuText, fxOff.get(), &agent, &meter, master.get()})
+                                                                       &abCopy, quality.get(), &cpuText, fxOff.get(), &agent})
         addAndMakeVisible(c);
     for (Button* b : {&menu, &prev, &next, &history})
         b->ghost = true;
@@ -118,11 +133,7 @@ void TopBar::resized() {
     abB.setBounds(area.removeFromLeft(28));
     area.removeFromLeft(4);
     abCopy.setBounds(area.removeFromLeft(44));
-    // From the right: master, meter, agent, FX off, CPU, quality.
-    master->setBounds(area.removeFromRight(40).withSizeKeepingCentre(40, 28).withY(area.getY() - 4).withHeight(36));
-    area.removeFromRight(6);
-    meter.setBounds(area.removeFromRight(90).withSizeKeepingCentre(90, 12));
-    area.removeFromRight(12);
+    // From the right (the output has a column of its own beyond the bar): agent, FX off, CPU, quality.
     agent.setBounds(area.removeFromRight(62));
     area.removeFromRight(8);
     fxOff->setBounds(area.removeFromRight(76));

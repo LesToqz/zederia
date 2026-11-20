@@ -535,7 +535,7 @@ void CurveEditor::draw(juce::Graphics& g) {
         g.setColour(t.lineStrong);
         g.fillRect(inner.getX(), toScreen(0.0, 0.0).y, inner.getWidth(), 1.0f);
     }
-    const juce::Colour accent = t.accent(family);
+    const juce::Colour accent = ink.value_or(t.displayLine);
     // Envelope loop region and sustain point; LFO loop start.
     const int n = static_cast<int>(shape_.points.size());
     if (config_.envelopeMarkers && loopStart >= 0 && loopEnd > loopStart && loopEnd < n) {

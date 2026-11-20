@@ -41,8 +41,9 @@ public:
         for (juce::Component* c : std::initializer_list<juce::Component*>{&select_, &number_, &on_, &source_, &via_, &amount_, &polarity_, &curve_,
                                                                            &dest_, &mute_, &solo_, &remove_})
             addAndMakeVisible(c);
-        for (Button* b : {&select_, &on_, &mute_, &solo_})
+        for (Button* b : {&on_, &mute_, &solo_})
             b->toggleRole = true;
+        select_.checkbox = true; // a checkbox for bulk edits, apart from the route's own switches
         for (Button* b : {&select_, &on_, &source_, &via_, &polarity_, &curve_, &dest_, &mute_, &solo_, &remove_})
             b->textSize = kTextSmall;
         remove_.ghost = true;
@@ -118,7 +119,6 @@ public:
     }
     void setSelectedLook(bool selected) {
         select_.setToggled(selected);
-        select_.glyph = selected ? Glyph::Close : Glyph::None;
         select_.repaint();
     }
     void resized() override {
@@ -174,8 +174,13 @@ ModPage::ModPage(Context& ctx) : Page(ctx) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&search_, &sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_, &count_,
                                                                        &detailTitle_, &detailText_})
         addAndMakeVisible(c);
-    for (Button* b : {&sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_})
+    for (Button* b : {&sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_, &clearSearch_})
         b->textSize = kTextSmall + 0.5f;
+    add_.accentStyle = true; // the one primary action of the page
+    addChildComponent(clearSearch_);
+    markOverlay(clearSearch_); // it sits in the empty list, under the message
+    clearSearch_.setHelp("Clear search", "Show every route again.");
+    clearSearch_.onClick = [this] { setSearch({}); };
     search_.onTextChange = [this] { rebuild(); };
     sort_.setHelp("Sort", "Order the routes by number, source, destination or amount.");
     sort_.onClick = [this] {
@@ -228,14 +233,18 @@ ModPage::ModPage(Context& ctx) : Page(ctx) {
             return true;
         });
         selected_.clear();
+        updateActions();
     };
+    selectAll_.setHelp("Select all", "Checks every route the list shows (with a search, the routes that match it); again to clear.");
     selectAll_.onClick = [this] {
-        if (selected_.size() == shown_.size())
-            selected_.clear();
+        if (allShownSelected())
+            for (const int r : shown_)
+                selected_.erase(r);
         else
             selected_.insert(shown_.begin(), shown_.end());
         for (auto& r : rows_)
             r->setSelectedLook(selected_.count(r->route()) > 0);
+        updateActions();
     };
     map_.setHelp("Mod map", "Every connection drawn over the SYNTH page at once.");
     map_.onClick = [this] { if (onShowMap) onShowMap(); };
@@ -288,7 +297,32 @@ void ModPage::setSelected(int route, bool selected) {
         selected_.erase(route);
     for (auto& r : rows_)
         r->setSelectedLook(selected_.count(r->route()) > 0);
+    updateActions();
 }
+
+bool ModPage::allShownSelected() const {
+    if (shown_.empty())
+        return false;
+    for (const int r : shown_)
+        if (selected_.count(r) == 0)
+            return false;
+    return true;
+}
+
+void ModPage::updateActions() {
+    const int n = static_cast<int>(selected_.size());
+    for (Button* b : {&replace_, &mute_, &remove_})
+        b->setEnabledState(n > 0);
+    replace_.setText(n > 1 ? "Replace source (" + juce::String(n) + ")" : juce::String("Replace source"));
+    mute_.setText(n > 1 ? "Mute " + juce::String(n) + " selected" : juce::String("Mute selected"));
+    remove_.setText(n > 1 ? "Remove " + juce::String(n) + " selected" : juce::String("Remove selected"));
+    selectAll_.setEnabledState(!shown_.empty());
+    selectAll_.setText(allShownSelected() ? "Clear selection" : "Select all");
+    clearSearch_.setVisible(search_.getText().isNotEmpty() && shown_.empty() && !ctx_.routes().empty());
+    resized();
+}
+
+bool ModPage::inspectorShown() const { return ctx_.route(focus_) != nullptr; }
 
 void ModPage::replaceSelectedSource(const juce::String& source) { ctx_.session.replaceSource(selectedRoutes(), source); }
 
@@ -308,10 +342,11 @@ void ModPage::focusRoute(int route) {
         r->repaint();
     }
     const auto* r = ctx_.route(route);
-    if (r == nullptr) {
+    if (r == nullptr) { // no details without a route to inspect
         curve_->setVisible(false);
-        detailTitle_.setText("No route chosen");
-        detailText_.setText("Click a route to see its curve and details.");
+        detailTitle_.setText({});
+        detailText_.setText(ctx_.routes().empty() ? juce::String() : juce::String("Click a route to inspect it."));
+        repaint();
         return;
     }
     detailTitle_.setText("Route " + juce::String(route + 1) + ":  " + Context::sourceName(str(r->route.source)) + " > " + destName(r->dest, ctx_.processor));
@@ -382,6 +417,7 @@ void ModPage::rebuild() {
                    juce::String(zed::kNumModRoutes - static_cast<int>(ctx_.routes().size())) + " free");
     layoutRows();
     focusRoute(focus_ < static_cast<int>(ctx_.routes().size()) ? focus_ : -1);
+    updateActions();
 }
 
 void ModPage::layoutRows() {
@@ -399,13 +435,14 @@ void ModPage::resized() {
     auto toolbar = area.removeFromTop(30);
     search_.setBounds(toolbar.removeFromLeft(300));
     toolbar.removeFromLeft(8);
-    placeRow(toolbar, {{&sort_, 140}, {&add_, 104}, {&replace_, 120}, {&mute_, 116}, {&remove_, 136}, {&selectAll_, 86}, {&map_, 126}}, 6);
+    placeRow(toolbar, {{&add_, 104}, {&sort_, 130}, {&replace_, 140}, {&mute_, 130}, {&remove_, 150}, {&selectAll_, 110}, {&map_, 126}}, 6);
     area.removeFromTop(8);
     auto right = area.removeFromRight(360);
     area.removeFromRight(8);
     count_.setBounds(area.removeFromTop(16).withTrimmedLeft(8)); // inside the list's panel, in line with the column titles
     area.removeFromTop(22); // column titles
     viewport_.setBounds(area);
+    clearSearch_.setBounds(juce::Rectangle<int>(130, 26).withCentre({area.getCentreX(), area.getY() + 68}));
     layoutRows();
     right = right.reduced(10, 0).withTrimmedTop(6); // inside its panel
     detailTitle_.setBounds(right.removeFromTop(20));
@@ -426,12 +463,19 @@ void ModPage::paint(juce::Graphics& g) {
         drawText(g, title, header.removeFromLeft(w).toFloat(), kTextSmall, t.textDim, juce::Justification::centredLeft, true);
         header.removeFromLeft(4);
     }
-    if (rows_.empty())
-        drawText(g, ctx_.routes().empty() ? "No routes yet. Drag a modulator chip onto any control, or use Add route."
-                                          : "No route matches the search.",
-                 list.toFloat().withHeight(60.0f), kTextBody, t.textDim, juce::Justification::centred);
-    const auto right = getLocalBounds().reduced(8).removeFromRight(360).withTrimmedTop(38);
-    drawPanel(g, right.toFloat().withTrimmedTop(-4.0f), t.panel);
+    if (rows_.empty()) {
+        // One message, where the routes would be: no routes yet, or none that match the search
+        // (with Clear search under it).
+        const juce::String message = ctx_.routes().empty() ? juce::String("No routes yet. Drag a modulator chip onto any control, or use Add route.")
+                                                           : "No route matches \"" + search_.getText().trim() + "\".";
+        const auto box = list.toFloat().withHeight(44.0f).translated(0.0f, 8.0f).reduced(12.0f, 0.0f);
+        drawText(g, message, box, fittingSize(message, box.getWidth(), kTextBody), t.textDim, juce::Justification::centred);
+    }
+    // The inspector is a panel only while a route is focused.
+    if (inspectorShown()) {
+        const auto right = getLocalBounds().reduced(8).removeFromRight(360).withTrimmedTop(38);
+        drawPanel(g, right.toFloat().withTrimmedTop(-4.0f), t.panel);
+    }
 }
 
 } // namespace zui

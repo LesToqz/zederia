@@ -149,6 +149,13 @@ std::vector<Finding> checkTheme(const Theme& t) {
     check("text", t.text, "selection", t.selection, textMin);
     check("textDim", t.textDim, "display", t.display, textMin);
     check("bg (text on accent buttons)", t.bg, "sources", t.sources, 4.5);
+    // The control ink: value arcs and thumbs on panels and in displays, dark text on a chosen
+    // segment or a primary button; the lamp of a module that is on.
+    check("control", t.control, "panel", t.panel, 3.0);
+    check("control", t.control, "raised", t.raised, 3.0);
+    check("bg (text on control)", t.bg, "control", t.control, 4.5);
+    check("lamp", t.lamp, "panel", t.panel, 3.0);
+    check("text", t.text, "line strong (a chosen segment of a module that is off)", t.lineStrong, 4.5);
     for (const auto& [name, accent] : {std::pair{"sources", t.sources}, std::pair{"filters", t.filters}, std::pair{"modulators", t.modulators},
                                        std::pair{"effects", t.effects}, std::pair{"play", t.play}, std::pair{"focus", t.focus}}) {
         check(name, accent, "panel", t.panel, 3.0);

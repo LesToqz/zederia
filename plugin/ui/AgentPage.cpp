@@ -41,23 +41,27 @@ public:
         Card::draw(g);
         auto area = body().toFloat();
         area.removeFromTop(static_cast<float>(topReserve));
+        const bool bright = emphasize && emphasize();
         for (const auto& line : lines_) {
             if (area.getHeight() < 16.0f)
                 break;
             drawText(g, fitLine(line, area.getWidth() - static_cast<float>(rightReserve), kTextSmall + 0.5f), area.removeFromTop(17.0f),
-                     kTextSmall + 0.5f, theme().textDim);
+                     kTextSmall + 0.5f, bright ? theme().text : theme().textDim);
             area.removeFromTop(1.0f);
         }
     }
     bool tick() override {
+        const bool header = Card::tick();
         if (!provider_)
-            return false;
+            return header;
         auto next = provider_();
         if (next == lines_)
-            return false;
+            return header;
         lines_ = std::move(next);
         return true;
     }
+    juce::RectangleList<int> dirtyArea() override { return getLocalBounds(); }
+    std::function<bool()> emphasize; // the lines are entries (bright), not a note about the card (dim)
     void refreshNow() {
         if (provider_)
             lines_ = provider_();
@@ -120,9 +124,10 @@ public:
             config_.push_back(&config);
             prompt_.push_back(&prompt);
         }
-        auto& link = parts_.add<Button>(*this, "Agent link off");
-        link.toggleRole = true;
+        auto& link = parts_.add<Button>(*this, "Link off");
+        link.switchStyle = true;
         link.textSize = kTextSmall + 0.5f;
+        link.setTitle("Agent link for this instance");
         link.setHelp("Agent link", "Lets agents reach this window's sound (live:... in list_targets). Not needed for headless sessions.");
         link.onClick = [this] { owner_.toggleLink(); };
         link_ = &link;
@@ -130,7 +135,7 @@ public:
 
     void setLinkState(bool on) {
         link_->setToggled(on);
-        link_->setText(on ? "Agent link on" : "Agent link off");
+        link_->setText(on ? "Link on" : "Link off");
     }
 
     void resized() override {
@@ -293,10 +298,12 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
             lines.add("Every action an agent takes is listed here, newest first. Undo (Ctrl+Z) or the history list takes it back.");
         return lines;
     });
-    permissions_ = std::make_unique<LinesCard>("Permissions", [] {
+    log_->emphasize = [&link] { return !link.activity().empty(); }; // entries in full ink, the empty note dim
+    // The permissions are not this instance's: the heading says they hold for every agent.
+    permissions_ = std::make_unique<LinesCard>("Permissions for every agent on this computer", [] {
         const auto p = zed::link::loadPermissions();
         juce::StringArray lines;
-        lines.add("For every agent on this computer (" + juce::String(zed::link::permissionsPath()) + ").");
+        lines.add("Saved in " + juce::String(zed::link::permissionsPath()) + "; they apply whether this instance's link is on or off.");
         juce::String w = "Allowed write folders: ";
         for (const auto& f : p.writeFolders)
             w += juce::String(f) + "; ";
@@ -307,17 +314,20 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         lines.add(p.readFolders.empty() ? juce::String("Allowed read folders: none (Zederia's own folders are always readable)") : r.dropLastCharacters(2));
         return lines;
     });
-    setup_ = std::make_unique<LinesCard>("Client setup", [] {
+    setup_ = std::make_unique<LinesCard>("Setup", [] {
         return juce::StringArray{"Connect Claude Code, Codex or Antigravity to Zederia: copy a prompt for the agent, or its config."};
     });
     for (auto* c : {link_.get(), clients_.get(), log_.get(), permissions_.get(), setup_.get()})
         addAndMakeVisible(*c);
 
-    auto& linkSwitch = parts_.add<Button>(*link_, link.enabled() ? "Agent link on" : "Agent link off");
-    linkSwitch.toggleRole = true;
+    // The link is this instance's: a switch in its card's header, its state written beside it.
+    auto& linkSwitch = parts_.add<Button>(*link_, link.enabled() ? "This instance: on" : "This instance: off");
+    linkSwitch.switchStyle = true;
+    linkSwitch.textSize = kTextSmall + 0.5f;
     linkSwitch.setToggled(link.enabled());
+    linkSwitch.setTitle("Agent link for this instance");
     linkSwitch.setHelp("Agent link", "Turns this instance's local link for AI agents on or off. Off by default; the top bar shows when it is on.");
-    linkSwitch.setBounds(0, 0, 130, 24);
+    linkSwitch.setBounds(0, 0, 150, 22);
     linkSwitch.onClick = [this] { toggleLink(); };
     linkSwitch_ = &linkSwitch;
     link_->headerRight.push_back(&linkSwitch);
@@ -340,10 +350,10 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         "Agents may save presets, tables, clips, renders and packs in your Zederia folders.",
         "Agents may also write in the folders you allow below.", "Agents may play notes through this instance, held below the cap.",
         "Agents may read audio and images in the folders you allow below."};
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 6; ++i) { // labelled checkboxes: states that are saved, not commands
         auto& b = parts_.add<Button>(*permissions_, labels[i]);
-        b.toggleRole = true;
-        b.leftAlign = true;
+        b.checkbox = true;
+        b.textSize = kTextSmall + 0.5f;
         b.setHelp(labels[i], helps[i]);
         b.onClick = [this, i] {
             permButtons_[static_cast<std::size_t>(i)]->setToggled(!permButtons_[static_cast<std::size_t>(i)]->toggled());
@@ -380,10 +390,11 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         folderButtons_.push_back(&b);
     }
 
-    // Client setup: one button; the panel it opens has each client's config and prompt.
-    auto& connect = parts_.add<Button>(*setup_, "Connect", Glyph::Link);
-    connect.accentStyle = true;
-    connect.setHelp("Connect", "Shows how to connect Claude Code, Codex or Antigravity: copy a prompt the agent follows to set Zederia up, or copy its config.");
+    // Client setup: an action that opens the panel with each client's config and prompt (it
+    // switches nothing on: the link has its own switch).
+    auto& connect = parts_.add<Button>(*setup_, "Client setup", Glyph::Link);
+    connect.textSize = kTextSmall + 0.5f;
+    connect.setHelp("Client setup", "Shows how to connect Claude Code, Codex or Antigravity: copy a prompt the agent follows to set Zederia up, or copy its config.");
     connect.onClick = [this] { showConnect(!connectShown()); };
     connectButton_ = &connect;
     connect_ = std::make_unique<ConnectPanel>(*this);
@@ -418,7 +429,7 @@ void AgentPage::toggleLink() {
 void AgentPage::showLinkState() {
     const bool on = ctx_.processor.agentLink().enabled();
     linkSwitch_->setToggled(on);
-    linkSwitch_->setText(on ? "Agent link on" : "Agent link off");
+    linkSwitch_->setText(on ? "This instance: on" : "This instance: off");
     if (connect_ != nullptr)
         connect_->setLinkState(on);
 }
@@ -475,15 +486,12 @@ void AgentPage::resized() {
     clients_->setBounds(left.removeFromTop(100));
     left.removeFromTop(8);
     permissions_->setBounds(left);
-    // Permission switches in two columns at the top of the card, folder buttons below them.
+    // One labelled checkbox per row at the top of the card, the audition cap and the folders below.
     {
         auto body = permissions_->body().reduced(0, 2);
-        const int colW = (body.getWidth() - 8) / 2;
-        for (std::size_t i = 0; i < permButtons_.size(); ++i) {
-            const int row = static_cast<int>(i) / 2, col = static_cast<int>(i) % 2;
-            permButtons_[i]->setBounds(body.getX() + col * (colW + 8), body.getY() + row * 28, colW, 24);
-        }
-        const int y = body.getY() + 3 * 28;
+        for (std::size_t i = 0; i < permButtons_.size(); ++i)
+            permButtons_[i]->setBounds(body.getX(), body.getY() + static_cast<int>(i) * 26, juce::jmin(body.getWidth(), 320), 22);
+        const int y = body.getY() + static_cast<int>(permButtons_.size()) * 26 + 6;
         cap_->setBounds(body.getX(), y, 150, 24);
         int x = body.getX() + 158;
         for (std::size_t i = 0; i < 3; ++i) {
@@ -491,14 +499,14 @@ void AgentPage::resized() {
             folderButtons_[i]->setBounds(x, y, w, 24);
             x += w + 8;
         }
-        permissions_->topReserve = 4 * 28 + 4;
+        permissions_->topReserve = static_cast<int>(permButtons_.size()) * 26 + 6 + 24 + 10;
     }
     log_->setBounds(area.removeFromTop(area.getHeight() - 100));
     area.removeFromTop(8);
     setup_->setBounds(area);
     {
         auto body = setup_->body();
-        connectButton_->setBounds(body.getX(), body.getBottom() - 28, 140, 26);
+        connectButton_->setBounds(body.getX(), body.getBottom() - 28, 150, 26);
     }
 }
 

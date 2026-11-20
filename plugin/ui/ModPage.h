@@ -32,14 +32,26 @@ public:
     void addRoute(const juce::String& source, int dest);
     std::function<void()> onShowMap; // the editor shows the mod map on the SYNTH page
 
+    // The toolbar follows the selection: the bulk actions need checked routes, Select all needs
+    // routes on show (and clears them when they are all checked).
+    Button& addButton() { return add_; }
+    Button& replaceButton() { return replace_; }
+    Button& muteButton() { return mute_; }
+    Button& removeButton() { return remove_; }
+    Button& selectAllButton() { return selectAll_; }
+    Button& clearSearchButton() { return clearSearch_; }
+    bool inspectorShown() const; // the details of the focused route
+
 private:
     void rebuild();
     void layoutRows();
+    void updateActions();
+    bool allShownSelected() const;
     void showDestinationMenu(juce::Component& target, const std::function<void(int)>& pick);
 
     TextField search_{"Search routes: source, Via or destination", "Search routes"};
     Button sort_{"Sort: number"}, add_{"Add route", Glyph::Plus}, replace_{"Replace source"}, mute_{"Mute selected"}, remove_{"Remove selected", Glyph::Trash},
-        selectAll_{"Select all"}, map_{"Show mod map", Glyph::Map};
+        selectAll_{"Select all"}, map_{"Show mod map", Glyph::Map}, clearSearch_{"Clear search", Glyph::Close};
     Caption count_{"", kTextSmall, true};
     juce::Viewport viewport_;
     juce::Component list_;

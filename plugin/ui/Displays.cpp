@@ -142,8 +142,22 @@ bool WaveMini::rebuild() {
     return true;
 }
 
+bool WaveMini::sourceOn() const {
+    const char* on[] = {"osc1.on", "osc2.on", "osc3.on", "sub.on", "texture.on"};
+    return ctx_.processor.plainValue(idx(on[source_])) >= 0.5;
+}
+
 // Every other frame: a thumbnail this small reads the same at half the rate.
-bool WaveMini::tick() { return (++ticks_ & 1) == 0 && rebuild(); }
+bool WaveMini::tick() {
+    if ((++ticks_ & 1) != 0)
+        return false;
+    const bool changed = rebuild();
+    const bool on = sourceOn();
+    if (on == active_)
+        return changed;
+    active_ = on; // what the next paint draws
+    return true;
+}
 
 void WaveMini::draw(juce::Graphics& g) {
     if (cycle_.empty())
@@ -152,45 +166,90 @@ void WaveMini::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat();
     g.setColour(t.display);
     g.fillRoundedRectangle(area, 3.0f);
-    const char* on[] = {"osc1.on", "osc2.on", "osc3.on", "sub.on", "texture.on"};
-    const bool active = ctx_.processor.plainValue(idx(on[source_])) >= 0.5;
+    const bool active = sourceOn();
+    active_ = active;
     g.setColour(t.displayGrid);
     g.fillRect(area.getX(), area.getCentreY(), area.getWidth(), 1.0f);
-    drawCycleLine(g, cycle_, area.reduced(3.0f, 2.0f), active ? t.sources : t.textFaint, 1.2f);
+    drawCycleLine(g, cycle_, area.reduced(3.0f, 2.0f), active ? t.displayLine : t.textFaint.withAlpha(0.7f), active ? 1.2f : 0.9f);
 }
 
 // --- WavetableView -----------------------------------------------------------------------------------
 
 WavetableView::WavetableView(Context& ctx, int osc) : ctx_(ctx), osc_(osc) {
+    bindParams();
     setOpaque(true); // it covers its whole area: nothing behind it repaints when it animates
     setTitle("Wavetable");
-    setHelp("Wavetable", "The oscillator's table: frames from front to back, the playing position lit. Click to switch between 3D and the 2D cycle.");
+    setHelp("Wavetable", "The oscillator's table: frames from front to back, the playing position lit. The 3D / 2D button in the corner switches the view.");
     family = Family::Sources;
+    viewButton_.textSize = kTextSmall;
+    viewButton_.boldText = true;
+    viewButton_.setHelp("Table view", "3D shows the frames of the table in depth with the playing position lit; 2D the cycle that plays now.");
+    viewButton_.onClick = [this] { setShow3d(!show3d); };
+    addAndMakeVisible(viewButton_);
+    updateViewButton();
+}
+
+bool WavetableView::oscOn() const { return ctx_.processor.plainValue(onParam_) >= 0.5; }
+bool WavetableView::classic() const { return ctx_.processor.plainValue(engineParam_) >= 0.5; }
+
+// The parameters the view reads every frame, looked up once per oscillator.
+void WavetableView::bindParams() {
+    const juce::String m = "osc" + juce::String(osc_ + 1);
+    onParam_ = idx(m + ".on");
+    engineParam_ = idx(m + ".engine");
+    positionParam_ = idx(m + ".position");
+}
+bool WavetableView::showing3d() const { return show3d && !classic(); }
+
+void WavetableView::setShow3d(bool on) {
+    show3d = on;
+    warpKey_ = 0;
+    updateViewButton();
+    repaint();
+}
+
+void WavetableView::updateViewButton() {
+    // The control names the view that shows; Classic has only its cycle, so it hides there.
+    const juce::String shown = show3d ? "3D" : "2D";
+    viewButton_.setText(shown);
+    viewButton_.setTitle("Osc " + juce::String(osc_ + 1) + " table view: " + (show3d ? "3D" : "2D cycle") + " (switch)");
+    viewButton_.setVisible(!classicShown_);
+}
+
+void WavetableView::resized() {
+    cache_ = {};
+    viewButton_.setBounds(getLocalBounds().reduced(5, 4).removeFromTop(18).removeFromLeft(34));
 }
 
 void WavetableView::setOsc(int osc) {
     osc_ = osc;
+    bindParams();
     cache_ = {};
     cachedTable_ = nullptr;
     warpKey_ = 0;
+    updateViewButton();
     repaint();
 }
 
 bool WavetableView::tick() {
-    const juce::String m = "osc" + juce::String(osc_ + 1);
-    const double position = ctx_.processor.engine().liveValue(idx(m + ".position"));
+    const double position = ctx_.processor.engine().liveValue(positionParam_);
     const auto table = ctx_.processor.engine().table(osc_);
-    const bool classic = ctx_.processor.plainValue(idx(m + ".engine")) >= 0.5;
-    bool whole = table.get() != tickedTable_ || classic != classicShown_;
+    const bool classic = this->classic();
+    const bool active = oscOn(); // the power switch: host automation changes the look with nothing else moving
+    bool whole = table.get() != tickedTable_ || classic != classicShown_ || active != activeShown_;
+    if (classic != classicShown_) {
+        classicShown_ = classic;
+        updateViewButton();
+    }
     tickedTable_ = table.get();
-    classicShown_ = classic;
+    activeShown_ = active;
     bool moved = false;
     if (std::abs(position - position_) > 0.0008) {
         position_ = position;
         moved = true;
     }
-    const int percent = juce::roundToInt(juce::jlimit(0.0, 1.0, ctx_.processor.plainValue(idx(m + ".position"))) * 100.0);
-    const bool captionChanged = percent != captionPercent_;
+    const int percent = juce::roundToInt(juce::jlimit(0.0, 1.0, ctx_.processor.plainValue(positionParam_)) * 100.0);
+    const bool captionChanged = percent != captionPercent_ && !classic;
     captionPercent_ = percent;
     if (captionChanged && !moved && !whole && show3d && !classic) {
         dirty_ = juce::RectangleList<int>(captionArea());
@@ -240,18 +299,14 @@ std::vector<juce::Point<float>> WavetableView::litPoints(const zed::TableData& t
     return points;
 }
 
-void WavetableView::mouseDown(const juce::MouseEvent&) {
-    show3d = !show3d;
-    warpKey_ = 0;
-    repaint();
-}
-
 // The table's surface, drawn once into an opaque image at the display's pixel density (the
 // background and frame included), so a frame of animation is one plain copy plus the lit line.
-void WavetableView::build3d(juce::Rectangle<int> size) {
+// On: warm layers that fade towards the back. Off: the same layers in thin graphite.
+void WavetableView::build3d(juce::Rectangle<int> size, bool active) {
     const auto table = ctx_.processor.engine().table(osc_);
     cachedTable_ = table.get();
     cachedTheme_ = theme().name;
+    cacheActive_ = active;
     const float scale = static_cast<float>(size.getWidth()) / static_cast<float>(juce::jmax(1, getWidth()));
     cache_ = juce::Image(juce::Image::RGB, juce::jmax(1, size.getWidth()), juce::jmax(1, size.getHeight()), true, juce::SoftwareImageType());
     juce::Graphics g(cache_);
@@ -290,12 +345,15 @@ void WavetableView::build3d(juce::Rectangle<int> size) {
             else
                 p.lineTo(x, y);
         }
-        g.setColour(t.sources.withAlpha(0.12f + 0.38f * (1.0f - depth)));
-        g.strokePath(p, juce::PathStrokeType(1.0f));
+        if (active)
+            g.setColour(t.sources.withAlpha(0.10f + 0.34f * (1.0f - depth)));
+        else
+            g.setColour(t.textFaint.withAlpha(0.06f + 0.16f * (1.0f - depth)));
+        g.strokePath(p, juce::PathStrokeType(active ? 1.0f : 0.8f));
     }
 }
 
-void WavetableView::drawCycle(juce::Graphics& g, juce::Rectangle<float> area) {
+void WavetableView::drawCycle(juce::Graphics& g, juce::Rectangle<float> area, bool active) {
     if (cycle_.empty())
         oscCycle(ctx_, osc_, cycle_, warpKey_);
     const Theme& t = theme();
@@ -303,27 +361,32 @@ void WavetableView::drawCycle(juce::Graphics& g, juce::Rectangle<float> area) {
     g.fillRect(area.getX(), area.getCentreY(), area.getWidth(), 1.0f);
     for (int i = 1; i < 4; ++i)
         g.fillRect(area.getX() + area.getWidth() * static_cast<float>(i) / 4.0f, area.getY(), 1.0f, area.getHeight());
-    drawCycleLine(g, cycle_, area.reduced(6.0f, 10.0f), t.sources, 1.8f);
+    if (active)
+        drawCycleLine(g, cycle_, area.reduced(6.0f, 10.0f), t.displayLine, 1.8f);
+    else
+        drawCycleLine(g, cycle_, area.reduced(6.0f, 10.0f), t.textFaint.withAlpha(0.55f), 1.0f);
 }
 
 void WavetableView::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
     plot_ = area.reduced(6.0f);
-    const juce::String m = "osc" + juce::String(osc_ + 1);
-    const bool classic = ctx_.processor.plainValue(idx(m + ".engine")) >= 0.5;
-    if (!show3d || classic) {
+    const bool classicNow = classic();
+    const bool active = oscOn();
+    activeShown_ = active;
+    if (!show3d || classicNow) {
         g.fillAll(t.bg); // opaque: the corners outside the rounded well
         drawWell(g, area);
-        drawCycle(g, plot_);
+        drawCycle(g, plot_, active);
     } else {
         const float scale = physicalScale(g);
         const auto size = juce::Rectangle<int>(juce::roundToInt(area.getWidth() * scale), juce::roundToInt(area.getHeight() * scale));
         const auto table = ctx_.processor.engine().table(osc_);
-        if (!cache_.isValid() || cache_.getBounds() != size || table.get() != cachedTable_ || cachedTheme_ != t.name)
-            build3d(size);
+        if (!cache_.isValid() || cache_.getBounds() != size || table.get() != cachedTable_ || cachedTheme_ != t.name || cacheActive_ != active)
+            build3d(size, active);
         g.drawImage(cache_, area); // one pixel of the image per pixel of the display: a plain copy
-        // The playing position, lit across the surface.
+        // The playing position across the surface: crisp and white while the oscillator sounds, a
+        // thin graphite line while it is off.
         if (table != nullptr) {
             // A plain line, no glow: it moves every frame, and a wide translucent stroke across the
             // surface costs more to fill than the rest of the frame together.
@@ -332,14 +395,16 @@ void WavetableView::draw(juce::Graphics& g) {
             p.startNewSubPath(litDrawn_.front());
             for (std::size_t i = 1; i < litDrawn_.size(); ++i)
                 p.lineTo(litDrawn_[i]);
-            g.setColour(t.displayLine);
-            g.strokePath(p, juce::PathStrokeType(2.0f, juce::PathStrokeType::beveled, juce::PathStrokeType::butt));
+            g.setColour(active ? t.displayLine : t.textFaint.withAlpha(0.6f));
+            g.strokePath(p, juce::PathStrokeType(active ? 2.0f : 1.0f, juce::PathStrokeType::beveled, juce::PathStrokeType::butt));
         }
     }
-    // The patch's position (the lit line shows where modulation takes it).
-    const double setPosition = ctx_.processor.plainValue(idx(m + ".position"));
-    const juce::String caption = (show3d && !classic ? "3D" : "2D") + juce::String("  ") + juce::String(juce::roundToInt(juce::jlimit(0.0, 1.0, setPosition) * 100.0)) + " %";
-    drawText(g, caption, captionArea().toFloat(), kTextSmall, t.textDim, juce::Justification::centredRight);
+    // The patch's position (the lit line shows where modulation takes it); Classic has none.
+    if (!classicNow) {
+        const double setPosition = ctx_.processor.plainValue(positionParam_);
+        drawText(g, juce::String(juce::roundToInt(juce::jlimit(0.0, 1.0, setPosition) * 100.0)) + " %", captionArea().toFloat(), kTextSmall, t.textDim,
+                 juce::Justification::centredRight);
+    }
 }
 
 // --- FilterResponseView ------------------------------------------------------------------------------
@@ -450,7 +515,7 @@ void FilterResponseView::draw(juce::Graphics& g) {
             sg.setColour(db == 0.0f ? t.lineStrong : t.displayGrid);
             sg.fillRect(plot.getX(), yOf(db), plot.getWidth(), 1.0f);
         }
-        sg.setColour(t.filters.withAlpha(0.4f));
+        sg.setColour(t.control.withAlpha(on_[slot_] ? 0.35f : 0.2f)); // the patch's own settings, quiet
         sg.strokePath(path(still_), juce::PathStrokeType(1.0f));
         const juce::String caption = juce::String("FILTER ") + juce::String(slot_ + 1) + (showPhase ? "  PHASE" : "") + (on_[slot_] ? "" : "  OFF");
         drawText(sg, caption, area.reduced(10.0f, 6.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight, true);
@@ -458,13 +523,13 @@ void FilterResponseView::draw(juce::Graphics& g) {
     const int other = 1 - slot_;
     const auto& otherValues = showPhase ? phase_[other] : live_[other];
     if (on_[other] && !otherValues.empty()) {
-        g.setColour(t.filters.withAlpha(0.25f));
+        g.setColour(t.textDim.withAlpha(0.3f));
         g.strokePath(path(otherValues), juce::PathStrokeType(1.0f));
     }
     const auto& mine = showPhase ? phase_[slot_] : live_[slot_];
     if (!mine.empty()) { // a plain line: it moves every frame under modulation, and a glow there costs more than the rest
-        g.setColour(on_[slot_] ? t.filters : t.textFaint);
-        g.strokePath(path(mine), juce::PathStrokeType(1.8f, juce::PathStrokeType::beveled, juce::PathStrokeType::rounded));
+        g.setColour(on_[slot_] ? t.displayLine : t.textFaint.withAlpha(0.6f));
+        g.strokePath(path(mine), juce::PathStrokeType(on_[slot_] ? 1.8f : 1.0f, juce::PathStrokeType::beveled, juce::PathStrokeType::rounded));
     }
 }
 
@@ -544,18 +609,20 @@ void EnvelopeView::draw(juce::Graphics& g) {
     juce::Path fill(p);
     fill.lineTo(geo.x[5], yOf(0.0f));
     fill.closeSubPath();
-    g.setColour(t.modulators.withAlpha(0.12f));
+    // The graph in its source's colour: the colour of its chip and of the arcs it draws on the controls it moves.
+    const juce::Colour ink = ctx_.sourceColour("env" + juce::String(env_ + 1));
+    g.setColour(ink.withAlpha(0.12f));
     g.fillPath(fill);
     g.setColour(t.displayGrid);
     for (int i = 0; i < 5; ++i)
         g.fillRect(geo.x[i], plot.getY(), 1.0f, plot.getHeight());
-    strokeGlow(g, p, t.modulators, 1.8f);
+    strokeGlow(g, p, ink, 1.8f);
     const juce::Point<float> handles[4] = {{geo.x[1], yOf(1.0f)}, {geo.x[2], yOf(1.0f)}, {geo.x[3], yOf(sustain)}, {geo.x[5], yOf(0.0f)}};
     for (int i = 0; i < 4; ++i) {
         const float r = i == hoverHandle_ || i == dragHandle_ ? 5.0f : 3.8f;
         g.setColour(t.display);
         g.fillEllipse(juce::Rectangle<float>(2 * r, 2 * r).withCentre(handles[i]));
-        g.setColour(i == dragHandle_ ? t.focus : t.modulators);
+        g.setColour(i == dragHandle_ ? t.focus : ink);
         g.drawEllipse(juce::Rectangle<float>(2 * r, 2 * r).withCentre(handles[i]), 1.4f);
     }
     if (level_ > 0.001f) {
@@ -692,7 +759,7 @@ void SpectrumView::draw(juce::Graphics& g) {
         }
         p.lineTo(plot.getRight(), plot.getBottom());
         p.closeSubPath();
-        g.setColour(t.effects.withAlpha(0.25f));
+        g.setColour(t.textDim.withAlpha(0.22f)); // the output, quiet under the response it is shaped by
         g.fillPath(p);
     }
     if (curve) {

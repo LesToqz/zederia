@@ -22,39 +22,56 @@ public:
 
 private:
     bool rebuild();
+    bool sourceOn() const;
     Context& ctx_;
     int source_;
     std::vector<float> cycle_;
     std::uint64_t key_ = 0;
     int ticks_ = 0;
+    bool active_ = true; // the power state drawn
 };
 
 // The Stage view of an oscillator: its table in 3D (frames in depth, the live position lit) or its
-// warped cycle in 2D (what the oscillator plays right now).
+// warped cycle in 2D (what the oscillator plays right now). While the oscillator is on, the trace
+// that sounds is crisp and bright over the table's quieter layers; while it is off, the whole
+// display is a thin graphite preview. A small 3D / 2D control in its corner switches the Table
+// view (Classic always shows its cycle and keeps the Table view for when Table returns); the
+// position's percentage is a caption of its own.
 class WavetableView final : public Widget {
 public:
     WavetableView(Context& ctx, int osc);
     void setOsc(int osc);
     int osc() const { return osc_; }
-    bool show3d = true;
+    bool show3d = true;    // the Table view (kept while the engine is Classic)
+    void setShow3d(bool on);
+    bool showing3d() const; // what is drawn now: 3D only in Table mode
+    bool drawnActive() const { return activeShown_; }
     void draw(juce::Graphics& g) override;
     bool tick() override;
     juce::RectangleList<int> dirtyArea() override { return dirty_; }
     bool hasVisibleLabel() const override { return false; }
-    void mouseDown(const juce::MouseEvent& e) override;
-    void resized() override { cache_ = {}; }
+    void resized() override;
+    Button& viewButton() { return viewButton_; }
 
 private:
-    void drawCycle(juce::Graphics& g, juce::Rectangle<float> area);
-    void build3d(juce::Rectangle<int> size);
+    void drawCycle(juce::Graphics& g, juce::Rectangle<float> area, bool active);
+    void build3d(juce::Rectangle<int> size, bool active);
+    void updateViewButton();
+    bool oscOn() const;
+    bool classic() const;
+    void bindParams();
+    int onParam_ = -1, engineParam_ = -1, positionParam_ = -1;
     static constexpr int kLitPoints = 96;
     // The playing position across the surface: kLitPoints + 1 points, the cycle closed.
     std::vector<juce::Point<float>> litPoints(const zed::TableData& table, double position) const;
-    juce::Rectangle<int> captionArea() const { return getLocalBounds().reduced(8, 4).removeFromTop(14).removeFromRight(96); }
+    juce::Rectangle<int> captionArea() const { return getLocalBounds().reduced(8, 4).removeFromTop(14).removeFromRight(64); }
     Context& ctx_;
     int osc_;
+    Button viewButton_{"3D"};
     double position_ = -1.0;
     bool classicShown_ = false;
+    bool activeShown_ = true;  // the power state the display shows
+    bool cacheActive_ = true;  // the power state the 3D image was drawn for
     int captionPercent_ = -1; // the patch's position the caption shows
     std::vector<juce::Point<float>> litDrawn_; // where the lit line was last painted
     juce::RectangleList<int> dirty_;

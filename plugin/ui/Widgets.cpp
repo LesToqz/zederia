@@ -164,6 +164,11 @@ void ParamWidget::setParam(int param) {
     setHelp(name, str(d.description));
     shown_ = value();
     arcsGeneration_ = -1;
+    // The module's power switch, when it has one: its controls read as off while it is off.
+    powerParam_ = own.module.empty() ? -1 : reg.indexOf(own.module + ".on");
+    if (powerParam_ == param_)
+        powerParam_ = -1;
+    bypassed_ = powerParam_ >= 0 && ctx_.processor.plainValue(powerParam_) < 0.5;
     repaint();
 }
 
@@ -178,6 +183,20 @@ juce::String ParamWidget::valueText() const {
 }
 
 juce::Colour ParamWidget::accent() const { return theme().accent(family); }
+
+juce::Colour ParamWidget::ink() const {
+    const Theme& t = theme();
+    if (!isEnabled())
+        return t.textFaint.withAlpha(0.6f);
+    return bypassed_ ? t.lineStrong.brighter(0.25f) : accent();
+}
+
+juce::Colour ParamWidget::valueInk() const {
+    const Theme& t = theme();
+    if (!isEnabled())
+        return t.textFaint;
+    return bypassed_ ? t.textDim : t.text;
+}
 
 bool ParamWidget::sourceHighlight() const {
     if (ctx_.hoveredSource.isEmpty())
@@ -370,10 +389,12 @@ bool ParamWidget::tick() {
     const bool locked = ctx_.isLocked(param_);
     const bool learning = ctx_.processor.midiLearnTarget() == param_;
     const bool highlighted = sourceHighlight();
-    if (locked != locked_ || learning != learning_ || highlighted != highlighted_) {
+    const bool bypassed = powerParam_ >= 0 && ctx_.processor.plainValue(powerParam_) < 0.5;
+    if (locked != locked_ || learning != learning_ || highlighted != highlighted_ || bypassed != bypassed_) {
         locked_ = locked;
         learning_ = learning;
         highlighted_ = highlighted;
+        bypassed_ = bypassed;
         dirty = true;
     }
     liveOnly_ = liveMoved && !dirty;
@@ -474,8 +495,8 @@ void ParamWidget::mouseDrag(const juce::MouseEvent& e) {
     if (!dragging_)
         return;
     double n;
-    if (ctx_.prefs.rotaryDrag && dynamic_cast<Knob*>(this) != nullptr) {
-        const auto c = getLocalBounds().toFloat().withTrimmedBottom(26.0f).getCentre();
+    if (auto* knob = dynamic_cast<Knob*>(this); ctx_.prefs.rotaryDrag && knob != nullptr) {
+        const auto c = knob->knobCentre();
         float angle = std::atan2(e.position.x - c.x, c.y - e.position.y);
         angle = juce::jlimit(kStartAngle, kEndAngle, angle);
         n = (angle - kStartAngle) / (kEndAngle - kStartAngle);
@@ -641,7 +662,12 @@ void ParamWidget::drawDecorations(juce::Graphics& g, juce::Rectangle<float> area
 // --- Knob --------------------------------------------------------------------------------------------
 
 juce::Rectangle<float> Knob::knobArea() const {
-    return getLocalBounds().toFloat().withTrimmedBottom((showValue ? 13.0f : 0.0f) + (showLabel ? 13.0f : 0.0f));
+    return getLocalBounds().toFloat().withTrimmedBottom((showValue ? valueRow() : 0.0f) + (showLabel ? labelRow : 0.0f));
+}
+
+float Knob::radius() const {
+    const auto area = knobArea();
+    return std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (trackInset >= 0.0f ? trackInset : small ? 5.0f : 7.0f));
 }
 
 juce::RectangleList<int> Knob::dirtyArea() {
@@ -649,9 +675,9 @@ juce::RectangleList<int> Knob::dirtyArea() {
         return ParamWidget::dirtyArea();
     // The marker is a dot on the track: repaint where it was and where it is.
     const auto area = knobArea();
-    const float radius = std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (small ? 5.0f : 7.0f));
+    const float r = radius();
     const auto dot = [&](double n) {
-        return juce::Rectangle<float>(9.0f, 9.0f).withCentre(area.getCentre().getPointOnCircumference(radius, angleFor(n))).getSmallestIntegerContainer();
+        return juce::Rectangle<float>(9.0f, 9.0f).withCentre(area.getCentre().getPointOnCircumference(r, angleFor(n))).getSmallestIntegerContainer();
     };
     juce::RectangleList<int> list(dot(liveBefore_));
     list.add(dot(live_));
@@ -668,7 +694,7 @@ void Knob::draw(juce::Graphics& g) {
     std::uint64_t key = static_cast<std::uint64_t>(label_.hashCode64()) ^ (static_cast<std::uint64_t>(valueText().hashCode64()) << 1);
     const auto add = [&key](double v) { key = (key ^ std::hash<double>{}(v)) * 1099511628211ull; };
     add(norm());
-    for (const bool b : {isEnabled(), isMouseOverOrDragging(), dragging_, depthDrag_, highlighted_, dropTarget_, learning_, locked_, hasKeyboardFocus(true)})
+    for (const bool b : {isEnabled(), isMouseOverOrDragging(), dragging_, depthDrag_, highlighted_, dropTarget_, learning_, locked_, hasKeyboardFocus(true), bypassed_})
         add(b ? 1.0 : 0.0);
     for (const auto& a : arcs_) {
         add(a.low);
@@ -677,30 +703,32 @@ void Knob::draw(juce::Graphics& g) {
         add(static_cast<double>(a.colour.getARGB()));
     }
     face_.draw(g, getLocalBounds(), key, false, [this](juce::Graphics& fg) { drawFace(fg); });
-    const auto area = knobArea();
-    const float radius = std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (small ? 5.0f : 7.0f));
-    drawLiveMarker(g, area.getCentre(), radius);
+    drawLiveMarker(g, knobArea().getCentre(), radius());
 }
 
 void Knob::drawFace(juce::Graphics& g) {
     const Theme& t = theme();
     const auto& d = def();
     const auto area = knobArea();
-    const float radius = std::max(5.0f, std::min(area.getWidth(), area.getHeight()) * 0.5f - (small ? 5.0f : 7.0f));
+    const float radius = this->radius();
     const auto c = area.getCentre();
     const double n = norm();
-    const bool enabled = isEnabled();
-    // Track and value arc.
+    const bool active = isEnabled() && !bypassed_;
+    // Track and value arc: the value in the control ink, graphite while the module is off.
     strokeArc(g, c, radius, kStartAngle, kEndAngle, 2.4f, t.metal > 0.0f && t.dark ? t.sunken : t.line);
     const float zero = angleFor(isBipolar(d) ? d.toNormalized(0.0) : 0.0);
-    strokeArc(g, c, radius, zero, angleFor(n), 2.6f, enabled ? accent() : t.textFaint);
+    strokeArc(g, c, radius, zero, angleFor(n), 2.6f, ink());
+    if (isBipolar(d)) { // the centre of a bipolar range, marked on the scale
+        g.setColour(t.textDim.withAlpha(0.8f));
+        g.drawLine(juce::Line<float>(c.getPointOnCircumference(radius + 2.0f, zero), c.getPointOnCircumference(radius + 4.0f, zero)), 1.0f);
+    }
     // Body and pointer.
     const float body = radius - 4.5f;
     const auto bodyBox = juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(c);
     const float a = angleFor(n);
     if (t.metal > 0.0f) {
-        // A machined cap: shadow, knurled skirt, brushed top lit from above (drawn once, kept as an
-        // image: it does not turn), then a lit pointer line.
+        // A machined cap: shadow, knurled skirt, brushed top, all lit from straight above like the
+        // panels (drawn once, kept as an image: it does not turn), then the pointer line.
         const bool hot = isMouseOverOrDragging();
         cap_.draw(g, bodyBox.expanded(2.0f, 3.0f).getSmallestIntegerContainer(), hot ? 1u : 0u, false, [&](juce::Graphics& cg) {
             cg.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.22f));
@@ -719,32 +747,38 @@ void Knob::drawFace(juce::Graphics& g) {
             }
             const auto cap = bodyBox.reduced(body > 9.0f ? 2.6f : 1.5f);
             const juce::Colour top = t.dark ? t.raised.brighter(0.18f) : t.panel.brighter(0.05f);
-            cg.setGradientFill(juce::ColourGradient(top.brighter(0.35f * t.metal), cap.getX() + cap.getWidth() * 0.3f, cap.getY(),
-                                                    top.darker(0.25f * t.metal), cap.getRight(), cap.getBottom(), true));
+            cg.setGradientFill(juce::ColourGradient(top.brighter(0.35f * t.metal), cap.getCentreX(), cap.getY(),
+                                                    top.darker(0.25f * t.metal), cap.getCentreX(), cap.getBottom() + cap.getHeight() * 0.3f, true));
             cg.fillEllipse(cap);
-            cg.setColour(hot ? accent().withAlpha(0.8f) : juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
+            cg.setColour(hot ? t.control.withAlpha(0.55f) : juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
             cg.drawEllipse(bodyBox, 1.0f);
-            cg.setColour(juce::Colours::white.withAlpha(t.dark ? 0.10f : 0.5f));
-            cg.drawEllipse(cap.reduced(0.5f), 0.7f);
+            // The light catches the upper rim only.
+            juce::Path rim;
+            rim.addCentredArc(c.x, c.y, cap.getWidth() * 0.5f - 0.5f, cap.getHeight() * 0.5f - 0.5f, 0.0f, -1.2f, 1.2f, true);
+            cg.setColour(juce::Colours::white.withAlpha(t.dark ? 0.16f : 0.5f));
+            cg.strokePath(rim, juce::PathStrokeType(0.8f));
         });
-        g.setColour(enabled ? (t.dark ? juce::Colours::white.withAlpha(0.92f) : t.text) : t.textFaint);
+        g.setColour(active ? (t.dark ? juce::Colours::white.withAlpha(0.95f) : t.text) : t.textDim);
         g.drawLine(juce::Line<float>(c.getPointOnCircumference(body * 0.35f, a), c.getPointOnCircumference(body - 1.5f, a)), 2.0f);
     } else {
         g.setColour(t.raised);
         g.fillEllipse(bodyBox);
         g.setColour(isMouseOverOrDragging() ? t.lineStrong.brighter(0.25f) : t.lineStrong);
         g.drawEllipse(bodyBox, 1.0f);
-        g.setColour(enabled ? t.text : t.textFaint);
+        g.setColour(active ? t.text : t.textDim);
         g.drawLine(juce::Line<float>(c.getPointOnCircumference(body * 0.25f, a), c.getPointOnCircumference(body - 1.5f, a)), 2.0f);
     }
     drawModulation(g, c, radius, kStartAngle, kEndAngle, arcs_.empty());
-    // Label and value.
+    // The name as a small legend, the value a step larger under it; a held value is bold.
     const auto bounds = getLocalBounds().toFloat();
     auto text = bounds.withTop(area.getBottom());
     if (showLabel)
-        drawText(g, label_, text.removeFromTop(13.0f), kTextSmall, t.textDim, juce::Justification::centred);
-    if (showValue)
-        drawText(g, valueText(), text.removeFromTop(13.0f), kTextSmall, dragging_ || depthDrag_ ? accent() : t.text, juce::Justification::centred);
+        drawText(g, label_, text.removeFromTop(labelRow), kTextSmall, t.textDim, juce::Justification::centred);
+    if (showValue) {
+        const juce::String v = valueText();
+        const auto box = text.removeFromTop(valueRow());
+        drawText(g, v, box, fittingSize(v, box.getWidth(), valueSize, dragging_ || depthDrag_), valueInk(), juce::Justification::centred, dragging_ || depthDrag_);
+    }
     drawDecorations(g, bounds);
 }
 
@@ -767,16 +801,32 @@ void Fader::draw(juce::Graphics& g) {
     }
     if (label_.isNotEmpty())
         drawText(g, label_, labelBox, kTextSmall, t.textDim);
+    // A recessed slot with a quiet fill up to the value, and a thumb to take hold of (an editable
+    // track never reads as a meter); a bipolar range has its centre marked.
+    const float thumbW = 7.0f;
+    const auto slot = bar.reduced(thumbW * 0.5f, 0.0f);
     g.setColour(t.sunken);
-    g.fillRoundedRectangle(bar, 3.0f);
+    g.fillRoundedRectangle(slot, 2.0f);
     g.setColour(t.line);
-    g.drawRoundedRectangle(bar, 3.0f, 1.0f);
+    g.drawRoundedRectangle(slot, 2.0f, 1.0f);
     const double n = norm();
-    const double zero = isBipolar(d) ? d.toNormalized(0.0) : 0.0;
-    const float x0 = bar.getX() + bar.getWidth() * static_cast<float>(std::min(zero, n));
-    const float x1 = bar.getX() + bar.getWidth() * static_cast<float>(std::max(zero, n));
-    g.setColour(isEnabled() ? accent() : t.textFaint);
-    g.fillRoundedRectangle(juce::Rectangle<float>(x0, bar.getY(), std::max(2.0f, x1 - x0), bar.getHeight()), 3.0f);
+    const bool bipolar = isBipolar(d);
+    const double zero = bipolar ? d.toNormalized(0.0) : 0.0;
+    const auto xAt = [&](double v) { return slot.getX() + slot.getWidth() * static_cast<float>(juce::jlimit(0.0, 1.0, v)); };
+    const float x0 = xAt(std::min(zero, n)), x1 = xAt(std::max(zero, n));
+    g.setColour(ink().withAlpha(0.38f));
+    g.fillRect(juce::Rectangle<float>(x0, slot.getY() + 1.0f, std::max(0.0f, x1 - x0), slot.getHeight() - 2.0f));
+    if (bipolar) {
+        g.setColour(t.textDim);
+        g.fillRect(juce::Rectangle<float>(xAt(zero) - 0.5f, bar.getY() - 3.0f, 1.0f, bar.getHeight() + 6.0f));
+    }
+    const auto thumb = juce::Rectangle<float>(thumbW, std::min(14.0f, area.getHeight() - 2.0f)).withCentre({xAt(n), bar.getCentreY()});
+    g.setColour(juce::Colours::black.withAlpha(0.45f));
+    g.fillRoundedRectangle(thumb.translated(0.0f, 1.0f), 2.0f);
+    g.setColour(ink());
+    g.fillRoundedRectangle(thumb, 2.0f);
+    g.setColour(t.bg.withAlpha(0.7f));
+    g.fillRect(thumb.withSizeKeepingCentre(1.0f, thumb.getHeight() - 6.0f)); // the grip line
     // Modulation: thin bars under the track, one per route.
     float y = bar.getBottom() + 1.5f;
     for (const auto& a : arcs_) {
@@ -789,11 +839,12 @@ void Fader::draw(juce::Graphics& g) {
             break;
     }
     if (live_ >= 0.0) {
-        const float x = bar.getX() + bar.getWidth() * static_cast<float>(live_);
+        const float x = xAt(live_);
         g.setColour(t.displayLine);
         g.fillRect(juce::Rectangle<float>(x - 1.0f, bar.getY() - 2.0f, 2.0f, bar.getHeight() + 4.0f));
     }
-    drawText(g, valueText(), valueBox, kTextSmall, dragging_ ? accent() : t.text, juce::Justification::centredRight);
+    const juce::String v = valueText();
+    drawText(g, v, valueBox, fittingSize(v, valueBox.getWidth(), kValueText, dragging_), valueInk(), juce::Justification::centredRight, dragging_);
     drawDecorations(g, getLocalBounds().toFloat());
 }
 
@@ -815,12 +866,12 @@ void NumberBox::draw(juce::Graphics& g) {
     const auto box = area.reduced(1.0f, 1.0f).withSizeKeepingCentre(area.getWidth() - 2.0f, std::min(area.getHeight() - 2.0f, 22.0f));
     g.setColour(t.sunken);
     g.fillRoundedRectangle(box, 4.0f);
-    g.setColour(isMouseOverOrDragging() || dragging_ ? accent() : t.line);
+    g.setColour(isMouseOverOrDragging() || dragging_ ? t.control.withAlpha(0.6f) : t.line);
     g.drawRoundedRectangle(box.reduced(0.5f), 4.0f, 1.0f);
-    juce::Colour valueColour = t.text;
+    juce::Colour valueColour = valueInk();
     if (costWarning) { // more voices cost more: amber from 8, red from 12
         const double v = value();
-        valueColour = v >= 12.0 ? t.danger : v >= 8.0 ? t.warning : t.text;
+        valueColour = v >= 12.0 ? t.danger : v >= 8.0 ? t.warning : valueColour;
     }
     drawText(g, valueText(), box.reduced(4.0f, 0.0f), kTextBody, valueColour, juce::Justification::centred);
     if (!arcs_.empty()) {
@@ -839,30 +890,38 @@ void Toggle::draw(juce::Graphics& g) {
     const bool on = value() >= 0.5;
     auto area = getLocalBounds().toFloat();
     if (power) {
+        // On: a lit lamp with a filled glyph. Off: a hollow ring with the glyph in graphite, so the
+        // state reads without colour (the module's header also says OFF).
         const auto circle = area.withSizeKeepingCentre(std::min(area.getWidth(), area.getHeight()) - 2.0f,
                                                        std::min(area.getWidth(), area.getHeight()) - 2.0f);
-        if (on && t.metal > 0.0f) { // a lit button glows
-            g.setColour(accent().withAlpha(0.28f));
-            g.fillEllipse(circle.expanded(1.0f));
+        if (on) {
+            if (t.metal > 0.0f) { // a lit lamp glows
+                g.setColour(t.lamp.withAlpha(0.28f));
+                g.fillEllipse(circle.expanded(1.0f));
+            }
+            g.setColour(t.lamp);
+            g.fillEllipse(circle);
+            g.setColour(t.bg);
+            g.strokePath(glyphPath(Glyph::Power, circle.reduced(circle.getWidth() * 0.22f)), juce::PathStrokeType(1.6f));
+        } else {
+            g.setColour(t.sunken);
+            g.fillEllipse(circle);
+            g.setColour(t.textFaint);
+            g.drawEllipse(circle.reduced(0.75f), 1.2f);
+            g.strokePath(glyphPath(Glyph::Power, circle.reduced(circle.getWidth() * 0.24f)), juce::PathStrokeType(1.2f));
         }
-        g.setColour(on ? accent() : t.sunken);
-        g.fillEllipse(circle);
-        g.setColour(on ? accent() : t.lineStrong);
-        g.drawEllipse(circle.reduced(0.5f), 1.0f);
-        g.setColour(on ? t.bg : t.textDim);
-        g.strokePath(glyphPath(Glyph::Power, circle.reduced(circle.getWidth() * 0.22f)), juce::PathStrokeType(1.4f));
         drawDecorations(g, area);
         return;
     }
     const auto pill = juce::Rectangle<float>(26.0f, 14.0f).withPosition(area.getX() + 1.0f, area.getCentreY() - 7.0f);
-    g.setColour(on ? accent() : t.sunken);
+    g.setColour(on ? ink() : t.sunken);
     g.fillRoundedRectangle(pill, 7.0f);
-    g.setColour(on ? accent() : t.lineStrong);
+    g.setColour(on ? ink() : t.lineStrong);
     g.drawRoundedRectangle(pill.reduced(0.5f), 7.0f, 1.0f);
     const auto knob = juce::Rectangle<float>(10.0f, 10.0f).withCentre({on ? pill.getRight() - 7.0f : pill.getX() + 7.0f, pill.getCentreY()});
     g.setColour(on ? t.bg : t.textDim);
     g.fillEllipse(knob);
-    drawText(g, label_, area.withTrimmedLeft(32.0f), kTextSmall, on ? t.text : t.textDim);
+    drawText(g, label_, area.withTrimmedLeft(32.0f), kTextSmall, on && !bypassed_ ? t.text : t.textDim);
     drawDecorations(g, area);
 }
 
@@ -916,7 +975,7 @@ void ChoiceBox::draw(juce::Graphics& g) {
     const auto box = area.withSizeKeepingCentre(area.getWidth(), std::min(area.getHeight(), 22.0f));
     g.setColour(t.raised);
     g.fillRoundedRectangle(box, 4.0f);
-    g.setColour(isMouseOver() ? accent() : t.line);
+    g.setColour(isMouseOver() ? t.lineStrong.brighter(0.2f) : t.line);
     g.drawRoundedRectangle(box.reduced(0.5f), 4.0f, 1.0f);
     const auto& d = def();
     const int index = static_cast<int>(std::lround(value() - d.min));
@@ -925,7 +984,7 @@ void ChoiceBox::draw(juce::Graphics& g) {
     g.setColour(t.textDim);
     g.fillPath(glyphPath(Glyph::ChevronDown, arrow.withSizeKeepingCentre(9.0f, 9.0f)));
     const juce::String text = choiceName(d, index);
-    drawText(g, text, inner, fittingSize(text, inner.getWidth(), kTextBody), isEnabled() ? t.text : t.textFaint);
+    drawText(g, text, inner, fittingSize(text, inner.getWidth(), kTextBody), valueInk());
     drawDecorations(g, getLocalBounds().toFloat());
 }
 
@@ -961,15 +1020,18 @@ void Segmented::draw(juce::Graphics& g) {
     g.setColour(t.sunken);
     g.fillRoundedRectangle(area, 4.0f);
     const float w = area.getWidth() / static_cast<float>(count);
+    // The chosen segment is a raised key in the control ink with dark bold text, the others recessed
+    // with dim text: the choice reads by brightness alone. In a module that is off it is graphite.
+    const bool active = isEnabled() && !bypassed_;
     for (int i = 0; i < count; ++i) {
         const auto seg = juce::Rectangle<float>(area.getX() + w * static_cast<float>(i), area.getY(), w, area.getHeight());
         if (i == current) {
-            g.setColour(accent().withAlpha(0.9f));
+            g.setColour(active ? t.control : t.lineStrong);
             g.fillRoundedRectangle(seg.reduced(1.5f), 3.0f);
         }
         const juce::String name = i < static_cast<int>(names.size()) ? names[static_cast<std::size_t>(i)] : choiceName(d, i);
-        drawText(g, name, seg.reduced(3.0f, 0.0f), fittingSize(name, seg.getWidth() - 6.0f, kTextSmall + 0.5f),
-                 i == current ? t.bg : t.textDim, juce::Justification::centred, i == current);
+        drawText(g, name, seg.reduced(3.0f, 0.0f), fittingSize(name, seg.getWidth() - 6.0f, kTextSmall + 0.5f, i == current),
+                 i == current ? (active ? t.bg : t.text) : t.textDim, juce::Justification::centred, i == current);
     }
     g.setColour(t.line);
     g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
@@ -1150,6 +1212,25 @@ juce::Path glyphPath(Glyph glyph, juce::Rectangle<float> b) {
         p.addPath(q);
         break;
     }
+    case Glyph::Check: line(0.15f, 0.55f, 0.42f, 0.8f, 0.16f); line(0.42f, 0.8f, 0.88f, 0.22f, 0.16f); break;
+    // The drawing shapes, as the line each draws across a segment.
+    case Glyph::ShapeLine: line(0.1f, 0.8f, 0.9f, 0.2f, 0.13f); break;
+    case Glyph::ShapeFlat: line(0.1f, 0.5f, 0.9f, 0.5f, 0.13f); line(0.1f, 0.25f, 0.1f, 0.75f, 0.08f); line(0.9f, 0.25f, 0.9f, 0.75f, 0.08f); break;
+    case Glyph::ShapeRampUp: line(0.1f, 0.85f, 0.75f, 0.15f, 0.13f); line(0.75f, 0.15f, 0.75f, 0.85f, 0.13f); line(0.75f, 0.85f, 0.92f, 0.85f, 0.1f); break;
+    case Glyph::ShapeRampDown: line(0.25f, 0.85f, 0.25f, 0.15f, 0.13f); line(0.25f, 0.15f, 0.9f, 0.85f, 0.13f); line(0.08f, 0.85f, 0.25f, 0.85f, 0.1f); break;
+    case Glyph::ShapeSine:
+    case Glyph::ShapeCurve: {
+        juce::Path s;
+        for (int i = 0; i <= 24; ++i) {
+            const float u = static_cast<float>(i) / 24.0f;
+            const float v = glyph == Glyph::ShapeSine ? 0.5f - 0.36f * std::sin(u * juce::MathConstants<float>::twoPi)
+                                                      : 0.85f - 0.7f * u * u; // a bend that leaves slowly and arrives steep
+            if (i == 0) s.startNewSubPath(P(0.1f + 0.8f * u, v)); else s.lineTo(P(0.1f + 0.8f * u, v));
+        }
+        juce::PathStrokeType(0.12f * std::min(w, h), juce::PathStrokeType::curved, juce::PathStrokeType::rounded).createStrokedPath(s, s);
+        p.addPath(s);
+        break;
+    }
     case Glyph::None: break;
     }
     return p;
@@ -1167,22 +1248,63 @@ void Button::draw(juce::Graphics& g) {
     auto area = getLocalBounds().toFloat().reduced(0.5f);
     const bool over = isMouseOver(true) && isEnabled();
     const bool down = isMouseButtonDown() && over;
-    const juce::Colour acc = t.accent(family);
-    if (accentStyle || toggled_) {
-        g.setColour(accentStyle ? (down ? acc.darker(0.2f) : acc) : t.selection);
-        g.fillRoundedRectangle(area, 4.0f);
-        if (toggled_ && !accentStyle) {
-            g.setColour(acc);
-            g.drawRoundedRectangle(area, 4.0f, 1.0f);
+    if (checkbox || switchStyle) {
+        // A state, not an action: a box with a check, or a sliding pill, and the label beside it.
+        auto row = area;
+        if (checkbox) {
+            const auto box = row.removeFromLeft(16.0f).withSizeKeepingCentre(15.0f, 15.0f);
+            g.setColour(toggled_ ? t.control : t.sunken);
+            g.fillRoundedRectangle(box, 3.0f);
+            g.setColour(toggled_ ? t.control : over ? t.textDim : t.textFaint);
+            g.drawRoundedRectangle(box.reduced(0.5f), 3.0f, 1.0f);
+            if (toggled_) {
+                g.setColour(t.bg);
+                g.fillPath(glyphPath(Glyph::Check, box.reduced(2.5f)));
+            }
+            row.removeFromLeft(8.0f);
+        } else {
+            const auto pill = row.removeFromLeft(30.0f).withSizeKeepingCentre(30.0f, 16.0f);
+            g.setColour(toggled_ ? t.control : t.sunken);
+            g.fillRoundedRectangle(pill, 8.0f);
+            g.setColour(toggled_ ? t.control : over ? t.textDim : t.lineStrong);
+            g.drawRoundedRectangle(pill.reduced(0.5f), 8.0f, 1.0f);
+            g.setColour(toggled_ ? t.bg : t.textDim);
+            g.fillEllipse(juce::Rectangle<float>(11.0f, 11.0f).withCentre({toggled_ ? pill.getRight() - 8.0f : pill.getX() + 8.0f, pill.getCentreY()}));
+            row.removeFromLeft(8.0f);
         }
-    } else if (!ghost) { // ghost buttons (page tabs, list rows, icon buttons) draw no box, not even under the pointer
+        drawText(g, text_, row, fittingSize(text_, row.getWidth(), textSize, boldText), !isEnabled() ? t.textFaint : toggled_ || over ? t.text : t.textDim,
+                 juce::Justification::centredLeft, boldText);
+        drawFocus(g, getLocalBounds().toFloat());
+        return;
+    }
+    if (accentStyle) { // the primary action: the control ink, dark text
+        g.setColour(!isEnabled() ? t.raised : down ? t.control.darker(0.2f) : over ? t.control.brighter(0.1f) : t.control);
+        g.fillRoundedRectangle(area, 4.0f);
+    } else if (toggled_ && !tab) {
+        g.setColour(t.selection);
+        g.fillRoundedRectangle(area, 4.0f);
+        g.setColour(t.control.withAlpha(0.75f));
+        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+    } else if (!ghost && !tab) { // ghost buttons (list rows, icon buttons) and tabs draw no box, not even under the pointer
         g.setColour(down ? t.sunken : over ? t.raised.brighter(0.08f) : t.raised);
         g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(over ? t.lineStrong : t.line);
+        g.setColour(over && isEnabled() ? t.lineStrong : t.line);
         g.drawRoundedRectangle(area, 4.0f, 1.0f);
     }
-    const juce::Colour ink = !isEnabled() ? t.textFaint : accentStyle ? t.bg : dimText && !over ? t.textDim : t.text;
+    const juce::Colour ink = !isEnabled() ? (accentStyle ? t.textDim : t.textFaint.withAlpha(0.7f))
+                             : accentStyle ? t.bg
+                             : tab         ? (toggled_ || over ? t.text : t.textDim)
+                             : dimText && !over ? t.textDim
+                                                : t.text;
     auto content = area.reduced(6.0f, 0.0f);
+    if (latch) { // a lamp that is lit while the latch is on
+        const auto lamp = content.removeFromLeft(7.0f).withSizeKeepingCentre(7.0f, 7.0f);
+        g.setColour(toggled_ ? t.lamp : t.sunken);
+        g.fillEllipse(lamp);
+        g.setColour(toggled_ ? t.lamp : t.textFaint);
+        g.drawEllipse(lamp.reduced(0.5f), 1.0f);
+        content.removeFromLeft(5.0f);
+    }
     if (glyph != Glyph::None) {
         const float s = std::min(14.0f, area.getHeight() - 8.0f);
         const auto box = text_.isEmpty() ? area.withSizeKeepingCentre(s, s)
@@ -1192,10 +1314,21 @@ void Button::draw(juce::Graphics& g) {
         if (text_.isNotEmpty())
             content.removeFromLeft(s + 5.0f);
     }
-    if (text_.isNotEmpty())
-        drawText(g, text_, content, fittingSize(text_, content.getWidth(), textSize, boldText), ink,
-                 glyph != Glyph::None || leftAlign ? juce::Justification::centredLeft : juce::Justification::centred, boldText);
+    if (text_.isNotEmpty()) {
+        const bool bold = boldText || (tab && toggled_) || accentStyle;
+        drawText(g, text_, content, fittingSize(text_, content.getWidth(), textSize, bold), ink,
+                 glyph != Glyph::None || leftAlign || latch ? juce::Justification::centredLeft : juce::Justification::centred, bold);
+    }
     drawFocus(g, getLocalBounds().toFloat());
+}
+
+void Button::setToggled(bool on) {
+    if (on == toggled_)
+        return;
+    toggled_ = on;
+    repaint();
+    if (auto* handler = getAccessibilityHandler())
+        handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
 }
 
 void Button::mouseDown(const juce::MouseEvent& e) {
@@ -1219,8 +1352,35 @@ bool Button::keyPressed(const juce::KeyPress& key) {
         onClick();
         return true;
     }
+    const int code = key.getKeyCode();
+    if (onArrow && (code == juce::KeyPress::leftKey || code == juce::KeyPress::rightKey) && !key.getModifiers().isAnyModifierKeyDown()) {
+        onArrow(code == juce::KeyPress::rightKey ? 1 : -1);
+        return true;
+    }
     return false;
 }
+
+namespace {
+// A button's handler that reports its state: a toggle, checkbox or switch is checkable and checked
+// while on; a tab is one of a set (a radio button to screen readers), selected while it is the one shown.
+class ButtonHandler final : public juce::AccessibilityHandler {
+public:
+    ButtonHandler(Button& b, juce::AccessibilityRole role, juce::AccessibilityActions actions)
+        : juce::AccessibilityHandler(b, role, std::move(actions)), button_(b) {}
+    juce::AccessibleState getCurrentState() const override {
+        auto state = juce::AccessibilityHandler::getCurrentState();
+        if (button_.toggleRole || button_.tab || button_.checkbox || button_.switchStyle) {
+            state = state.withCheckable();
+            if (button_.toggled())
+                state = state.withChecked();
+        }
+        return state;
+    }
+
+private:
+    Button& button_;
+};
+} // namespace
 
 std::unique_ptr<juce::AccessibilityHandler> Button::createAccessibilityHandler() {
     juce::AccessibilityActions actions;
@@ -1228,13 +1388,14 @@ std::unique_ptr<juce::AccessibilityHandler> Button::createAccessibilityHandler()
         if (isEnabled() && onClick)
             onClick();
     });
-    if (toggleRole)
+    const bool checkable = toggleRole || tab || checkbox || switchStyle;
+    if (checkable)
         actions.addAction(juce::AccessibilityActionType::toggle, [this] {
             if (isEnabled() && onClick)
                 onClick();
         });
-    return std::make_unique<juce::AccessibilityHandler>(*this, toggleRole ? juce::AccessibilityRole::toggleButton : juce::AccessibilityRole::button,
-                                                        std::move(actions));
+    const auto role = tab ? juce::AccessibilityRole::radioButton : checkable ? juce::AccessibilityRole::toggleButton : juce::AccessibilityRole::button;
+    return std::make_unique<ButtonHandler>(*this, role, std::move(actions));
 }
 
 // --- TabStrip ----------------------------------------------------------------------------------------
@@ -1243,10 +1404,17 @@ TabStrip::TabStrip(juce::StringArray names) {
     setAccessible(true);
     for (int i = 0; i < names.size(); ++i) {
         auto tab = std::make_unique<Button>(names[i]);
-        tab->ghost = true;
-        tab->toggleRole = true;
+        tab->tab = true;
         tab->textSize = kTextSmall + 0.5f;
         tab->onClick = [this, i] { setSelected(i); };
+        tab->onArrow = [this, i](int step) { // the next visible tab that way takes the focus and shows
+            for (int j = i + step; j >= 0 && j < count(); j += step)
+                if (tabs_[static_cast<std::size_t>(j)]->isVisible()) {
+                    tabs_[static_cast<std::size_t>(j)]->grabKeyboardFocus();
+                    setSelected(j);
+                    return;
+                }
+        };
         addAndMakeVisible(*tab);
         tabs_.push_back(std::move(tab));
     }
@@ -1257,8 +1425,8 @@ void TabStrip::setSelected(int index, bool notify) {
     if (index < 0 || index >= count())
         return;
     selected_ = index;
-    for (int i = 0; i < count(); ++i)
-        tabs_[static_cast<std::size_t>(i)]->setToggled(false);
+    for (int i = 0; i < count(); ++i) // the selected tab is checked: screen readers announce which one is shown
+        tabs_[static_cast<std::size_t>(i)]->setToggled(i == index);
     repaint();
     if (notify && onChange)
         onChange(index);
@@ -1273,30 +1441,48 @@ void TabStrip::setName(int index, const juce::String& name) { tabs_[static_cast<
 
 void TabStrip::resized() {
     auto area = getLocalBounds();
-    const float size = large ? kTextBody : kTextSmall + 0.5f;
+    const float size = large ? kTextBody + 0.5f : kTextSmall + 0.5f;
+    // Widths for the bold label the selected tab shows, so no tab changes size when chosen.
     int total = 0;
     for (const auto& tab : tabs_)
         if (tab->isVisible())
-            total += static_cast<int>(textWidth(tab->text(), size, large)) + (large ? 28 : 16);
+            total += static_cast<int>(textWidth(tab->text(), size, true)) + (large ? 30 : 16);
     const float stretch = total > area.getWidth() ? static_cast<float>(area.getWidth()) / static_cast<float>(total) : 1.0f;
     for (auto& tab : tabs_) {
         if (!tab->isVisible())
             continue;
         tab->textSize = size;
-        const int w = static_cast<int>((textWidth(tab->text(), size, large) + (large ? 28.0f : 16.0f)) * stretch);
+        const int w = static_cast<int>((textWidth(tab->text(), size, true) + (large ? 30.0f : 16.0f)) * stretch);
         tab->setBounds(area.removeFromLeft(w));
+        if (large)
+            area.removeFromLeft(2);
     }
 }
 
 void TabStrip::draw(juce::Graphics& g) {
     const Theme& t = theme();
+    if (selected_ < 0 || selected_ >= count())
+        return;
+    const auto b = tabs_[static_cast<std::size_t>(selected_)]->getBounds().toFloat();
+    if (large) {
+        // The page on show sits in a recessed seat: dark, shaded from the top, with a lit lower lip.
+        const auto seat = b.reduced(0.0f, 2.0f);
+        g.setColour(t.sunken);
+        g.fillRoundedRectangle(seat, 4.0f);
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.5f), 0.0f, seat.getY(), juce::Colours::transparentBlack, 0.0f,
+                                               seat.getY() + 6.0f, false));
+        g.fillRoundedRectangle(seat.withHeight(6.0f), 4.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.7f));
+        g.drawRoundedRectangle(seat.reduced(0.5f), 4.0f, 1.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.08f));
+        g.fillRect(seat.getX() + 4.0f, seat.getBottom(), seat.getWidth() - 8.0f, 1.0f);
+        return;
+    }
+    // A module's own groups: a hairline under the strip, a light underline under the chosen group.
     g.setColour(t.line);
     g.fillRect(getLocalBounds().removeFromBottom(1));
-    if (selected_ >= 0 && selected_ < count()) {
-        const auto b = tabs_[static_cast<std::size_t>(selected_)]->getBounds();
-        g.setColour(t.accent(family));
-        g.fillRect(juce::Rectangle<int>(b.getX() + 4, getHeight() - 2, b.getWidth() - 8, 2));
-    }
+    g.setColour(t.control.withAlpha(0.85f));
+    g.fillRect(juce::Rectangle<float>(b.getX() + 4.0f, static_cast<float>(getHeight()) - 2.0f, b.getWidth() - 8.0f, 2.0f));
 }
 
 // --- Card --------------------------------------------------------------------------------------------
@@ -1332,9 +1518,20 @@ void Card::resized() {
     layoutBody(body());
 }
 
+bool Card::bypassed() const { return powerSwitch != nullptr && powerSwitch->value() < 0.5; }
+
+bool Card::tick() {
+    const bool off = bypassed();
+    if (off == bypassShown_)
+        return false;
+    bypassShown_ = off;
+    return true;
+}
+
 void Card::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
+    bypassShown_ = bypassed();
     // Where the title may run: up to the first header part on the right.
     float right = static_cast<float>(getWidth());
     for (auto* c : headerRight)
@@ -1342,10 +1539,11 @@ void Card::draw(juce::Graphics& g) {
             right = std::min(right, static_cast<float>(c->getX()) - 4.0f);
     if (drawHeaderExtra && !headerExtraArea.isEmpty())
         right = std::min(right, headerExtraArea.getX() - 4.0f);
-    // Everything here changes only with the title and the header's layout: one copy per repaint.
+    // Everything here changes only with the title, the header's layout and the power state: one
+    // copy per repaint.
     std::uint64_t key = static_cast<std::uint64_t>(title_.hashCode64());
     for (const int v : {collapsed ? 1 : 0, screws ? 1 : 0, headerHeight, collapsible ? 1 : 0, powerSwitch != nullptr ? 1 : 0,
-                        juce::roundToInt(right), static_cast<int>(family)})
+                        juce::roundToInt(right), static_cast<int>(family), bypassShown_ ? 1 : 0})
         key = key * 1099511628211ull + static_cast<std::uint64_t>(v + 1);
     background_.draw(g, getLocalBounds(), key, true, [&](juce::Graphics& bg) {
         bg.fillAll(t.bg); // the corners outside the rounded panel: the chassis
@@ -1365,12 +1563,20 @@ void Card::draw(juce::Graphics& g) {
             h.removeFromLeft(2.0f);
         }
         if (powerSwitch != nullptr)
-            h.removeFromLeft(h.getHeight() + 3.0f);
-        bg.setColour(t.accent(family));
-        bg.fillRoundedRectangle(h.removeFromLeft(3.0f).withSizeKeepingCentre(3.0f, 12.0f), 1.5f);
-        h.removeFromLeft(6.0f);
+            h.removeFromLeft(h.getHeight() + 5.0f); // the title starts 5 px after the power control
+        else
+            h.removeFromLeft(2.0f);
         const juce::String title = title_.toUpperCase();
-        drawText(bg, title, h.withRight(std::min(right, h.getRight())), kTextSmall + 0.5f, t.text, juce::Justification::centredLeft, true);
+        h = h.withRight(std::min(right, h.getRight()));
+        const float titleW = std::min(textWidth(title, kTextSmall + 0.5f, true) + 2.0f, h.getWidth());
+        drawText(bg, title, h.removeFromLeft(titleW), kTextSmall + 0.5f, bypassShown_ ? t.textDim : t.text, juce::Justification::centredLeft, true);
+        if (bypassShown_ && h.getWidth() > 40.0f) { // a module that is off says so in words, beside its name
+            h.removeFromLeft(8.0f);
+            const auto badge = h.removeFromLeft(textWidth("OFF", kTextSmall, true) + 12.0f).withSizeKeepingCentre(textWidth("OFF", kTextSmall, true) + 12.0f, 16.0f);
+            bg.setColour(t.textFaint);
+            bg.drawRoundedRectangle(badge.reduced(0.5f), 3.0f, 1.0f);
+            drawText(bg, "OFF", badge, kTextSmall, t.textDim, juce::Justification::centred, true);
+        }
         if (!collapsed) {
             bg.setColour(t.line);
             bg.fillRect(juce::Rectangle<float>(area.getX() + 1.0f, static_cast<float>(headerHeight) - 1.0f, area.getWidth() - 2.0f, 1.0f));
@@ -1415,27 +1621,50 @@ bool DragChip::tick() {
     return false;
 }
 
+void DragChip::setOpen(bool open) {
+    if (open != open_) {
+        open_ = open;
+        repaint();
+    }
+}
+
 void DragChip::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat().reduced(0.5f);
     const juce::Colour c = ctx_.sourceColour(source_);
     const bool selected = ctx_.selectedSource == source_;
-    // The chip itself changes only with selection and its name: kept as an image, so the live
-    // value's bar repaints over a copy. The pointer over it changes nothing; the selected chip is
-    // pressed in (darker, with a dark rim), not coloured.
-    const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u);
+    // The chip itself changes only with its states and its name: kept as an image, so the live
+    // value's bar repaints over a copy. Two states, two cues: the source chosen for routing has a
+    // ring in its own colour around its dot and grip (what is dragged and Alt-dragged); the one
+    // whose graph the dock shows is a seated tab, lighter and bold, with a notch towards the graph.
+    const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u) |
+                              (open_ ? 2u : 0u);
     body_.draw(g, getLocalBounds(), key, false, [&](juce::Graphics& cg) {
-        cg.setColour(selected ? t.sunken : t.raised);
-        cg.fillRoundedRectangle(area, area.getHeight() * 0.5f);
-        cg.setColour(selected ? juce::Colours::black.withAlpha(t.dark ? 0.7f : 0.35f) : t.line);
-        cg.drawRoundedRectangle(area, area.getHeight() * 0.5f, selected ? 1.4f : 1.0f);
+        const float radius = area.getHeight() * 0.5f;
+        cg.setColour(open_ ? t.raised.brighter(0.22f) : t.raised);
+        cg.fillRoundedRectangle(area, radius);
+        if (selected) {
+            cg.setColour(c);
+            cg.drawRoundedRectangle(area.reduced(0.8f), radius - 0.8f, 1.6f);
+        } else {
+            cg.setColour(open_ ? t.control.withAlpha(0.55f) : t.line);
+            cg.drawRoundedRectangle(area, radius, 1.0f);
+        }
         auto inner = area.reduced(area.getHeight() * 0.35f, 0.0f);
         cg.setColour(c);
         cg.fillEllipse(inner.removeFromLeft(7.0f).withSizeKeepingCentre(7.0f, 7.0f));
         inner.removeFromLeft(4.0f);
-        cg.setColour(t.textDim);
+        cg.setColour(selected ? c : t.textDim);
         cg.fillPath(glyphPath(Glyph::Grip, inner.removeFromRight(8.0f).withSizeKeepingCentre(8.0f, 11.0f)));
-        drawText(cg, text, inner, fittingSize(text, inner.getWidth(), kTextSmall + 0.5f), t.text);
+        drawText(cg, text, inner, fittingSize(text, inner.getWidth(), kTextSmall + 0.5f, open_), open_ ? t.text : t.textDim, juce::Justification::centredLeft,
+                 open_);
+        if (open_) { // the notch: the tab points down at the graph it opens
+            juce::Path notch;
+            const float cx = area.getCentreX(), b = area.getBottom();
+            notch.addTriangle(cx - 4.0f, b - 3.5f, cx + 4.0f, b - 3.5f, cx, b + 0.5f);
+            cg.setColour(t.control);
+            cg.fillPath(notch);
+        }
     });
     // The source's live value as a thin bar along the bottom edge.
     const float v = juce::jlimit(-1.0f, 1.0f, value_);
@@ -1670,7 +1899,7 @@ void drawChassis(juce::Graphics& g, juce::Rectangle<float> area) {
     g.fillRect(area);
     juce::Path p;
     p.addRectangle(area);
-    drawGrain(g, p, t.dark ? 0.07f : 0.05f);
+    drawGrain(g, p, t.dark ? 0.05f : 0.04f); // the enclosure is the one textured surface
 }
 
 void drawScrew(juce::Graphics& g, juce::Point<float> c, float radius, float angle) {
@@ -1713,10 +1942,7 @@ void drawPanel(juce::Graphics& g, juce::Rectangle<float> area, juce::Colour fill
                                                area.getBottom(), false));
     else
         g.setColour(fill);
-    g.fillRoundedRectangle(area, t.radius);
-    juce::Path shape;
-    shape.addRoundedRectangle(area, t.radius);
-    drawGrain(g, shape, t.dark ? 0.10f : 0.07f);
+    g.fillRoundedRectangle(area, t.radius); // a labelled work surface: a quiet fill, no grain
     if (border) {
         g.setColour(t.line);
         g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.0f);
@@ -1735,7 +1961,6 @@ void drawPlate(juce::Graphics& g, juce::Rectangle<float> area, float radius) {
     juce::Path plate;
     plate.addRoundedRectangle(area.getX(), area.getY(), area.getWidth(), area.getHeight(), radius, radius, true, true, false, false);
     g.fillPath(plate);
-    drawGrain(g, plate, 0.08f);
     // An engraved line under the plate: dark groove, light lip.
     g.setColour(juce::Colours::black.withAlpha(t.dark ? 0.5f : 0.18f));
     g.fillRect(area.getX() + 1.0f, area.getBottom() - 1.0f, area.getWidth() - 2.0f, 1.0f);
@@ -1747,14 +1972,13 @@ void drawWell(juce::Graphics& g, juce::Rectangle<float> area) {
     const Theme& t = theme();
     g.setColour(t.display);
     g.fillRoundedRectangle(area, 4.0f);
-    if (t.metal > 0.0f) { // inset: shade along the top edge, a lit lip along the bottom
-        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.45f * t.metal), area.getX(), area.getY(), juce::Colours::transparentBlack,
-                                               area.getX(), area.getY() + 7.0f, false));
-        g.fillRoundedRectangle(area.withHeight(std::min(7.0f, area.getHeight())), 4.0f);
-        g.setColour(juce::Colours::white.withAlpha((t.dark ? 0.06f : 0.35f) * t.metal));
-        g.drawHorizontalLine(static_cast<int>(area.getBottom()), area.getX() + 4.0f, area.getRight() - 4.0f);
+    // One inset edge: the rim, and the shade the panel casts into the well from above.
+    if (t.metal > 0.0f) {
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.5f * t.metal), area.getX(), area.getY(), juce::Colours::transparentBlack,
+                                               area.getX(), area.getY() + 4.0f, false));
+        g.fillRoundedRectangle(area.withHeight(std::min(4.0f, area.getHeight())), 4.0f);
     }
-    g.setColour(t.dark ? juce::Colours::black.withAlpha(0.7f) : t.line);
+    g.setColour(t.dark ? juce::Colours::black.withAlpha(0.75f) : t.line);
     g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
 }
 
@@ -1773,6 +1997,25 @@ void strokeGlow(juce::Graphics& g, const juce::Path& path, juce::Colour colour, 
 } // namespace zui
 
 namespace zui {
+
+int flowHeight(int width, const std::vector<FlowItem>& items, int rowHeight, int gap, const std::function<bool(const FlowItem&)>& shown) {
+    int x = 0, y = 0, h = 0;
+    bool rowEmpty = true;
+    for (const auto& item : items) {
+        if (item.c == nullptr || !shown(item))
+            continue;
+        const int ih = item.height > 0 ? item.height : rowHeight;
+        if (!rowEmpty && (item.newRow || x + item.width > width + 1)) {
+            y += h + gap;
+            x = 0;
+            h = 0;
+        }
+        rowEmpty = false;
+        h = std::max(h, ih);
+        x += item.width + gap;
+    }
+    return rowEmpty ? 0 : y + h;
+}
 
 int flow(juce::Rectangle<int> area, const std::vector<FlowItem>& items, int rowHeight, int gap) {
     // Rows first (which items share a row), then each row as tall as its tallest item, items

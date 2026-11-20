@@ -51,6 +51,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     addAndMakeVisible(*root_);
 
     topBar_ = std::make_unique<TopBar>(ctx_);
+    output_ = std::make_unique<OutputPanel>(ctx_);
     tabs_ = std::make_unique<TabStrip>(pageNames());
     tabs_->large = true;
     tabs_->setTitle("Pages");
@@ -63,7 +64,7 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     palette_ = std::make_unique<CommandPalette>(ctx_);
     prefs_ = std::make_unique<PrefsPanel>(ctx_);
     history_ = std::make_unique<HistoryPanel>(ctx_);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
+    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), output_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
                                                                        &prefsButton_, dock_.get(), keys_.get(), help_.get()})
         root_->addAndMakeVisible(c);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get()})
@@ -178,10 +179,13 @@ void ZederiaEditor::paintHeader(juce::Graphics& g) {
     for (const auto& p : {juce::Point<float>(header.getRight() - 8.0f, header.getY() + 8.0f), juce::Point<float>(header.getRight() - 8.0f, header.getBottom() - 8.0f)})
         drawScrew(g, p, 2.8f, p.y * 0.1f);
     const auto logo = juce::Rectangle<float>(10.0f, 9.0f, static_cast<float>(kLogoWidth) - 8.0f, kHeaderHeight - 16.0f);
-    drawWell(g, logo);
-    for (const auto& p : {logo.getTopLeft().translated(7.0f, 7.0f), logo.getTopRight().translated(-7.0f, 7.0f), logo.getBottomLeft().translated(7.0f, -7.0f),
-                          logo.getBottomRight().translated(-7.0f, -7.0f)})
-        drawScrew(g, p, 2.4f, p.x * 0.05f);
+    drawWell(g, logo); // the fasteners belong to the enclosure (the plate's corners), not to the logo
+    // A groove sets the output (meter and Master) apart from the preset bar and the page tabs.
+    const float groove = static_cast<float>(kBaseWidth - 14 - kOutputWidth - 5);
+    g.setColour(juce::Colours::black.withAlpha(0.45f));
+    g.fillRect(groove, header.getY() + 8.0f, 1.0f, header.getHeight() - 16.0f);
+    g.setColour(juce::Colours::white.withAlpha(0.05f));
+    g.fillRect(groove + 1.0f, header.getY() + 8.0f, 1.0f, header.getHeight() - 16.0f);
     // The wordmark, spaced out, over a small wave that turns from sine to saw.
     const juce::String word = "ZEDERIA";
     const juce::Font mark = font(19.0f / textScale(), true); // the wordmark is artwork: the text size leaves it alone
@@ -208,7 +212,7 @@ void ZederiaEditor::paintHeader(juce::Graphics& g) {
         const juce::Point<float> p(wx0 + (wx1 - wx0) * u, wy - shape * 5.0f);
         if (i == 0) wave.startNewSubPath(p); else wave.lineTo(p);
     }
-    strokeGlow(g, wave, t.accent(Family::Sources), 1.3f);
+    strokeGlow(g, wave, t.sources, 1.3f); // the wordmark's warm detail
 }
 
 void ZederiaEditor::resized() {
@@ -227,8 +231,11 @@ void ZederiaEditor::applyLayout() {
         return;
     const juce::ScopedValueSetter<bool> guard(layingOut_, true);
     auto area = root_->getLocalBounds();
-    // Header: the logo, then the preset bar over the page tabs.
+    // Header: the logo, then the preset bar over the page tabs, and the output (meter and Master)
+    // in a column of its own at the right, as tall as both rows.
     auto header = area.removeFromTop(kHeaderHeight).withTrimmedLeft(kLogoWidth + 6).withTrimmedRight(14);
+    output_->setBounds(header.removeFromRight(kOutputWidth).withTrimmedTop(6).withTrimmedBottom(4));
+    header.removeFromRight(10);
     topBar_->setBounds(header.removeFromTop(kTopBarHeight + 4).withTrimmedTop(4));
     auto tabRow = header.removeFromTop(kTabsHeight - 2);
     // A hidden help strip still shows messages ("Saved ...", errors) over the bottom edge for a few seconds.
@@ -1021,6 +1028,7 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
     if (current_ >= 0 && pages_[static_cast<std::size_t>(current_)] != nullptr)
         tickTree(*pages_[static_cast<std::size_t>(current_)], dirty);
     tickTree(*topBar_, dirty);
+    tickTree(*output_, dirty);
     if (topBar_->tick())
         dirty.push_back(getLocalArea(&topBar_->cpuText, topBar_->cpuText.getLocalBounds()));
     // The fixed layers under the page.

@@ -37,6 +37,7 @@ public:
     bool tickDock();      // a sync switch or an envelope's mode changed what shows
     void applySimpleView();
     ModulatorCard& modulators() { return *modulators_; }
+    juce::String shownTitle() const; // the open modulator's name, as the card's header shows it
 
 private:
     std::unique_ptr<MacroCard> macros_;
@@ -87,6 +88,10 @@ public:
     int keyAt(juce::Point<float> p) const;
     juce::Rectangle<float> keyBounds(int note) const;
     static bool isBlack(int note);
+    // What repaints when a key goes down or comes up: the key, its seams and, for a black key, the
+    // shadow it casts at rest (the longer of its two).
+    juce::Rectangle<int> paintArea(int note) const;
+    bool shownDown(int note) const { return note >= 0 && note < 128 && shown_[static_cast<std::size_t>(note)]; }
 
 private:
     void press(int note, float velocity);

@@ -81,17 +81,7 @@ juce::String chosenFace() {
 
 } // namespace
 
-juce::Colour Theme::accent(Family f) const {
-    switch (f) {
-    case Family::Sources: return sources;
-    case Family::Filters: return filters;
-    case Family::Modulators: return modulators;
-    case Family::Effects: return effects;
-    case Family::Play: return play;
-    case Family::Neutral: break;
-    }
-    return global;
-}
+juce::Colour Theme::accent(Family) const { return control; }
 
 const Theme& Theme::current() {
     auto& r = registry();
@@ -128,7 +118,16 @@ bool Theme::fromJson(const std::string& json, Theme& out, juce::String& error) {
         read("text", t.text); read("textDim", t.textDim); read("textFaint", t.textFaint);
         read("focus", t.focus); read("selection", t.selection); read("warning", t.warning); read("danger", t.danger); read("ok", t.ok);
         read("display", t.display); read("displayGrid", t.displayGrid); read("displayLine", t.displayLine);
-        read("sources", t.sources); read("filters", t.filters); read("modulators", t.modulators); read("effects", t.effects);
+        const auto optional = [&](const char* key, juce::Colour& c, juce::Colour fallback) {
+            c = fallback;
+            if (const auto it = colours.find(key); it != colours.end()) {
+                if (!it->is_string() || !parseColour(it->get<std::string>(), c))
+                    throw std::runtime_error(std::string("colour \"") + key + "\" is not #RRGGBB");
+            }
+        };
+        read("sources", t.sources);
+        optional("control", t.control, t.text);
+        optional("lamp", t.lamp, t.sources); read("filters", t.filters); read("modulators", t.modulators); read("effects", t.effects);
         read("play", t.play); read("global", t.global);
         for (int i = 0; i < 8; ++i)
             read(("mod" + std::to_string(i + 1)).c_str(), t.mod[i]);

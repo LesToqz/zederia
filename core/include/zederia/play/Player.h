@@ -87,6 +87,9 @@ public:
 
     // True while the player changes what is played (any play feature is on).
     bool shaping() const noexcept { return shaping_; }
+    // The step of the arpeggiator's lane that sounded last while it runs (a key held, the
+    // arpeggiator on), -1 otherwise. For the step lane's marker; it changes nothing that plays.
+    int playingStep() const noexcept { return s_.arpOn && running_ && heldCount_ > 0 ? playedStep_ : -1; }
 
 private:
     struct Timed {
@@ -159,6 +162,7 @@ private:
     int seqCount_ = 0;
     bool seqDirty_ = true, running_ = false, wasArp_ = false;
     int cursor_ = 0, walkDir_ = 1, laneStep_ = 0, chordStep_ = 0;
+    int playedStep_ = -1;
     std::int64_t nextStepAt_ = 0, stepCounter_ = 0;
     double lastGridIndex_ = -1.0;
     bool startNow_ = false;

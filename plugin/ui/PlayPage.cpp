@@ -28,11 +28,17 @@ public:
         return p;
     }
     int steps() const { return static_cast<int>(ctx_.processor.plainValue(idx("arp.steps"))); }
+    bool arpOn() const { return ctx_.processor.plainValue(idx("arp.on")) >= 0.5; }
+    int playing() const { return playing_; }
     bool tick() override {
         const int s = steps(), slot = page_.patternSlot();
-        if (s != shownSteps_ || slot != shownSlot_) {
+        const int playing = ctx_.processor.engine().arpStep();
+        const bool on = arpOn();
+        if (s != shownSteps_ || slot != shownSlot_ || playing != playing_ || on != onShown_) {
             shownSteps_ = s;
             shownSlot_ = slot;
+            playing_ = playing;
+            onShown_ = on;
             return true;
         }
         return false;
@@ -65,24 +71,46 @@ public:
         const auto p = editing_ ? live_ : pattern();
         const int n = juce::jmax(1, steps());
         const float w = r.state.getWidth() / static_cast<float>(n);
+        // The stored pattern in neutral ink (a step that plays light, a tie outlined, a rest
+        // recessed), dimmer while the arpeggiator is off; only the step sounding now is bright.
+        const bool on = arpOn();
+        const juce::Colour stepInk = on ? t.control : t.lineStrong.brighter(0.25f);
         for (int i = 0; i < n; ++i) {
             const auto s = p.step(i);
             const float x = r.state.getX() + w * static_cast<float>(i);
             const bool focused = i == focusStep_ && showsFocus();
             auto cell = juce::Rectangle<float>(x + 1.0f, r.state.getY(), w - 2.0f, r.state.getHeight());
-            g.setColour(s.state == zed::StepState::On ? t.play : s.state == zed::StepState::Tie ? t.play.withAlpha(0.45f) : t.sunken);
-            g.fillRoundedRectangle(cell, 2.0f);
+            if (s.state == zed::StepState::On) {
+                g.setColour(stepInk);
+                g.fillRoundedRectangle(cell, 2.0f);
+            } else if (s.state == zed::StepState::Tie) {
+                g.setColour(t.raised);
+                g.fillRoundedRectangle(cell, 2.0f);
+                g.setColour(stepInk);
+                g.drawRoundedRectangle(cell.reduced(0.75f), 2.0f, 1.5f);
+            } else {
+                g.setColour(t.sunken);
+                g.fillRoundedRectangle(cell, 2.0f);
+            }
             if (focused) {
                 g.setColour(t.focus);
                 g.drawRoundedRectangle(cell, 2.0f, 1.5f);
             }
             if (w > 16.0f)
-                drawText(g, s.state == zed::StepState::On ? juce::String(i + 1) : s.state == zed::StepState::Tie ? "tie" : "-", cell, kTextSmall,
-                         s.state == zed::StepState::On ? t.bg : t.textDim, juce::Justification::centred);
+                drawText(g, s.state == zed::StepState::On ? juce::String(i + 1) : s.state == zed::StepState::Tie ? "tie" : juce::String::fromUTF8("\xe2\x80\x93"), cell,
+                         kTextSmall, s.state == zed::StepState::On ? t.bg : s.state == zed::StepState::Tie ? t.text : t.textDim, juce::Justification::centred,
+                         s.state != zed::StepState::Rest);
             const auto bar = juce::Rectangle<float>(x + 2.0f, r.velocity.getBottom() - r.velocity.getHeight() * static_cast<float>(s.velocity), w - 4.0f,
                                                     r.velocity.getHeight() * static_cast<float>(s.velocity));
-            g.setColour(t.play.withAlpha(s.state == zed::StepState::Rest ? 0.25f : 0.8f));
+            g.setColour(t.textDim.withAlpha(s.state == zed::StepState::Rest ? 0.14f : on ? 0.32f : 0.2f));
             g.fillRect(bar);
+            g.setColour(t.textDim.withAlpha(s.state == zed::StepState::Rest ? 0.3f : 0.8f)); // the stored level, as a line
+            g.fillRect(bar.withHeight(1.5f));
+            if (i == playing_) { // the step that sounds now: a narrow bright marker over its column
+                g.setColour(t.play);
+                g.fillRect(juce::Rectangle<float>(x + 2.0f, r.state.getY() - 3.0f, w - 4.0f, 2.0f));
+                g.fillRect(juce::Rectangle<float>(x + w * 0.5f - 1.0f, r.velocity.getY(), 2.0f, r.velocity.getHeight()));
+            }
             const auto tcell = juce::Rectangle<float>(x + 1.0f, r.transpose.getY(), w - 2.0f, r.transpose.getHeight());
             g.setColour(t.raised);
             g.fillRect(tcell);
@@ -176,7 +204,8 @@ private:
     PlayPage& page_;
     zed::ArpPattern live_;
     bool editing_ = false;
-    int region_ = 0, startTranspose_ = 0, focusStep_ = 0, shownSteps_ = -1, shownSlot_ = -1;
+    int region_ = 0, startTranspose_ = 0, focusStep_ = 0, shownSteps_ = -1, shownSlot_ = -1, playing_ = -1;
+    bool onShown_ = false;
 };
 
 // --- Chord memory ----------------------------------------------------------------------------------------
@@ -206,7 +235,7 @@ public:
         for (int s = 0; s <= 24; ++s) {
             const auto cell = juce::Rectangle<float>(inner.getX() + w * static_cast<float>(s), inner.getY(), w - 1.0f, inner.getHeight() - 14.0f);
             const bool on = std::find(n.begin(), n.end(), s) != n.end();
-            g.setColour(on ? t.play : black[s % 12] ? t.sunken : t.raised);
+            g.setColour(on ? t.control : black[s % 12] ? t.sunken : t.raised); // a note of the chord: a lit key
             g.fillRoundedRectangle(cell, 2.0f);
             if (s == focus_ && showsFocus()) {
                 g.setColour(t.focus);
@@ -319,12 +348,12 @@ public:
             const auto& n = c.notes[static_cast<std::size_t>(i)];
             const auto box = noteBox(n, area, low, rowH, beats);
             const bool sel = selected.count(i) > 0;
-            g.setColour((sel ? t.focus : t.play).withAlpha(0.45f + 0.55f * static_cast<float>(n.velocity)));
+            g.setColour((sel ? t.focus : t.control).withAlpha(0.35f + 0.55f * static_cast<float>(n.velocity)));
             g.fillRoundedRectangle(box, 2.0f);
-            g.setColour(sel ? t.focus : t.play);
+            g.setColour(sel ? t.focus : t.control);
             g.drawRoundedRectangle(box, 2.0f, 1.0f);
             const float x = box.getX();
-            g.setColour(sel ? t.focus : t.play);
+            g.setColour(sel ? t.focus : t.control);
             g.fillRect(juce::Rectangle<float>(x, vel.getBottom() - vel.getHeight() * static_cast<float>(n.velocity), 3.0f, vel.getHeight() * static_cast<float>(n.velocity)));
         }
         drawText(g, juce::String(static_cast<int>(c.notes.size())) + " notes, " + juce::String(c.bars, 2) + " bars" + (c.name.empty() ? "" : "  " + str(c.name)),

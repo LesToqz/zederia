@@ -140,6 +140,10 @@ public:
     bool tick() override;
     // When only the live marker moved, only the part that draws it repaints.
     juce::RectangleList<int> dirtyArea() override { return liveOnly_ ? liveArea() : getLocalBounds(); }
+    // The control belongs to a module that is switched off (an oscillator, a filter, an effect
+    // slot, the arpeggiator): it stays editable, drawn in neutral ink so the module reads as off.
+    bool bypassed() const { return bypassed_; }
+    int powerParam() const { return powerParam_; }
     bool keyPressed(const juce::KeyPress& key) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
@@ -168,6 +172,10 @@ protected:
     // The state decorations every control shares: lock, MIDI learn, drop target, highlight, focus.
     void drawDecorations(juce::Graphics& g, juce::Rectangle<float> area) const;
     juce::Colour accent() const;
+    // The ink of the value (arc, thumb, chosen segment): the control ink, graphite while bypassed
+    // or disabled; and the ink of the value's text.
+    juce::Colour ink() const;
+    juce::Colour valueInk() const;
     bool sourceHighlight() const; // the hovered chip modulates this control
 
     Context& ctx_;
@@ -180,6 +188,8 @@ protected:
     int arcsGeneration_ = -1;
     bool dragging_ = false, depthDrag_ = false, dropTarget_ = false, highlighted_ = false, locked_ = false, learning_ = false;
     bool liveOnly_ = false; // the last tick changed nothing but the live marker
+    int powerParam_ = -1;   // the module's power switch ("osc2.on", "fx.b1.on"), -1 for none
+    bool bypassed_ = false;
     int depthRoute_ = -1;
     double dragStartNorm_ = 0.0, depthStart_ = 0.0;
     juce::Point<float> dragStartPos_;
@@ -197,6 +207,14 @@ public:
     bool showValue = true;
     bool showLabel = true; // off where a caption beside it names it (the macro strip)
     bool hasVisibleLabel() const override { return showLabel || labelledBy.isNotEmpty(); }
+    // The value under the name: the primary controls (a filter's cutoff, the master level) show
+    // it larger. The name is the small legend above it in every case.
+    float valueSize = kValueText;
+    float labelRow = 13.0f;
+    float trackInset = -1.0f; // from the area's edge to the track; < 0: 5 for small knobs, 7 otherwise
+    float valueRow() const { return valueSize + 3.0f; }
+    float radius() const; // of the track, in the knob's area
+    juce::Point<float> knobCentre() const { return knobArea().getCentre(); }
 
 protected:
     juce::Rectangle<float> knobArea() const;
@@ -282,7 +300,9 @@ protected:
 enum class Glyph {
     None, Prev, Next, Undo, Redo, Menu, Close, Plus, Minus, Power, Lock, Search, Keyboard, Map, Speaker, Star, StarFilled,
     Folder, Save, Copy, Paste, Dice, Wand, Blend, ChevronDown, ChevronRight, ChevronUp, Grip, Pencil, Erase, Play, Stop,
-    History, Gear, Link, Trash, Help
+    History, Gear, Link, Trash, Help, Check,
+    // Drawing shapes (the workshop's tools): the silhouette each draws.
+    ShapeLine, ShapeFlat, ShapeRampUp, ShapeRampDown, ShapeSine, ShapeCurve
 };
 juce::Path glyphPath(Glyph glyph, juce::Rectangle<float> box);
 
@@ -297,18 +317,24 @@ public:
         repaint();
     }
     const juce::String& text() const { return text_; }
-    void setToggled(bool on) { toggled_ = on; repaint(); }
+    void setToggled(bool on); // a change is announced to screen readers
     bool toggled() const { return toggled_; }
     void setEnabledState(bool on) { setEnabled(on); repaint(); }
     bool hasVisibleLabel() const override { return text_.isNotEmpty(); }
     std::function<void()> onClick;
     std::function<void(const juce::MouseEvent&)> onRightClick;
-    bool accentStyle = false;  // filled with the family accent
+    std::function<void(int step)> onArrow; // Left (-1) and Right (+1) while focused: a tab moves to its neighbour
+    bool accentStyle = false;  // the primary action: filled with the control ink
     bool ghost = false;        // no frame until hovered
-    bool toggleRole = false;   // announces itself as a toggle
+    bool toggleRole = false;   // announces itself as a toggle, checked while toggled
     bool leftAlign = false;    // text from the left edge (lists)
     bool boldText = false;     // section headings
     bool dimText = false;      // the secondary text colour
+    // Other looks of the same button. A tab draws only its text (its strip draws the selection) and
+    // announces itself as one of a set, selected while toggled. A checkbox draws a box with a
+    // check and its label. A switch draws a sliding pill and its label (a state, not an action).
+    // A latch draws a small lamp at its left that is lit while it is toggled.
+    bool tab = false, checkbox = false, switchStyle = false, latch = false;
     float textSize = kTextBody;
     Glyph glyph;
 
@@ -324,7 +350,9 @@ private:
     bool toggled_ = false;
 };
 
-// Tabs: one focusable button each.
+// Tabs: one focusable button each, announced as one of a set with the selected one selected.
+// Page tabs (large) sit in a recessed seat with a bold label; tabs over a module's own groups of
+// controls have a light underline. Left and Right move between them.
 class TabStrip final : public Widget {
 public:
     explicit TabStrip(juce::StringArray names);
@@ -338,6 +366,7 @@ public:
     std::function<void(int)> onChange;
     bool large = false; // page tabs
     Button& tab(int index) { return *tabs_[static_cast<std::size_t>(index)]; }
+    bool hasVisibleLabel() const override { return false; } // its tabs carry the names
 
 private:
     std::vector<std::unique_ptr<Button>> tabs_;
@@ -366,13 +395,18 @@ public:
     const juce::String& titleText() const { return title_; }
     juce::String moduleId; // for copy, paste, locks and module presets
     int headerHeight = 28;
-    bool screws = true; // two screws in the bottom corners (the hardware finish)
+    bool screws = false; // screws in the bottom corners: only on the outer enclosure, not on work surfaces
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}
+    // The module is switched off: its title is drawn in neutral ink with an OFF mark after it.
+    bool bypassed() const;
+    bool tick() override; // the power switch changed (a click, undo, host automation)
+    juce::RectangleList<int> dirtyArea() override { return header(); }
 
 private:
     juce::String title_;
-    CachedDrawing background_; // panel, plate and screws; the card is opaque, so nothing behind it repaints
+    bool bypassShown_ = false;
+    CachedDrawing background_; // panel and plate; the card is opaque, so nothing behind it repaints
 };
 
 // A modulation source to drag onto any control (plan 3.7). Click selects it; hovering it lights up
@@ -398,8 +432,13 @@ public:
     }
     std::function<void()> onSelect;
     std::function<void()> onDoubleClick; // macros: rename
+    // The modulator whose graph the dock shows: drawn as a seated tab with a notch towards it.
+    // Selection for routing (Alt-drag depth) is separate: a ring in the source's colour.
+    void setOpen(bool open);
+    bool isOpen() const { return open_; }
 
 private:
+    bool open_ = false;
     CachedDrawing body_;
     Context& ctx_;
     juce::String source_;
@@ -489,6 +528,8 @@ struct FlowItem {
     bool newRow = false;
 };
 int flow(juce::Rectangle<int> area, const std::vector<FlowItem>& items, int rowHeight, int gap = 4);
+// The height flow() would use for the items `shown` accepts, without placing anything.
+int flowHeight(int width, const std::vector<FlowItem>& items, int rowHeight, int gap, const std::function<bool(const FlowItem&)>& shown);
 
 // True when the widget should be visible in the current view (advanced parts hide in Simple view).
 inline bool shownInView(const Widget& w, bool simple) { return !(simple && w.advanced); }

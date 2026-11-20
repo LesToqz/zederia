@@ -210,6 +210,9 @@ public:
     }
 
     const juce::String& selected() const { return selected_; }
+    // Opens a modulator's graph and controls. Which one is open is the chip seated as a tab and the
+    // card's title ("LFO 2"); it does not change with the routing selection (a second click on a
+    // chip, a drop onto a control), which the chips show as a ring in the source's colour.
     void select(const juce::String& source) {
         selected_ = source;
         if (source.startsWith("env")) {
@@ -220,7 +223,13 @@ public:
         } else {
             scope_.source = source;
         }
+        const juce::Colour ink = ctx_.sourceColour(source);
+        lfo_.ink = ink;
+        multi_.ink = ink;
+        setTitleText(Context::sourceName(source));
         reloadShapes();
+        for (auto* c : chips_)
+            c->setOpen(c->source() == source);
         for (auto* c : chips_)
             c->repaint();
         updateButtons();
@@ -486,6 +495,7 @@ void ModDock::select(const juce::String& source) {
 }
 
 const juce::String& ModDock::selected() const { return modulators_->selected(); }
+juce::String ModDock::shownTitle() const { return modulators_->titleText(); }
 void ModDock::refreshNames() { macros_->refreshNames(); }
 void ModDock::reloadShapes() { modulators_->reloadShapes(); }
 bool ModDock::tickDock() { return modulators_->tickCard(); }
@@ -760,14 +770,32 @@ void PianoKeys::checkHeld() {
         release(std::exchange(mouseNote_, -1));
 }
 
+// The mechanics of a key as drawn (base pixels at 100 %): a white key's lit front lip and how far
+// its face comes towards the player when it goes down; a black key's front bevel and the shadow
+// it casts forward onto the white keys.
+namespace {
+constexpr float kWhiteLip = 4.0f, kWhiteLipDown = 1.0f;
+constexpr float kBlackNose = 5.0f, kBlackNoseDown = 3.0f, kBlackDrop = 2.0f;
+constexpr float kBlackShadow = 5.0f, kBlackShadowDown = 2.0f;
+} // namespace
+
+juce::Rectangle<int> PianoKeys::paintArea(int note) const {
+    // A key's own bounds, the seams beside it, and for a black key the longest shadow it casts.
+    auto r = keyBounds(note).getSmallestIntegerContainer().expanded(isBlack(note) ? 2 : 1, 0);
+    if (isBlack(note))
+        r = r.withBottom(r.getBottom() + static_cast<int>(std::ceil(kBlackShadow)) + 1);
+    return r.getIntersection(getLocalBounds());
+}
+
 bool PianoKeys::tick() {
     checkHeld();
     dirty_.clear();
+    // The mouse, the computer keys and incoming MIDI all end up here: the same travel for each.
     for (int n = lowest; n <= highest; ++n) {
         const bool down = holds_[static_cast<std::size_t>(n)] > 0 || ctx_.processor.noteDown(n);
         if (down != shown_[static_cast<std::size_t>(n)]) {
             shown_[static_cast<std::size_t>(n)] = down;
-            dirty_.add(keyBounds(n).getSmallestIntegerContainer().expanded(1, 0));
+            dirty_.add(paintArea(n));
         }
     }
     return !dirty_.isEmpty();
@@ -776,50 +804,83 @@ bool PianoKeys::tick() {
 void PianoKeys::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
-    const juce::Colour lit = t.accent(Family::Play);
     const int base = (octave() + 1) * 12;
     // Which computer key plays each note (the preferences can hide this).
     const bool labels = ctx_.prefs.computerKeys && ctx_.prefs.keyLabels;
     const auto lettersOf = [&](int note) { return labels ? lettersFor(note - base) : juce::StringArray(); };
-    // White keys: ivory with a soft fall-off towards the player, a groove between each.
+    // A held key reads by its travel, not by a colour: its face comes towards the player, its lit
+    // edge narrows, it shades to a neutral grey and the keys beside it show their side walls.
     const juce::Colour ivory = t.dark ? juce::Colour(0xffe9e6df) : juce::Colour(0xfffbfaf7);
+    const juce::Colour legend(0xff474c54); // 6.9:1 on the ivory, 5.2:1 on a held key's face
     for (int n = lowest; n <= highest; ++n) {
         if (isBlack(n))
             continue;
         const auto k = keyBounds(n).reduced(0.5f, 0.0f);
         const bool down = shown_[static_cast<std::size_t>(n)];
-        const juce::Colour top = down ? ivory.interpolatedWith(lit, 0.55f) : ivory;
-        g.setGradientFill(juce::ColourGradient(top.darker(0.18f), k.getX(), k.getY(), top, k.getX(), k.getY() + k.getHeight() * 0.25f, false));
-        g.fillRoundedRectangle(k.withTrimmedTop(-3.0f), 2.5f);
-        g.setColour(juce::Colours::black.withAlpha(down ? 0.06f : 0.14f));
-        g.fillRect(k.withTop(k.getBottom() - (down ? 2.0f : 4.0f)));
+        const float lip = down ? kWhiteLipDown : kWhiteLip;
+        const auto face = k.withTrimmedBottom(lip);
+        const juce::Colour top = down ? ivory.darker(0.15f) : ivory;
+        // The face pivots at the rear (under the fallboard), so its top edge stays where it was.
+        juce::ColourGradient shade(top.darker(0.18f), k.getX(), k.getY(), top, k.getX(), k.getY() + k.getHeight() * 0.25f, false);
+        if (down)
+            shade.addColour(1.0, top.darker(0.03f)); // tilted away from the light towards the front
+        g.setGradientFill(shade);
+        g.fillRoundedRectangle(face.withTrimmedTop(-3.0f), 2.0f);
+        // The front lip: a lit edge, about 4 px at rest and 1 px held, with the keybed's shadow under it.
+        const auto front = k.withTop(face.getBottom());
+        g.setColour(ivory.brighter(0.1f));
+        g.fillRect(front);
+        g.setColour(juce::Colours::black.withAlpha(down ? 0.18f : 0.10f));
+        g.fillRect(front.withHeight(1.0f)); // the crease between face and lip
+        g.setColour(juce::Colours::black.withAlpha(0.3f));
+        g.fillRect(k.withTop(k.getBottom() - 0.8f));
+        if (down) { // the walls of the higher keys either side
+            for (const bool left : {true, false}) {
+                const float x = left ? k.getX() : k.getRight() - 2.5f;
+                g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.22f), left ? k.getX() : k.getRight(), 0.0f, juce::Colours::transparentBlack,
+                                                       left ? k.getX() + 2.5f : k.getRight() - 2.5f, 0.0f, false));
+                g.fillRect(juce::Rectangle<float>(x, k.getY(), 2.5f, face.getHeight()));
+            }
+        }
         g.setColour(juce::Colours::black.withAlpha(0.35f));
         g.fillRect(k.getRight(), k.getY(), 0.8f, k.getHeight());
-        // From the bottom up: the octave's name on each C, then the computer keys (two where the rows overlap).
-        auto label = k.withTop(k.getBottom() - 15.0f);
+        // From the bottom of the face up: the octave's name on each C, then the computer keys (two
+        // where the rows overlap). They are printed on the face, so they travel with it.
+        auto label = face.withTop(face.getBottom() - 14.0f);
         if (n % 12 == 0) {
-            drawText(g, "C" + juce::String(n / 12 - 1), label, kTextSmall, juce::Colour(0xff6f737a), juce::Justification::centred);
+            drawText(g, "C" + juce::String(n / 12 - 1), label, kTextSmall, legend, juce::Justification::centred);
             label = label.translated(0.0f, -13.0f);
         }
         for (const auto& l : lettersOf(n)) {
-            drawText(g, l, label, kTextSmall, juce::Colour(0xff8a8f97), juce::Justification::centred);
+            drawText(g, l, label, kTextSmall, legend, juce::Justification::centred);
             label = label.translated(0.0f, -13.0f);
         }
     }
-    // Black keys: lacquer with a lit edge.
+    // Black keys: an ebony cap over a short front bevel, casting a narrow shadow forward. Held, the
+    // cap goes down: its bevel shows less, its shadow shortens; the material stays ebony.
     for (int n = lowest; n <= highest; ++n) {
         if (!isBlack(n))
             continue;
         const auto k = keyBounds(n);
         const bool down = shown_[static_cast<std::size_t>(n)];
-        g.setColour(juce::Colours::black.withAlpha(0.4f));
-        g.fillRoundedRectangle(k.translated(1.0f, 1.5f), 2.0f);
-        const juce::Colour body = down ? lit.darker(0.35f) : juce::Colour(0xff1d1f23);
-        g.setGradientFill(juce::ColourGradient(body.brighter(0.25f), k.getX(), k.getY(), body.darker(0.4f), k.getX(), k.getBottom(), false));
+        const float shadow = down ? kBlackShadowDown : kBlackShadow;
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.42f), 0.0f, k.getBottom(), juce::Colours::transparentBlack, 0.0f,
+                                               k.getBottom() + shadow, false));
+        g.fillRect(juce::Rectangle<float>(k.getX() + 1.0f, k.getBottom(), k.getWidth() - 1.0f, shadow));
+        g.setColour(juce::Colours::black.withAlpha(0.35f)); // the cap's shadow on the keys beside it
+        g.fillRect(juce::Rectangle<float>(k.getRight(), k.getY(), 1.2f, k.getHeight()));
+        const juce::Colour ebony = juce::Colour(0xff1d1f23).darker(down ? 0.12f : 0.0f);
+        const float nose = down ? kBlackNoseDown : kBlackNose;
+        const auto cap = k.withTrimmedBottom(nose);
+        g.setGradientFill(juce::ColourGradient(ebony.brighter(0.25f), k.getX(), k.getY(), ebony.darker(0.4f), k.getX(), cap.getBottom(), false));
         g.fillRoundedRectangle(k, 2.0f);
-        g.setColour(juce::Colours::white.withAlpha(down ? 0.1f : 0.16f));
-        g.fillRoundedRectangle(k.reduced(2.5f, 0.0f).withTrimmedBottom(k.getHeight() * 0.2f).withTrimmedTop(1.0f).withWidth(1.5f), 0.75f);
-        auto label = k.withTop(k.getBottom() - 14.0f);
+        // The bevel at the front catches the light from above.
+        const auto bevel = k.withTop(cap.getBottom());
+        g.setGradientFill(juce::ColourGradient(ebony.brighter(down ? 0.9f : 1.3f), 0.0f, bevel.getY(), ebony.brighter(0.2f), 0.0f, bevel.getBottom(), false));
+        g.fillRoundedRectangle(bevel, 1.5f);
+        g.setColour(juce::Colours::white.withAlpha(0.14f));
+        g.fillRoundedRectangle(cap.reduced(2.5f, 0.0f).withTrimmedBottom(cap.getHeight() * (down ? 0.3f : 0.18f)).withTrimmedTop(1.0f).withWidth(1.5f), 0.75f);
+        auto label = cap.withTop(cap.getBottom() - 13.0f).translated(0.0f, down ? kBlackDrop - 1.0f : 0.0f);
         for (const auto& l : lettersOf(n)) {
             drawText(g, l, label, kTextSmall, juce::Colour(0xffaeb3ba), juce::Justification::centred);
             label = label.translated(0.0f, -12.0f);
@@ -829,7 +890,7 @@ void PianoKeys::draw(juce::Graphics& g) {
     if (labels && base + kSpan - 1 >= lowest && base <= highest) {
         const float x0 = keyBounds(juce::jlimit(lowest, highest, base)).getX();
         const float x1 = keyBounds(juce::jlimit(lowest, highest, base + kSpan - 1)).getRight();
-        g.setColour(lit.withAlpha(0.8f));
+        g.setColour(t.control.withAlpha(0.6f));
         g.fillRect(x0 + 1.0f, area.getY(), x1 - x0 - 2.0f, 2.0f);
     }
     // The fallboard's shadow over the keys.
@@ -877,7 +938,7 @@ void Wheel::draw(juce::Graphics& g) {
         g.fillRect(drum.getX() + 1.0f, y, drum.getWidth() - 2.0f, 1.0f);
     }
     const float y = drum.getBottom() - drum.getHeight() * norm;
-    g.setColour(t.accent(Family::Play));
+    g.setColour(t.control);
     g.fillRoundedRectangle(juce::Rectangle<float>(drum.getX(), y - 2.0f, drum.getWidth(), 4.0f), 1.5f);
     drawFocus(g, getLocalBounds().toFloat());
 }

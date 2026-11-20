@@ -76,6 +76,16 @@ public:
     void setSectionCollapsed(const juce::String& key, bool collapsed);
     bool sectionCollapsed(const juce::String& key) const { return collapsed_.count(key) > 0; }
 
+    // What the results show when there are none, in front of the list: an empty library (Import
+    // pack), an empty folder (Show all presets) or a search that matches nothing (Clear search).
+    enum class Empty { None, Library, Folder, Search };
+    Empty emptyState() const;
+    juce::String emptyMessage() const;
+    Button* emptyAction(); // nullptr while the list has results
+    void clearSearch();    // the words and the filters; the folder stays
+    // Rating, tags, favourite, moving, export and Blend show while presets are selected.
+    bool selectionToolsShown() const;
+
 private:
     // Table model
     int getNumRows() override { return resultCount(); }
@@ -89,6 +99,9 @@ private:
     void filter();
     void rebuildFacets();
     void refreshDetail();
+    void refreshEmpty();
+    class EmptyView;
+    std::unique_ptr<EmptyView> empty_;
     bool rewrite(const zed::PresetInfo& info, const std::function<void(zed::PatchMeta&)>& change);
     void showModules();
     void newFolder();

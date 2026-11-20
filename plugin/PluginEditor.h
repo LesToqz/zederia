@@ -73,6 +73,7 @@ public:
     zui::Context& context() { return ctx_; }
     juce::Component& content();
     zui::TopBar& topBar() { return *topBar_; }
+    zui::OutputPanel& output() { return *output_; }
     zui::HelpStrip& helpStrip() { return *help_; }
     zui::ModDock& dock() { return *dock_; }
     zui::KeyboardLayer& keyboardLayer() { return *keys_; }
@@ -107,6 +108,7 @@ private:
     zui::Context ctx_;
     std::unique_ptr<Root> root_;
     std::unique_ptr<zui::TopBar> topBar_;
+    std::unique_ptr<zui::OutputPanel> output_;
     std::unique_ptr<zui::TabStrip> tabs_;
     zui::Button simpleButton_{"Simple"}, mapButton_{"Mod map", zui::Glyph::Map}, findButton_{"Find", zui::Glyph::Search},
         prefsButton_{"", zui::Glyph::Gear};
