@@ -146,6 +146,7 @@ public:
         power.family = Family::Sources;
         powerSwitch = &power;
         onHeaderClick = [this] { page_.focusSource(source_); };
+        offMark = source >= 3; // an oscillator that is off says so by its hollow lamp and graphite display
         if (source < 3)
             buildOsc();
         else if (source == 3)

@@ -1570,7 +1570,7 @@ void Card::draw(juce::Graphics& g) {
         h = h.withRight(std::min(right, h.getRight()));
         const float titleW = std::min(textWidth(title, kTextSmall + 0.5f, true) + 2.0f, h.getWidth());
         drawText(bg, title, h.removeFromLeft(titleW), kTextSmall + 0.5f, bypassShown_ ? t.textDim : t.text, juce::Justification::centredLeft, true);
-        if (bypassShown_ && h.getWidth() > 40.0f) { // a module that is off says so in words, beside its name
+        if (bypassShown_ && offMark && h.getWidth() > 40.0f) { // a module that is off says so in words, beside its name
             h.removeFromLeft(8.0f);
             const auto badge = h.removeFromLeft(textWidth("OFF", kTextSmall, true) + 12.0f).withSizeKeepingCentre(textWidth("OFF", kTextSmall, true) + 12.0f, 16.0f);
             bg.setColour(t.textFaint);

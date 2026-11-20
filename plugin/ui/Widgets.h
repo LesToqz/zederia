@@ -396,6 +396,7 @@ public:
     juce::String moduleId; // for copy, paste, locks and module presets
     int headerHeight = 28;
     bool screws = false; // screws in the bottom corners: only on the outer enclosure, not on work surfaces
+    bool offMark = true; // an OFF mark beside the title while the module is off (the oscillators show it in their display instead)
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}
     // The module is switched off: its title is drawn in neutral ink with an OFF mark after it.
