@@ -216,6 +216,7 @@ struct Engine::Impl {
     std::atomic<float> fxMeterValue[kRackSlots];
     std::atomic<int> fxRunning{0};
     std::atomic<int> arpStepShown{-1}; // the arpeggiator step that sounded last, for the interface
+    std::atomic<int> recoveries{0};    // runs muted because the output was not finite (guardOutput)
 
     void updateSmoothing() {
         smoothing = 1.0 - std::exp(-static_cast<double>(kInterval) / (kSmoothingSeconds * sampleRate));
@@ -918,6 +919,7 @@ void Engine::setOffline(bool offline) { impl_->offline.store(offline, std::memor
 ParamStore& Engine::params() noexcept { return impl_->store; }
 const ParamStore& Engine::params() const noexcept { return impl_->store; }
 int Engine::activeVoices() const noexcept { return impl_->activeForOthers.load(std::memory_order_relaxed); }
+int Engine::outputRecoveries() const noexcept { return impl_->recoveries.load(std::memory_order_relaxed); }
 double Engine::sampleRate() const noexcept { return impl_->sampleRate; }
 
 double Engine::tailSeconds() const noexcept {
