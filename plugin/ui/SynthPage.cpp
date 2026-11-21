@@ -183,7 +183,7 @@ public:
 
     void layoutBody(juce::Rectangle<int> body) override {
         const bool simple = ctx_.simpleView();
-        if (tableName_ != nullptr) {
+        if (source_ == 4) {
             auto row = body.removeFromTop(22);
             prevTable_->setBounds(row.removeFromLeft(22));
             nextTable_->setBounds(row.removeFromRight(22));
@@ -207,20 +207,30 @@ public:
             c->setVisible(false);
         const auto& main = classic ? mainClassic_ : mainTable_;
         const int tallest = sections_.tallest(body.getWidth(), simple);
-        const int viewH = juce::jmax(60, body.getHeight() - 4 - (kKnobH + 2) - (sections_.tabHeight + sections_.tabGap) - tallest);
+        constexpr int performanceRowHeight = 76;
+        const int viewH = juce::jmax(60, body.getHeight() - 4 - (performanceRowHeight + 2) - (sections_.tabHeight + sections_.tabGap) - tallest);
         view_->setBounds(body.removeFromTop(viewH));
+        // The asset selector is part of the display bezel. Classic generates its own cycle.
+        auto picker = view_->getLocalBounds().withTrimmedLeft(45).withTrimmedRight(48).removeFromTop(23).withTrimmedTop(3);
+        prevTable_->setBounds(picker.removeFromLeft(20));
+        nextTable_->setBounds(picker.removeFromRight(20));
+        tableName_->setBounds(picker);
+        for (auto* b : {prevTable_, tableName_, nextTable_})
+            b->setVisible(!classic);
         body.removeFromTop(4);
-        auto mainRow = body.removeFromTop(kKnobH);
+        auto mainRow = body.removeFromTop(performanceRowHeight);
         body.removeFromTop(2);
         sections_.layout(body, simple);
         for (auto& item : main)
             if (auto* w = dynamic_cast<Widget*>(item.c))
                 w->setVisible(shownInView(*w, simple));
         // The row keeps its columns: a hidden control (Coarse in Simple view) leaves its place empty.
-        int x = mainRow.getX();
-        for (auto& item : main) {
-            item.c->setBounds(x, mainRow.getY(), item.width, kKnobH);
-            x += item.width + 2;
+        for (std::size_t i = 0; i < main.size(); ++i) {
+            const int w = i == 0 ? mainRow.getWidth() / 4 : mainRow.getWidth() / static_cast<int>(main.size() - i);
+            auto cell = mainRow.removeFromLeft(w);
+            if (i != 0)
+                cell = cell.removeFromBottom(kKnobH);
+            main[i].c->setBounds(cell);
         }
     }
 
@@ -346,10 +356,15 @@ private:
         headerRight.push_back(engine_);
         addTableRow(false);
         view_ = &parts_.add<WavetableView>(*this, ctx_, source_);
+        for (auto* b : {prevTable_, tableName_, nextTable_})
+            view_->addAndMakeVisible(*b);
+        tableName_->ghost = true;
+        tableName_->boldText = true;
         view_->setHelp("Table", "The table in depth with the playing position lit, or the cycle as it sounds now. The 3D / 2D button switches.");
         auto& position = knob("position", "Position");
         auto& coarse = knob("coarse", "Coarse", true);
         auto& shape = knob("classic.shape", "Shape");
+        position.valueSize = shape.valueSize = kPrimaryValueText;
         auto& width = knob("classic.pulse_width", "Width");
         auto& level = knob("level", "Level");
         auto& pan = knob("pan", "Pan");
@@ -359,6 +374,7 @@ private:
         mainClassic_ = {{&shape, kKnobW}, {&level, kKnobW}, {&pan, kKnobW}, {&fine, kKnobW}, {&width, kKnobW}};
         addTabs({"UNISON", "SPREAD", "WARP", "PITCH"}, {false, true, false, false});
         sections_.gap = 2;
+        sections_.rowHeight = kSmallKnobH;
         sections_.tabHeight = 22;
         sections_.tabGap = 4;
         // Unison: how many voices and how they spread.
@@ -397,13 +413,28 @@ private:
         }
         sections_.groups.push_back(warpItems);
         sections_.custom.resize(4);
-        sections_.custom[2].height = kChoiceH + 2 + kKnobH;
+        sections_.custom[0].height = kKnobH;
+        sections_.custom[0].place = [this](juce::Rectangle<int> area, bool) {
+            const auto& items = sections_.groups.front();
+            int count = static_cast<int>(std::count_if(items.begin(), items.end(), [](const FlowItem& i) { return i.c->isVisible(); }));
+            // Centre this single-row bank in the space shared with the two-row Warp and Pitch banks.
+            auto row = area.withSizeKeepingCentre(area.getWidth(), juce::jmin(kKnobH, area.getHeight()));
+            for (const auto& item : items) {
+                if (!item.c->isVisible())
+                    continue;
+                auto cell = row.removeFromLeft(row.getWidth() / count--);
+                if (item.height > 0)
+                    cell = cell.withSizeKeepingCentre(std::min(cell.getWidth(), item.width), item.height);
+                item.c->setBounds(cell);
+            }
+        };
+        sections_.custom[2].height = kChoiceH + 2 + kSmallKnobH;
         sections_.custom[2].place = [slots](juce::Rectangle<int> area, bool) {
             constexpr int kColumnGap = 8;
             const int colW = (area.getWidth() - kColumnGap) / 2;
             for (int s = 0; s < 2; ++s) {
                 const auto& slot = (*slots)[static_cast<std::size_t>(s)];
-                auto col = juce::Rectangle<int>(area.getX() + s * (colW + kColumnGap), area.getY(), colW, kChoiceH + 2 + kKnobH);
+                auto col = juce::Rectangle<int>(area.getX() + s * (colW + kColumnGap), area.getY(), colW, kChoiceH + 2 + kSmallKnobH);
                 slot.mode->setBounds(col.removeFromTop(kChoiceH));
                 col.removeFromTop(2);
                 slot.amount->setBounds(col.removeFromLeft(52));
@@ -508,13 +539,22 @@ public:
         mode.advanced = true;
         items_ = {{&k("resonance", "Res"), 50}, {&k("drive", "Drive"), 50}, {character_, 50}, {&k("stereo_offset", "Stereo", true), 50},
                   {&k("keytrack", "Key track"), 50}, {&mix, 158, 22, true}, {&mode, 100, 22}};
+        for (auto* child : getChildren())
+            child->addMouseListener(this, false);
+    }
+    void mouseDown(const juce::MouseEvent& event) override {
+        if (event.eventComponent == this)
+            Card::mouseDown(event);
+        else if (!event.mods.isPopupMenu())
+            page_.focusFilter(slot_);
     }
     void layoutBody(juce::Rectangle<int> body) override {
         for (auto& item : items_)
             if (auto* w = dynamic_cast<Widget*>(item.c))
                 w->setVisible(shownInView(*w, ctx_.simpleView()));
-        cutoff_->setBounds(body.removeFromLeft(72).withSizeKeepingCentre(72, juce::jmin(body.getHeight(), 92)));
+        cutoff_->setBounds(body.removeFromLeft(76).withSizeKeepingCentre(76, juce::jmin(body.getHeight(), 100)));
         body.removeFromLeft(4);
+        body = body.withSizeKeepingCentre(body.getWidth(), juce::jmin(body.getHeight(), kKnobH + 3 + 22));
         flow(body, items_, kKnobH, 3);
     }
     bool tickCard() {
@@ -549,6 +589,8 @@ public:
         tabs.setTitle("Voice sections");
         tabs.onChange = [this](int) { resized(); };
         sections_.tabs = &tabs;
+        sections_.rowHeight = kSmallKnobH;
+        sections_.gap = 3;
         sections_.advancedTab = {false, false, false, false, true, true, true};
         const auto knob = [&](const char* id, const char* label, Family f = Family::Neutral) -> Knob& {
             auto& k = parts_.add<Knob>(*this, ctx, id, label);
@@ -557,18 +599,22 @@ public:
         };
         const auto fader = [&](const char* id, const char* label) -> Fader& {
             auto& f = parts_.add<Fader>(*this, ctx, id, label);
-            f.labelWidth = 120;
+            f.labelWidth = 105;
             return f;
         };
         auto& routing = fader("voice.filter_routing", "Series / parallel");
         routing.family = Family::Filters;
-        sections_.groups.push_back({{&routing, 320, 22, true}, {&fader("fx.filter1_balance", "F1 to lane B"), 320, 22, true},
-                                    {&fader("fx.filter2_balance", "F2 to lane B"), 320, 22, true}, {&fader("fx.direct_balance", "Direct to lane B"), 320, 22, true}});
+        sections_.groups.push_back({{&routing, 296, 28, true}, {&fader("fx.filter1_balance", "F1 to lane B"), 296, 28, true},
+                                    {&fader("fx.filter2_balance", "F2 to lane B"), 296, 28, true}, {&fader("fx.direct_balance", "Direct to lane B"), 296, 28, true}});
         auto& mode = parts_.add<Segmented>(*this, ctx, "global.mode", "Mode");
         mode.names = {"Poly", "Mono", "Legato"};
-        voices_ = &parts_.add<Caption>(*this, "0 voices", kTextSmall, true);
+        voiceMode_ = &mode;
+        modeCaption_ = &parts_.add<Caption>(*this, mode.valueText(), kTextSmall, true);
+        modeCaption_->justification = juce::Justification::centredRight;
+        modeCaption_->setSize(90, 18);
+        headerRight = {modeCaption_};
         sections_.groups.push_back({{&mode, 170, kChoiceH}, {&parts_.add<NumberBox>(*this, ctx, "global.polyphony", "Polyphony"), 70, kChoiceH},
-                                    {voices_, 70, 18}, {&parts_.add<ChoiceBox>(*this, ctx, "voice.steal", "Stealing"), 110, kChoiceH, true},
+                                    {&parts_.add<ChoiceBox>(*this, ctx, "voice.steal", "Stealing"), 110, kChoiceH, true},
                                     {&parts_.add<ChoiceBox>(*this, ctx, "voice.priority", "Priority"), 90, kChoiceH},
                                     {&knob("voice.velocity_sens", "Velocity"), kKnobW}});
         auto& glideMode = parts_.add<Segmented>(*this, ctx, "global.glide_mode", "Glide mode");
@@ -603,8 +649,8 @@ public:
                                     {&load, 104, 22, true}, {&equal, 56, 22}, {lockTuning_, 54, 22}, {tuningName_, 300, 16, true}});
         auto& follower = parts_.add<Segmented>(*this, ctx, "global.follower.source", "Follower hears");
         follower.names = {"Instrument", "Side-chain"};
-        sections_.groups.push_back({{&parts_.add<Toggle>(*this, ctx, "global.mpe", "MPE"), 64, 22}, {&knob("global.mpe_bend_range", "MPE bend"), kKnobW},
-                                    {&parts_.add<Toggle>(*this, ctx, "global.midi_out", "MIDI out"), 84, 22}, {&parts_.add<Toggle>(*this, ctx, "global.midi_thru", "MIDI thru"), 90, 22},
+        sections_.groups.push_back({{&parts_.add<Toggle>(*this, ctx, "global.mpe", "MPE"), 54, 22}, {&knob("global.mpe_bend_range", "MPE bend"), kKnobW},
+                                    {&parts_.add<Toggle>(*this, ctx, "global.midi_out", "MIDI out"), 83, 22}, {&parts_.add<Toggle>(*this, ctx, "global.midi_thru", "MIDI thru"), 88, 22},
                                     {&follower, 170, kChoiceH, true}, {&knob("global.follower.attack", "Attack"), kKnobW}, {&knob("global.follower.release", "Release"), kKnobW}});
         sections_.groups.push_back({{&parts_.add<ChoiceBox>(*this, ctx, "global.limiter", "Protection"), 110, kChoiceH},
                                     {&parts_.add<Toggle>(*this, ctx, "global.dc_filter", "DC filter"), 90, 22},
@@ -613,10 +659,10 @@ public:
     }
     void layoutBody(juce::Rectangle<int> body) override { sections_.layout(body, ctx_.simpleView()); }
     bool tickCard() {
-        const int v = ctx_.processor.activeVoices();
-        if (v != voicesShown_) {
-            voicesShown_ = v;
-            voices_->setText(juce::String(v) + (v == 1 ? " voice" : " voices"));
+        const int mode = juce::roundToInt(voiceMode_->value());
+        if (mode != modeShown_) {
+            modeShown_ = mode;
+            modeCaption_->setText(voiceMode_->valueText());
         }
         return false;
     }
@@ -653,10 +699,11 @@ private:
     Context& ctx_;
     Parts parts_;
     Sections sections_;
-    Caption* voices_ = nullptr;
+    Segmented* voiceMode_ = nullptr;
+    Caption* modeCaption_ = nullptr;
     Caption* tuningName_ = nullptr;
     Button* lockTuning_ = nullptr;
-    int voicesShown_ = -1;
+    int modeShown_ = -1;
 };
 
 // --- Stage -------------------------------------------------------------------------------------------
@@ -674,7 +721,7 @@ public:
         screws = false;
         for (juce::Component* c : std::initializer_list<juce::Component*>{&filter_, &scope_, &warp_})
             addChildComponent(c);
-        for (Button* b : {&viewToggle_, &shapes_, &steps_, &snap_, &copy_, &paste_, &mapButton_}) {
+        for (Button* b : {&filter1_, &filter2_, &viewToggle_, &shapes_, &steps_, &snap_, &copy_, &paste_, &mapButton_}) {
             b->textSize = kTextSmall;
             addAndMakeVisible(*b);
         }
@@ -685,17 +732,23 @@ public:
         copy_.setSize(22, 18);
         paste_.setSize(22, 18);
         mapButton_.setSize(22, 18);
-        headerRight = {&mapButton_, &paste_, &copy_, &snap_, &steps_, &shapes_, &viewToggle_};
+        filter1_.setSize(30, 18);
+        filter2_.setSize(30, 18);
+        filter1_.setTitle("Show Filter 1 response");
+        filter2_.setTitle("Show Filter 2 response");
+        filter1_.setTooltip(filter1_.getTitle());
+        filter2_.setTooltip(filter2_.getTitle());
+        filter1_.toggleRole = filter2_.toggleRole = true;
+        filter1_.onClick = [this] { showFilter(0); };
+        filter2_.onClick = [this] { showFilter(1); };
+        headerRight = {&mapButton_, &paste_, &copy_, &snap_, &steps_, &shapes_, &viewToggle_, &filter2_, &filter1_};
         steps_.toggleRole = snap_.toggleRole = mapButton_.toggleRole = true;
         mapButton_.setTitle("Signal map");
         mapButton_.setTooltip("Signal map");
         mapButton_.setHelp("Signal map", "The routing of the whole sound; click a part to go to it.");
         mapButton_.onClick = [this] { setMapShown(!mapShown_); };
-        viewToggle_.onClick = [this] {
-            filter_.showPhase = !filter_.showPhase;
-            filter_.repaint();
-            updateButtons();
-        };
+        viewToggle_.onClick = [this] { filter_.togglePhase(); };
+        filter_.onPhaseChanged = [this] { updateButtons(); };
         steps_.onClick = [this] { warp_.stepMode = !warp_.stepMode; warp_.repaint(); updateButtons(); };
         snap_.onClick = [this] { warp_.snap = !warp_.snap; updateButtons(); };
         copy_.setTitle("Copy curve");
@@ -749,6 +802,8 @@ public:
         show(View::WarpCurve);
     }
     void showFilter(int slot) {
+        if (view_ == View::Filter && slot_ == slot)
+            return;
         slot_ = slot;
         filter_.setSlot(slot);
         show(View::Filter);
@@ -771,8 +826,12 @@ public:
 private:
     void updateButtons() {
         const bool curve = view_ == View::WarpCurve;
+        filter1_.setVisible(view_ == View::Filter);
+        filter2_.setVisible(view_ == View::Filter);
+        filter1_.setToggled(slot_ == 0);
+        filter2_.setToggled(slot_ == 1);
         viewToggle_.setVisible(view_ == View::Filter);
-        viewToggle_.setText(filter_.showPhase ? "Magnitude" : "Phase");
+        viewToggle_.setText(filter_.isShowingPhase() ? "Magnitude" : "Phase");
         for (Button* b : {&shapes_, &steps_, &snap_, &copy_, &paste_})
             b->setVisible(curve);
         steps_.setToggled(warp_.stepMode);
@@ -780,7 +839,7 @@ private:
         mapButton_.setToggled(mapShown_);
         juce::String t;
         switch (view_) {
-        case View::Filter: t = "Filter " + juce::String(slot_ + 1); break;
+        case View::Filter: t = "Filter response"; break;
         case View::WarpCurve: t = "Warp " + juce::String(warpSlot_ == 0 ? "A" : "B"); break;
         case View::Scope: t = Context::sourceName(scope_.source); break;
         }
@@ -810,7 +869,7 @@ private:
     FilterResponseView filter_;
     SourceScope scope_;
     CurveEditor warp_;
-    Button viewToggle_{"Phase"}, shapes_{"Shapes"}, steps_{"Steps"}, snap_{"Snap"}, copy_{"", Glyph::Copy}, paste_{"", Glyph::Paste}, mapButton_{"", Glyph::Map};
+    Button filter1_{"F1"}, filter2_{"F2"}, viewToggle_{"Phase"}, shapes_{"Shapes"}, steps_{"Steps"}, snap_{"Snap"}, copy_{"", Glyph::Copy}, paste_{"", Glyph::Paste}, mapButton_{"", Glyph::Map};
     View view_ = View::Filter;
     bool mapShown_ = false;
     int slot_ = 0, osc_ = 0, warpSlot_ = 0;
@@ -902,7 +961,8 @@ void SynthPage::paint(juce::Graphics&) {} // the chassis shows through
 void SynthPage::resized() {
     auto area = getLocalBounds();
     auto right = area.removeFromRight(360);
-    auto top = area.removeFromTop(370);
+    // Reserve the two lower control rows even with the help strip open.
+    auto top = area.removeFromTop(juce::jmin(390, juce::jmax(0, area.getHeight() - 208)));
     map_->setBounds(top);
     // Lower bays share the oscillator row's vertical seams.
     const int oscW = top.getWidth() / 3;
@@ -911,11 +971,11 @@ void SynthPage::resized() {
     }
     sources_[3]->setBounds(area.removeFromLeft(oscW));
     sources_[4]->setBounds(area.removeFromLeft(oscW));
-    stage_->setBounds(area);
-    // Filters and the voice on the right.
+    voice_->setBounds(area);
+    // Both cutoff controls and their shared transfer display occupy one instrument strip.
     for (auto& f : filters_)
-        f->setBounds(right.removeFromTop(136));
-    voice_->setBounds(right);
+        f->setBounds(right.removeFromTop(146));
+    stage_->setBounds(right);
 }
 
 void SynthPage::expandSource(int source) { focusSource(source); }

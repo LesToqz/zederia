@@ -613,19 +613,19 @@ void LibraryPage::newFolder() {
     }), false);
 }
 
-void LibraryPage::paintRowBackground(juce::Graphics& g, int, int width, int height, bool selected) {
-    if (selected) {
-        g.setColour(theme().selection);
-        g.fillRect(0, 0, width, height);
-    }
+void LibraryPage::paintRowBackground(juce::Graphics& g, int row, int width, int height, bool selected) {
+    const auto& t = theme();
+    if (row >= resultCount()) return;
+    g.setColour(selected ? t.selection : row % 2 == 0 ? t.sunken : t.display);
+    g.fillRect(0, 0, width, height);
 }
 
-void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, int height, bool) {
+void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, int height, bool selected) {
     if (row < 0 || row >= resultCount())
         return;
     const Theme& t = theme();
     const auto& p = result(row);
-    const auto box = juce::Rectangle<float>(6.0f, 0.0f, static_cast<float>(width) - 10.0f, static_cast<float>(height));
+    auto box = juce::Rectangle<float>(6.0f, 0.0f, static_cast<float>(width) - 10.0f, static_cast<float>(height));
     juce::String text;
     switch (column) {
     case Fav:
@@ -638,12 +638,23 @@ void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, i
     case Type: text = str(p.meta.type); break;
     case Pack: text = str(p.meta.pack.empty() ? p.folder : p.meta.pack); break;
     case Author: text = str(p.meta.author); break;
-    case Rating: text = p.meta.rating > 0 ? juce::String::repeatedString("*", p.meta.rating) : juce::String("-"); break;
+    case Rating:
+        if (p.meta.rating > 0) {
+            g.setColour(t.lamp);
+            g.fillPath(glyphPath(Glyph::StarFilled, box.removeFromLeft(12.0f).withSizeKeepingCentre(11.0f, 11.0f)));
+            box.removeFromLeft(3.0f);
+            text = juce::String(p.meta.rating) + "/5";
+        } else {
+            text = juce::String::fromUTF8("\xe2\x80\x94");
+        }
+        break;
     case Modified: text = juce::Time(p.fileTime * 1000).formatted("%Y-%m-%d"); break;
     case Origin: text = p.factory ? "Factory" : "Yours"; break;
     default: break;
     }
-    drawText(g, text, box, fittingSize(text, box.getWidth(), kTextSmall + 0.5f), column == Name ? t.text : t.textDim);
+    const bool bold = column == Name && selected;
+    drawText(g, text, box, fittingSize(text, box.getWidth(), column == Name ? kTextBody : kTextSmall + 0.5f, bold),
+             column == Name ? t.text : t.textDim, juce::Justification::centredLeft, bold);
 }
 
 void LibraryPage::sortOrderChanged(int column, bool forwards) { setSort(sortFor(column), !forwards); }

@@ -58,7 +58,6 @@ public:
         for (int m = 0; m < zed::kNumMacros; ++m) {
             auto& knob = parts_.add<Knob>(*this, ctx, reg().macroValue(m), "");
             knob.small = true;
-            knob.showValue = false;
             knob.showLabel = false;
             knob.labelledBy = "Macro " + juce::String(m + 1);
             knob.family = Family::Modulators;
@@ -83,6 +82,7 @@ public:
             const juce::String n = str(list[static_cast<std::size_t>(m)]);
             const juce::String shown = n.isEmpty() ? "Macro " + juce::String(m + 1) : n;
             knobs_[static_cast<std::size_t>(m)]->setTitle(shown);
+            knobs_[static_cast<std::size_t>(m)]->labelledBy = shown;
             chips_[static_cast<std::size_t>(m)]->text = shown;
             chips_[static_cast<std::size_t>(m)]->setTitle(shown + " modulation source");
             chips_[static_cast<std::size_t>(m)]->repaint();
@@ -96,8 +96,9 @@ public:
             auto cell = juce::Rectangle<int>(body.getX() + (m % cols) * (w + gap), body.getY() + (m / cols) * (h + gap), w, h);
             chips_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(20));
             cell.removeFromTop(2);
-            polarity_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromRight(26).withSizeKeepingCentre(26, 16));
-            knobs_[static_cast<std::size_t>(m)]->setBounds(cell.withSizeKeepingCentre(juce::jmin(cell.getWidth(), 40), cell.getHeight()));
+            const auto polarity = cell.removeFromRight(26).withTrimmedBottom(14);
+            polarity_[static_cast<std::size_t>(m)]->setBounds(polarity.withSizeKeepingCentre(26, 18));
+            knobs_[static_cast<std::size_t>(m)]->setBounds(cell);
         }
     }
 
@@ -283,34 +284,67 @@ public:
     void layoutBody(juce::Rectangle<int> body) override {
         auto chipRow = body.removeFromTop(23);
         const int n = static_cast<int>(chips_.size());
-        const int w = (chipRow.getWidth() - (n - 1)) / n;
-        for (auto* c : chips_) {
-            c->setBounds(chipRow.removeFromLeft(w));
-            chipRow.removeFromLeft(1);
+        // Keep the four envelopes, eight LFOs and two Flux generators recognisable as banks.
+        const int usable = juce::jmax(0, chipRow.getWidth() - (n - 1) - 12);
+        for (int i = 0; i < n; ++i) {
+            chips_[static_cast<std::size_t>(i)]->setBounds(chipRow.removeFromLeft(usable * (i + 1) / n - usable * i / n));
+            chipRow.removeFromLeft(i + 1 == zed::kNumEnvs || i + 1 == zed::kNumEnvs + zed::kNumLfos ? 7 : 1);
         }
         body.removeFromTop(5);
-        const auto display = body.removeFromLeft(body.getWidth() * 3 / 8);
-        body.removeFromLeft(12);
         const bool env = selected_.startsWith("env"), lfo = selected_.startsWith("lfo");
         const bool multi = env && isMulti();
+        const bool simple = ctx_.simpleView();
+        const int controlsWidth = multi ? 156 : lfo ? 612 : !env ? 304 : simple ? 350 : 570;
+        const auto display = body.removeFromLeft(juce::jmax(0, body.getWidth() - controlsWidth - 12));
+        body.removeFromLeft(12);
         env_.setVisible(env && !multi);
         multi_.setVisible(multi);
         lfo_.setVisible(lfo);
         scope_.setVisible(!env && !lfo);
         for (juce::Component* c : std::initializer_list<juce::Component*>{&env_, &multi_, &lfo_, &scope_})
             c->setBounds(display);
-        const bool simple = ctx_.simpleView();
         for (auto& [source, items] : controls_)
             for (auto& item : items)
                 if (auto* widget = dynamic_cast<Widget*>(item.c))
-                    widget->setVisible(source == selected_ && shownInView(*widget, simple) && visibleNow(*widget));
-        if (const auto it = controls_.find(selected_); it != controls_.end())
-            flow(body, it->second, kKnobH, 4);
+                    widget->setVisible(source == selected_ && shownInView(*widget, simple) && visibleNow(*widget)
+                                       && (!multi || dynamic_cast<Segmented*>(widget) != nullptr));
+        if (const auto it = controls_.find(selected_); it != controls_.end()) {
+            if (env)
+                layoutEnvelope(body, it->second, simple, multi);
+            else
+                flow(body, it->second, kKnobH, 4);
+        }
     }
 
-    void draw(juce::Graphics& g) override { Card::draw(g); } // the chip on show is the pressed-in one
-
 private:
+    void layoutEnvelope(juce::Rectangle<int> body, const std::vector<FlowItem>& items, bool simple, bool multi) {
+        if (items.size() > 9) {
+            auto row = multi ? body.removeFromTop(kChoiceH) : body.removeFromBottom(kChoiceH);
+            items.back().c->setBounds(row.removeFromLeft(150));
+        }
+        if (multi)
+            return;
+        if (!simple) {
+            auto curves = body.removeFromRight(158);
+            curves = curves.withSizeKeepingCentre(curves.getWidth(), juce::jmin(curves.getHeight(), 96));
+            const int h = curves.getHeight() / 3;
+            for (std::size_t i = 6; i < 9; ++i)
+                items[i].c->setBounds(curves.removeFromTop(h).reduced(0, 1));
+            body.removeFromRight(12);
+        }
+        const int mainWidth = (body.getWidth() - (simple ? 0 : 100)) / 4;
+        const int mainHeight = juce::jmin(body.getHeight(), 91);
+        auto row = body.withSizeKeepingCentre(body.getWidth(), mainHeight);
+        for (std::size_t i = 0; i < 6; ++i) {
+            if (!items[i].c->isVisible())
+                continue;
+            const bool trim = i == 0 || i == 2; // Delay and Hold flank Attack.
+            auto cell = row.removeFromLeft(trim ? 50 : mainWidth);
+            if (trim)
+                cell = cell.removeFromBottom(juce::jmin(mainHeight, kKnobH));
+            items[i].c->setBounds(cell);
+        }
+    }
     bool isMulti() const { return envIndex_ > 0 && ctx_.processor.plainValue(idx("env" + juce::String(envIndex_ + 1) + ".mode")) >= 0.5; }
     CurveEditor* editor() {
         if (selected_.startsWith("lfo"))
@@ -409,10 +443,21 @@ private:
                 k.setHelp(k.getTitle(), k.helpText + " Type a note length (1/8, 1/4T, 3/16) to follow the tempo.");
                 return k;
             };
-            items = {{&timeKnob(0, "Delay", true), kKnobW}, {&timeKnob(1, "Attack", false), kKnobW}, {&timeKnob(2, "Hold", true), kKnobW},
-                     {&timeKnob(3, "Decay", false), kKnobW}, {&knob("sustain", "Sustain"), kKnobW}, {&timeKnob(4, "Release", false), kKnobW},
-                     {&knob("attack_curve", "A curve", true), kKnobW}, {&knob("decay_curve", "D curve", true), kKnobW},
-                     {&knob("release_curve", "R curve", true), kKnobW}};
+            auto& attack = timeKnob(1, "Attack", false);
+            auto& decay = timeKnob(3, "Decay", false);
+            auto& sustain = knob("sustain", "Sustain");
+            auto& release = timeKnob(4, "Release", false);
+            for (auto* stage : {&attack, &decay, &sustain, &release})
+                stage->valueSize = kPrimaryValueText;
+            items = {{&timeKnob(0, "Delay", true)}, {&attack}, {&timeKnob(2, "Hold", true)}, {&decay}, {&sustain}, {&release}};
+            for (const auto& [suffix, label] : {std::pair{"attack_curve", "Attack curve"}, std::pair{"decay_curve", "Decay curve"},
+                                                std::pair{"release_curve", "Release curve"}}) {
+                auto& curve = parts_.add<Fader>(*this, ctx_, (s + "." + suffix).toRawUTF8(), label);
+                curve.labelLeft = false;
+                curve.advanced = true;
+                curve.family = Family::Modulators;
+                items.push_back({&curve});
+            }
             if (env > 0) {
                 auto& mode = parts_.add<Segmented>(*this, ctx_, (s + ".mode").toRawUTF8(), "Mode");
                 mode.names = {"Standard", "Multi"};
@@ -486,7 +531,7 @@ ModDock::~ModDock() = default;
 
 void ModDock::resized() {
     auto area = getLocalBounds();
-    macros_->setBounds(area.removeFromLeft(306));
+    macros_->setBounds(area.removeFromLeft(juce::jlimit(296, 334, (area.getWidth() - 360) / 3)));
     modulators_->setBounds(area);
 }
 

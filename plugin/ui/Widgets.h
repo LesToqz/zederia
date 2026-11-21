@@ -211,7 +211,7 @@ public:
     // it larger. The name is the small legend above it in every case.
     float valueSize = kValueText;
     float labelRow = 13.0f;
-    float trackInset = -1.0f; // from the area's edge to the track; < 0: 5 for small knobs, 7 otherwise
+    float trackInset = -1.0f; // inset from the edge of the dial area; negative uses the standard scale
     float valueRow() const { return valueSize + 3.0f; }
     float radius() const; // of the track, in the knob's area
     juce::Point<float> knobCentre() const { return knobArea().getCentre(); }
@@ -332,7 +332,7 @@ public:
     bool dimText = false;      // the secondary text colour
     // Other looks of the same button. A tab draws only its text (its strip draws the selection) and
     // announces itself as one of a set, selected while toggled. A checkbox draws a box with a
-    // check and its label. A switch draws a sliding pill and its label (a state, not an action).
+    // check and its label. A switch draws a two-position slide and its label.
     // A latch draws a small lamp at its left that is lit while it is toggled.
     bool tab = false, checkbox = false, switchStyle = false, latch = false;
     float textSize = kTextBody;

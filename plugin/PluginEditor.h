@@ -51,6 +51,7 @@ public:
     void showPalette();
     void showPrefs();
     void toggleHistory();
+    void toggleOutputMonitor();
     void setModMap(bool shown);
     bool modMapShown() const { return modMap_.isVisible(); }
     void openParamMenu(zui::ParamWidget& widget);
@@ -109,6 +110,8 @@ private:
     std::unique_ptr<Root> root_;
     std::unique_ptr<zui::TopBar> topBar_;
     std::unique_ptr<zui::OutputPanel> output_;
+    std::unique_ptr<zui::OutputMonitor> monitor_;
+    std::unique_ptr<zui::Nameplate> nameplate_;
     std::unique_ptr<zui::TabStrip> tabs_;
     zui::Button simpleButton_{"Simple"}, mapButton_{"Mod map", zui::Glyph::Map}, findButton_{"Find", zui::Glyph::Search},
         prefsButton_{"", zui::Glyph::Gear};

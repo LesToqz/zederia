@@ -182,6 +182,26 @@ TEST_CASE("plug-in: the on-screen keyboard plays notes", "[plugin]") {
     CHECK(host.peak(end) == 0.0f);
 }
 
+TEST_CASE("plug-in: the display history matches the stereo output across ring wraps", "[plugin][output-monitor]") {
+    Host host;
+    std::array<float, 8192> history;
+    history.fill(1.0f);
+    REQUIRE(host.processor.readOutput(history.data(), static_cast<int>(history.size())) == history.size());
+    CHECK(std::all_of(history.begin(), history.end(), [](float v) { return v == 0.0f; }));
+
+    host.processor.session().setValue(idx("osc1.pan"), 0.7);
+    host.midi.addEvent(juce::MidiMessage::noteOn(1, 55, 0.8f), 0);
+    std::vector<float> expected;
+    for (int block = 0; block < 33; ++block) {
+        host.run();
+        for (int i = 0; i < host.buffer.getNumSamples(); ++i)
+            expected.push_back(0.5f * (host.buffer.getSample(0, i) + host.buffer.getSample(1, i)));
+    }
+    REQUIRE(host.peak() > 0.01f);
+    REQUIRE(host.processor.readOutput(history.data(), static_cast<int>(history.size())) == history.size());
+    CHECK(std::equal(history.begin(), history.end(), expected.end() - history.size()));
+}
+
 TEST_CASE("plug-in: host MIDI is sample-accurate and the callback is real-time safe", "[plugin][rt]") {
     rt::resetViolations();
     Host host;

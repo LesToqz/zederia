@@ -7,22 +7,82 @@ namespace zui {
 
 // --- TopBar ------------------------------------------------------------------------------------------
 
-OutputPanel::OutputPanel(Context& ctx) : meter(ctx) {
+OutputPanel::OutputPanel(Context& ctx) : scope(ctx), meter(ctx) {
     setTitle("Output");
     meter.vertical = true;
     master = std::make_unique<Knob>(ctx, "global.master", "Master");
-    master->valueSize = kValueText;
-    master->labelRow = 12.0f;
-    master->trackInset = 3.5f; // a cap of about 23 px at 100 %
+    master->valueSize = kPrimaryValueText;
+    master->labelRow = 13.0f;
+    master->trackInset = 2.0f;
+    addAndMakeVisible(scope);
     addAndMakeVisible(meter);
     addAndMakeVisible(*master);
 }
 
 void OutputPanel::resized() {
-    auto area = getLocalBounds();
-    meter.setBounds(area.removeFromLeft(14).withSizeKeepingCentre(14, juce::jmin(area.getHeight() - 6, 56)));
-    area.removeFromLeft(4);
-    master->setBounds(area);
+    auto area = getLocalBounds().reduced(4, 0);
+    master->setBounds(area.removeFromRight(62));
+    area.removeFromRight(3);
+    meter.setBounds(area.removeFromRight(15).reduced(0, 5));
+    area.removeFromRight(7);
+    scope.setBounds(area.reduced(0, 3));
+}
+
+Nameplate::Nameplate(Context& ctx) : ctx_(ctx), polyParam_(zed::Registry::get().indexOf("global.polyphony")),
+                                      modeParam_(zed::Registry::get().indexOf("global.mode")) {
+    setTitle("Zederia voices");
+    setHelp("Voice allocation", "Sounding voices, including releases, and the current voice limit.");
+    tick();
+}
+
+bool Nameplate::tick() {
+    const int active = ctx_.processor.activeVoices();
+    const int limit = ctx_.processor.plainValue(modeParam_) < 0.5 ? juce::roundToInt(ctx_.processor.plainValue(polyParam_)) : 1;
+    if (active == active_ && limit == polyphony_)
+        return false;
+    active_ = active;
+    polyphony_ = limit;
+    return true;
+}
+
+void Nameplate::draw(juce::Graphics& g) {
+    const auto bounds = getLocalBounds();
+    const auto& t = theme();
+    plate_.draw(g, bounds, 0, true, [&](juce::Graphics& pg) {
+        drawPanel(pg, bounds.toFloat(), t.bg);
+        // Seven engraved letterforms share the same angled cuts as the shoulder of the Z.
+        juce::Path z, letters;
+        z.startNewSubPath(0, 0); z.lineTo(21, 0); z.lineTo(21, 3); z.lineTo(7, 15); z.lineTo(21, 15);
+        z.lineTo(18, 18); z.lineTo(0, 18); z.lineTo(0, 15); z.lineTo(14, 3); z.lineTo(0, 3); z.closeSubPath();
+        const auto e = [&](float x) {
+            letters.startNewSubPath(x + 11, 0); letters.lineTo(x, 0); letters.lineTo(x, 16); letters.lineTo(x + 11, 16);
+            letters.startNewSubPath(x, 8); letters.lineTo(x + 8, 8);
+        };
+        e(28);
+        letters.startNewSubPath(45, 0); letters.lineTo(53, 0); letters.lineTo(58, 4); letters.lineTo(58, 12);
+        letters.lineTo(53, 16); letters.lineTo(45, 16); letters.closeSubPath();
+        e(64);
+        letters.startNewSubPath(81, 16); letters.lineTo(81, 0); letters.lineTo(91, 0); letters.lineTo(94, 3);
+        letters.lineTo(94, 6); letters.lineTo(91, 9); letters.lineTo(82, 9);
+        letters.startNewSubPath(88, 9); letters.lineTo(95, 16);
+        letters.startNewSubPath(101, 0); letters.lineTo(101, 16);
+        letters.startNewSubPath(107, 16); letters.lineTo(113, 0); letters.lineTo(116, 0); letters.lineTo(122, 16);
+        letters.startNewSubPath(110, 10); letters.lineTo(119, 10);
+        const auto place = juce::AffineTransform::translation(bounds.getCentreX() - 61.0f, 15.0f);
+        pg.setColour(t.lamp);
+        pg.fillPath(z, place);
+        pg.setColour(t.text);
+        pg.strokePath(letters, juce::PathStrokeType(2.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::square), place.translated(0.0f, 1.0f));
+    });
+    auto readout = bounds.toFloat().reduced(14.0f, 0.0f).removeFromBottom(27.0f).withHeight(17.0f);
+    drawText(g, "VOICES", readout.removeFromLeft(42.0f), kTextSmall, t.textDim, juce::Justification::centredLeft, true);
+    const auto count = readout.removeFromRight(40.0f);
+    drawText(g, juce::String(active_) + " / " + juce::String(polyphony_), count, kTextSmall, t.text, juce::Justification::centredRight);
+    const int lit = (active_ * 8 + polyphony_ - 1) / std::max(1, polyphony_);
+    for (int i = 0; i < 8; ++i) {
+        g.setColour(i < lit ? t.lamp : t.line);
+        g.fillRect(readout.getX() + i * 4.0f, readout.getCentreY() - 2.0f, 2.5f, 4.0f);
+    }
 }
 
 TopBar::TopBar(Context& ctx) : ctx_(ctx) {
@@ -56,7 +116,8 @@ TopBar::TopBar(Context& ctx) : ctx_(ctx) {
     for (Button* b : {&menu, &prev, &next, &history})
         b->ghost = true;
     presetName.ghost = true;
-    presetName.textSize = kTextTitle;
+    presetName.textSize = kTextLarge;
+    presetName.boldText = true;
     abA.onClick = [this] {
         if (ctx_.session.abSide() != 0)
             ctx_.session.switchAB();
@@ -117,30 +178,28 @@ bool TopBar::tick() {
 }
 
 void TopBar::resized() {
-    auto area = getLocalBounds().reduced(8, 6);
+    auto area = getLocalBounds().reduced(6, 5);
     menu.setBounds(area.removeFromLeft(28));
-    area.removeFromLeft(6);
-    prev.setBounds(area.removeFromLeft(22));
-    presetName.setBounds(area.removeFromLeft(264));
-    next.setBounds(area.removeFromLeft(22));
-    area.removeFromLeft(4);
-    save.setBounds(area.removeFromLeft(62));
-    area.removeFromLeft(8);
-    history.setBounds(area.removeFromLeft(26));
-    area.removeFromLeft(14);
-    abA.setBounds(area.removeFromLeft(28));
-    area.removeFromLeft(2);
-    abB.setBounds(area.removeFromLeft(28));
-    area.removeFromLeft(4);
-    abCopy.setBounds(area.removeFromLeft(44));
-    // From the right (the output has a column of its own beyond the bar): agent, FX off, CPU, quality.
-    agent.setBounds(area.removeFromRight(62));
-    area.removeFromRight(8);
-    fxOff->setBounds(area.removeFromRight(76));
-    area.removeFromRight(8);
-    cpuText.setBounds(area.removeFromRight(76));
+    area.removeFromLeft(5);
+    agent.setBounds(area.removeFromRight(57));
     area.removeFromRight(6);
-    quality->setBounds(area.removeFromRight(96));
+    fxOff->setBounds(area.removeFromRight(68));
+    area.removeFromRight(4);
+    cpuText.setBounds(area.removeFromRight(76));
+    area.removeFromRight(4);
+    quality->setBounds(area.removeFromRight(82));
+    area.removeFromRight(12);
+    abCopy.setBounds(area.removeFromRight(40));
+    area.removeFromRight(2);
+    abB.setBounds(area.removeFromRight(27));
+    abA.setBounds(area.removeFromRight(27));
+    area.removeFromRight(8);
+    history.setBounds(area.removeFromRight(26));
+    save.setBounds(area.removeFromRight(60));
+    area.removeFromRight(5);
+    prev.setBounds(area.removeFromLeft(25));
+    next.setBounds(area.removeFromRight(25));
+    presetName.setBounds(area);
 }
 
 void TopBar::paint(juce::Graphics&) {} // the editor's cached header draws the plate and the preset window behind

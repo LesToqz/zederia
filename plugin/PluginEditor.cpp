@@ -52,6 +52,10 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
 
     topBar_ = std::make_unique<TopBar>(ctx_);
     output_ = std::make_unique<OutputPanel>(ctx_);
+    nameplate_ = std::make_unique<Nameplate>(ctx_);
+    monitor_ = std::make_unique<OutputMonitor>(ctx_, output_->scope);
+    output_->scope.onClick = [this] { toggleOutputMonitor(); };
+    monitor_->close.onClick = [this] { toggleOutputMonitor(); };
     tabs_ = std::make_unique<TabStrip>(pageNames());
     tabs_->large = true;
     tabs_->setTitle("Pages");
@@ -64,10 +68,10 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     palette_ = std::make_unique<CommandPalette>(ctx_);
     prefs_ = std::make_unique<PrefsPanel>(ctx_);
     history_ = std::make_unique<HistoryPanel>(ctx_);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), output_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
+    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), output_.get(), nameplate_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
                                                                        &prefsButton_, dock_.get(), keys_.get(), help_.get()})
         root_->addAndMakeVisible(c);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get()})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get(), monitor_.get()})
         root_->addChildComponent(c);
 
     simpleButton_.toggleRole = true;
@@ -175,41 +179,7 @@ void ZederiaEditor::paintHeader(juce::Graphics& g) {
     drawChassis(g, juce::Rectangle<float>(static_cast<float>(kBaseWidth), static_cast<float>(kHeaderHeight)));
     const auto header = juce::Rectangle<int>(0, 4, kBaseWidth, kHeaderHeight - 4).reduced(kChassisInset, 0).toFloat();
     drawPanel(g, header, t.raised);
-    const auto logo = header.withWidth(static_cast<float>(kLogoWidth));
-    drawPanel(g, logo, t.bg);
-    // A groove sets the output (meter and Master) apart from the preset bar and the page tabs.
-    const float groove = static_cast<float>(kBaseWidth - 14 - kOutputWidth - 5);
-    g.setColour(juce::Colours::black.withAlpha(0.45f));
-    g.fillRect(groove, header.getY() + 8.0f, 1.0f, header.getHeight() - 16.0f);
-    g.setColour(juce::Colours::white.withAlpha(0.05f));
-    g.fillRect(groove + 1.0f, header.getY() + 8.0f, 1.0f, header.getHeight() - 16.0f);
-    // The wordmark, spaced out, over a small wave that turns from sine to saw.
-    const juce::String word = "ZEDERIA";
-    const juce::Font mark = font(19.0f / textScale(), true); // the wordmark is artwork: the text size leaves it alone
-    float width = 0.0f;
-    for (int i = 0; i < word.length(); ++i)
-        width += juce::GlyphArrangement::getStringWidth(mark, word.substring(i, i + 1)) + (i + 1 < word.length() ? 3.0f : 0.0f);
-    float x = logo.getCentreX() - width * 0.5f;
-    const float y = logo.getY() + 11.0f;
-    g.setFont(mark);
-    for (int i = 0; i < word.length(); ++i) {
-        const juce::String ch = word.substring(i, i + 1);
-        const float w = juce::GlyphArrangement::getStringWidth(mark, ch);
-        g.setColour(juce::Colours::black.withAlpha(0.6f));
-        g.drawText(ch, juce::Rectangle<float>(x, y + 1.0f, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
-        g.setColour(t.displayLine);
-        g.drawText(ch, juce::Rectangle<float>(x, y, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
-        x += w + 3.0f;
-    }
-    juce::Path wave;
-    const float wy = logo.getBottom() - 16.0f, wx0 = logo.getX() + 22.0f, wx1 = logo.getRight() - 22.0f;
-    for (int i = 0; i <= 64; ++i) {
-        const float u = static_cast<float>(i) / 64.0f;
-        const float shape = std::sin(u * juce::MathConstants<float>::twoPi * 3.0f) * (1.0f - u) + (std::fmod(u * 3.0f, 1.0f) * 2.0f - 1.0f) * u;
-        const juce::Point<float> p(wx0 + (wx1 - wx0) * u, wy - shape * 5.0f);
-        if (i == 0) wave.startNewSubPath(p); else wave.lineTo(p);
-    }
-    strokeGlow(g, wave, t.sources, 1.3f); // the wordmark's warm detail
+    drawPanel(g, header.withTrimmedLeft(header.getWidth() - kOutputWidth), t.bg);
 }
 
 void ZederiaEditor::resized() {
@@ -230,11 +200,11 @@ void ZederiaEditor::applyLayout() {
     auto area = root_->getLocalBounds();
     // Header: the logo, then the preset bar over the page tabs, and the output (meter and Master)
     // in a column of its own at the right, as tall as both rows.
-    auto header = area.removeFromTop(kHeaderHeight).withTrimmedLeft(kLogoWidth + 6).withTrimmedRight(14);
-    output_->setBounds(header.removeFromRight(kOutputWidth).withTrimmedTop(6).withTrimmedBottom(4));
-    header.removeFromRight(10);
-    topBar_->setBounds(header.removeFromTop(kTopBarHeight + 4).withTrimmedTop(4));
-    auto tabRow = header.removeFromTop(kTabsHeight - 2);
+    auto header = area.removeFromTop(kHeaderHeight).reduced(kChassisInset, 0).withTrimmedTop(4);
+    nameplate_->setBounds(header.removeFromLeft(kLogoWidth));
+    output_->setBounds(header.removeFromRight(kOutputWidth).reduced(2, 2));
+    topBar_->setBounds(header.removeFromTop(kTopBarHeight));
+    auto tabRow = header.reduced(0, 1);
     // A hidden help strip still shows messages ("Saved ...", errors) over the bottom edge for a few seconds.
     help_->messageOnly = !ctx_.prefs.helpStrip;
     help_->setVisible(ctx_.prefs.helpStrip || help_->showingMessage());
@@ -269,6 +239,7 @@ void ZederiaEditor::applyLayout() {
     palette_->setBounds(juce::Rectangle<int>(560, 420).withCentre(root_->getLocalBounds().getCentre()).withY(80));
     prefs_->setBounds(juce::Rectangle<int>(520, 640).withCentre(root_->getLocalBounds().getCentre()));
     history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330 + kLogoWidth, kHeaderHeight - 30));
+    monitor_->setBounds(area.getRight() - 714, kHeaderHeight, 714, 254);
     if (isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
     applyRenderer();
@@ -391,6 +362,7 @@ void ZederiaEditor::showPage(int id) {
     if (id < tabs_->count())
         tabs_->setSelected(id, false);
     hoverList_->setVisible(false);
+    monitor_->setVisible(false);
     modMap_.repaint();
     saveUiState();
 }
@@ -440,8 +412,23 @@ bool ZederiaEditor::revealParam(int index) {
 // --- Overlays ----------------------------------------------------------------------------------------
 
 void ZederiaEditor::closeOverlays() {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{palette_.get(), prefs_.get(), history_.get(), hoverList_.get()})
+    const bool returnToScope = monitor_->isVisible() && monitor_->hasKeyboardFocus(true);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{palette_.get(), prefs_.get(), history_.get(), hoverList_.get(), monitor_.get()})
         c->setVisible(false);
+    if (returnToScope && isShowing())
+        output_->scope.grabKeyboardFocus();
+}
+
+void ZederiaEditor::toggleOutputMonitor() {
+    const bool show = !monitor_->isVisible();
+    const bool keyboard = output_->scope.hasKeyboardFocus(false);
+    closeOverlays();
+    if (show) {
+        monitor_->setVisible(true);
+        monitor_->toFront(false);
+        if (keyboard && isShowing())
+            monitor_->close.grabKeyboardFocus();
+    }
 }
 
 void ZederiaEditor::showPalette() {
@@ -489,6 +476,7 @@ std::vector<CommandPalette::Entry> ZederiaEditor::paletteEntries() {
     action("Undo", "Ctrl+Z", [this] { ctx_.session.undo(); });
     action("Redo", "Ctrl+Shift+Z", [this] { ctx_.session.redo(); });
     action("Show history", "every change by name", [this] { toggleHistory(); });
+    action("Output monitor", "waveform, spectrum and reference trace", [this] { toggleOutputMonitor(); });
     action("Init", "start from the init sound", [this] { ctx_.session.initPatch(); });
     action("Save preset", "Ctrl+S", [this] { savePresetAs(); });
     action("Compare: switch A and B", "Ctrl+B", [this] { ctx_.session.switchAB(); });
@@ -1027,6 +1015,8 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
         tickTree(*pages_[static_cast<std::size_t>(current_)], dirty);
     tickTree(*topBar_, dirty);
     tickTree(*output_, dirty);
+    tickTree(*nameplate_, dirty);
+    tickTree(*monitor_, dirty);
     if (topBar_->tick())
         dirty.push_back(getLocalArea(&topBar_->cpuText, topBar_->cpuText.getLocalBounds()));
     // The fixed layers under the page.

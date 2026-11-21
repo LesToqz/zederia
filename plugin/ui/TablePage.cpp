@@ -154,7 +154,7 @@ public:
     bool snap = true;
     double paintMs = 0.0; // the last paint's cost (the workshop's feedback, plan 5.8)
 
-    juce::Rectangle<float> plot() const { return getLocalBounds().toFloat().reduced(6.0f); }
+    juce::Rectangle<float> plot() const { return getLocalBounds().toFloat().reduced(10.0f, 0.0f).withTrimmedTop(25.0f).withTrimmedBottom(20.0f); }
     juce::Point<double> toWave(juce::Point<float> p) const {
         const auto a = plot();
         return {juce::jlimit(0.0, 1.0, static_cast<double>((p.x - a.getX()) / a.getWidth())),
@@ -168,9 +168,11 @@ public:
         const Theme& t = theme();
         const auto area = plot();
         drawWell(g, getLocalBounds().toFloat());
-        g.setColour(t.displayGrid);
-        for (int i = 1; i < gridX; ++i)
+        for (int i = 1; i < gridX; ++i) {
+            g.setColour(i * 4 % gridX == 0 ? t.lineStrong : t.displayGrid);
             g.fillRect(area.getX() + area.getWidth() * static_cast<float>(i) / static_cast<float>(gridX), area.getY(), 1.0f, area.getHeight());
+        }
+        g.setColour(t.displayGrid);
         for (int i = 1; i < gridY; ++i)
             g.fillRect(area.getX(), area.getCentreY() + (static_cast<float>(i) - static_cast<float>(gridY) / 2.0f) * area.getHeight() * 0.92f / static_cast<float>(gridY),
                        area.getWidth(), 1.0f);
@@ -184,8 +186,22 @@ public:
                 g.setColour(t.sources.withAlpha(0.35f));
                 g.strokePath(framePath(table.frames[static_cast<std::size_t>(n)], area, points), juce::PathStrokeType(1.0f));
             }
-        if (f >= 0 && f < table.size()) // the frame being drawn on, over its amber neighbours
-            strokeGlow(g, framePath(table.frames[static_cast<std::size_t>(f)], area, points), t.displayLine, 1.8f);
+        if (f >= 0 && f < table.size()) {
+            const auto wave = framePath(table.frames[static_cast<std::size_t>(f)], area, points);
+            auto lobes = wave;
+            lobes.lineTo(area.getRight(), area.getCentreY());
+            lobes.lineTo(area.getX(), area.getCentreY());
+            lobes.closeSubPath();
+            g.setColour(t.displayLine.withAlpha(0.08f));
+            g.fillPath(lobes);
+            strokeGlow(g, wave, t.displayLine, 1.8f);
+        }
+        for (int q = 0; q <= 4; ++q) {
+            const float x = area.getX() + area.getWidth() * static_cast<float>(q) / 4.0f;
+            const auto label = juce::Rectangle<float>(juce::jlimit(area.getX(), area.getRight() - 40.0f, x - 20.0f), area.getBottom(), 40.0f, 16.0f);
+            const auto align = q == 0 ? juce::Justification::centredLeft : q == 4 ? juce::Justification::centredRight : juce::Justification::centred;
+            drawText(g, juce::String(q * 90) + juce::String::fromUTF8("\xc2\xb0"), label, kTextSmall, t.textDim, align);
+        }
         if (dragging_ && tool != Tool::Free && tool != Tool::Nudge && tool != Tool::Noise) {
             g.setColour(t.focus.withAlpha(0.5f));
             const auto a = toScreen(start_), b = toScreen(last_);
@@ -203,12 +219,16 @@ public:
     }
     void mouseDown(const juce::MouseEvent& e) override {
         grabKeyboardFocus();
+        if (!plot().contains(e.position))
+            return;
         dragging_ = true;
         start_ = last_ = toWave(e.position);
         if (tool == Tool::Free)
             stroke(start_, start_);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
+        if (!dragging_)
+            return;
         const auto now = toWave(e.position);
         if (tool == Tool::Free) {
             stroke(last_, now);
@@ -297,11 +317,12 @@ public:
     }
     // Each half has a strip for its label above its bars, so no bar covers a label.
     struct Layout {
-        juce::Rectangle<float> levelLabel, level, phaseLabel, phase;
+        juce::Rectangle<float> levelLabel, level, phaseLabel, phase, ruler;
     };
     Layout layout() const {
         auto inner = getLocalBounds().toFloat().reduced(8.0f);
         Layout l;
+        l.ruler = inner.removeFromBottom(17.0f);
         l.level = inner.removeFromTop(inner.getHeight() * 0.62f);
         l.levelLabel = l.level.removeFromTop(16.0f);
         inner.removeFromTop(6.0f);
@@ -319,16 +340,46 @@ public:
         double peak = 1e-9;
         for (int k = 1; k <= count; ++k)
             peak = std::max(peak, h_.magnitude[static_cast<std::size_t>(k)]);
+        const int stride = count / 8;
+        g.setColour(t.displayGrid);
+        for (int n = stride; n < count; n += stride) {
+            const float x = top.getX() + w * n;
+            g.drawVerticalLine(juce::roundToInt(x), top.getY(), top.getBottom());
+            g.drawVerticalLine(juce::roundToInt(x), inner.getY(), inner.getBottom());
+        }
+        for (int n = 1; n <= count; ++n)
+            if (n == 1 || n % stride == 0) {
+                const float centre = top.getX() + w * (n - 0.5f);
+                const float x = juce::jlimit(top.getX(), top.getRight() - 32.0f, centre - 16.0f);
+                auto align = n == 1 ? juce::Justification::centredLeft : n == count ? juce::Justification::centredRight : juce::Justification::centred;
+                drawText(g, juce::String(n), l.ruler.withX(x).withWidth(32.0f), kTextSmall, t.textDim, align);
+            }
         for (int k = 1; k <= count; ++k) {
             const float m = static_cast<float>(h_.magnitude[static_cast<std::size_t>(k)] / peak);
-            const auto bar = juce::Rectangle<float>(top.getX() + w * static_cast<float>(k - 1) + 1.0f, top.getBottom() - top.getHeight() * m, w - 2.0f,
+            const float gap = std::min(2.0f, w * 0.25f);
+            const auto bar = juce::Rectangle<float>(top.getX() + w * static_cast<float>(k - 1) + gap * 0.5f, top.getBottom() - top.getHeight() * m, w - gap,
                                                     top.getHeight() * m);
-            g.setColour(t.sources.withAlpha(k % 2 == 1 ? 0.95f : 0.7f));
+            const bool editable = parity == 0 || (parity == 1) == (k % 2 == 1);
+            g.setColour(t.sources.withAlpha(!editable ? 0.22f : k % 2 == 1 ? 0.65f : 0.45f));
             g.fillRect(bar);
+            if (bar.getHeight() >= 1.0f) {
+                g.setColour(editable ? t.sources : t.lineStrong);
+                g.fillRect(bar.withHeight(1.0f));
+            }
             const float ph = static_cast<float>(h_.phase[static_cast<std::size_t>(k)] / zed::kPi);
             const float y = inner.getCentreY() - ph * inner.getHeight() * 0.5f;
             g.setColour(t.control.withAlpha(m > 1e-4f ? 0.7f : 0.2f)); // phase: steel under the amber levels
-            g.fillRect(juce::Rectangle<float>(inner.getX() + w * static_cast<float>(k - 1) + 1.0f, std::min(y, inner.getCentreY()), w - 2.0f, std::abs(y - inner.getCentreY()) + 1.0f));
+            g.fillRect(juce::Rectangle<float>(bar.getX(), std::min(y, inner.getCentreY()), bar.getWidth(), std::abs(y - inner.getCentreY()) + 1.0f));
+        }
+        if (hovered_ > 0 && hovered_ <= count) {
+            const auto k = static_cast<std::size_t>(hovered_);
+            const float x = top.getX() + (hovered_ - 1) * w;
+            g.setColour(t.displayLine.withAlpha(0.13f));
+            g.fillRect(juce::Rectangle<float>(x, top.getY(), w, top.getHeight()));
+            g.fillRect(juce::Rectangle<float>(x, inner.getY(), w, inner.getHeight()));
+            const auto readout = "H" + juce::String(hovered_) + "    " + juce::String(100.0 * h_.magnitude[k] / peak, 1)
+                               + "% of peak    " + juce::String(juce::roundToInt(180.0 * h_.phase[k] / zed::kPi)) + juce::String::fromUTF8("\xc2\xb0");
+            drawText(g, readout, l.phaseLabel.withTrimmedRight(80.0f), kTextSmall, t.text);
         }
         g.setColour(t.lineStrong);
         g.fillRect(inner.getX(), inner.getCentreY(), inner.getWidth(), 1.0f);
@@ -338,19 +389,30 @@ public:
                  l.levelLabel.withWidth(220.0f), kTextSmall, t.textDim);
         drawFocus(g, area);
     }
+    void mouseMove(const juce::MouseEvent& e) override {
+        const auto l = layout();
+        const int bin = l.level.contains(e.position) || l.phase.contains(e.position) ? harmonicAt(e.position.x, l.level) : 0;
+        if (hovered_ != bin) { hovered_ = bin; repaint(); }
+    }
+    void mouseExit(const juce::MouseEvent&) override { hovered_ = 0; repaint(); }
     void mouseDown(const juce::MouseEvent& e) override {
         grabKeyboardFocus();
         if (e.mods.isPopupMenu()) {
             showMenu();
             return;
         }
+        const auto l = layout();
+        editing_ = l.level.contains(e.position) || l.phase.contains(e.position);
+        if (!editing_) return;
+        dragPhase_ = l.phase.contains(e.position);
         mouseDrag(e);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
-        const auto area = getLocalBounds().toFloat().reduced(8.0f);
+        if (!editing_) return;
         const Layout l = layout();
         const auto top = l.level, bottom = l.phase;
-        const int k = juce::jlimit(1, count, static_cast<int>((e.position.x - area.getX()) / (area.getWidth() / static_cast<float>(count))) + 1);
+        const int k = harmonicAt(e.position.x, top);
+        hovered_ = k;
         if ((parity == 1 && k % 2 == 0) || (parity == 2 && k % 2 == 1))
             return;
         double peak = 1e-9;
@@ -358,12 +420,10 @@ public:
             peak = std::max(peak, h_.magnitude[static_cast<std::size_t>(i)]);
         if (peak < 1e-6)
             peak = 0.5;
-        if (e.position.y < l.phaseLabel.getY() || (!dragPhase_ && e.getMouseDownY() < static_cast<int>(l.phaseLabel.getY()))) {
-            dragPhase_ = false;
+        if (!dragPhase_) {
             const double level = juce::jlimit(0.0, 1.0, static_cast<double>((top.getBottom() - e.position.y) / top.getHeight()));
             h_.magnitude[static_cast<std::size_t>(k)] = level * peak;
         } else {
-            dragPhase_ = true;
             h_.phase[static_cast<std::size_t>(k)] = juce::jlimit(-zed::kPi, zed::kPi, static_cast<double>((bottom.getCentreY() - e.position.y) / (bottom.getHeight() * 0.5f)) * zed::kPi);
         }
         const auto harmonics = h_;
@@ -375,9 +435,9 @@ public:
         repaint();
     }
     void mouseUp(const juce::MouseEvent& e) override {
-        if (!e.mods.isPopupMenu())
+        if (editing_ && !e.mods.isPopupMenu())
             page_.finish(dragPhase_ ? "Draw phases" : "Draw harmonics");
-        dragPhase_ = false;
+        editing_ = false;
     }
     void showMenu() {
         juce::PopupMenu menu;
@@ -423,7 +483,11 @@ public:
 private:
     TablePage& page_;
     zed::Harmonics h_;
-    bool dragPhase_ = false;
+    int harmonicAt(float x, juce::Rectangle<float> plot) const {
+        return juce::jlimit(1, count, static_cast<int>((x - plot.getX()) / plot.getWidth() * count) + 1);
+    }
+    int hovered_ = 0;
+    bool editing_ = false, dragPhase_ = false;
 };
 
 // --- Spectral view -------------------------------------------------------------------------------------

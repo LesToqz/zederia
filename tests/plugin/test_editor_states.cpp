@@ -155,6 +155,56 @@ double peakLuminance(const juce::Image& image, juce::Rectangle<int> area) {
 
 } // namespace
 
+TEST_CASE("editor: the output monitor compares a held trace without changing the patch", "[editor][output-monitor]") {
+    Rig rig;
+    auto& scope = rig.editor->output().scope;
+    const auto monitors = all<zui::OutputMonitor>(*rig.editor);
+    REQUIRE(monitors.size() == 1);
+    auto& monitor = *monitors.front();
+    const auto patch = rig.processor.patchJson(true);
+    rig.frames(3);
+    CHECK_FALSE(scope.hasSignal());
+    const juce::KeyPress enter(juce::KeyPress::returnKey);
+    CHECK(scope.keyPressed(enter));
+    CHECK(monitor.isVisible());
+    zui::Button *capture = nullptr, *clear = nullptr, *zoom = nullptr;
+    for (auto* button : all<zui::Button>(monitor)) {
+        if (button->getTitle() == "Capture reference") capture = button;
+        if (button->getTitle() == "Clear reference") clear = button;
+        if (button->getTitle() == "4x zoom") zoom = button;
+    }
+    REQUIRE(capture != nullptr);
+    REQUIRE(clear != nullptr);
+    REQUIRE(zoom != nullptr);
+    CHECK_FALSE(capture->isEnabled());
+    rig.midi.addEvent(juce::MidiMessage::noteOn(1, 48, 0.9f), 0);
+    rig.frames(10);
+    REQUIRE(capture->isEnabled());
+    CHECK(capture->keyPressed(enter));
+    REQUIRE(scope.hasReference());
+    const auto heldPeak = scope.peakText(true);
+    CHECK(heldPeak == scope.peakText(false));
+    rig.midi.addEvent(juce::MidiMessage::noteOff(1, 48), 0);
+    rig.midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.6f), 0);
+    rig.frames(12);
+    CHECK(zoom->keyPressed(enter));
+    CHECK(zoom->toggled());
+    rig.snapshot("output_reference");
+    CHECK(scope.peakText(true) == heldPeak);
+    rig.editor->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+    CHECK_FALSE(monitor.isVisible());
+    rig.editor->showPage(ZederiaEditor::Table);
+    scope.onClick();
+    CHECK(monitor.isVisible());
+    CHECK(scope.hasReference());
+    CHECK(clear->keyPressed(enter));
+    CHECK_FALSE(scope.hasReference());
+    CHECK_FALSE(clear->isEnabled());
+    monitor.close.onClick();
+    CHECK_FALSE(monitor.isVisible());
+    CHECK(rig.processor.patchJson(true) == patch);
+}
+
 TEST_CASE("editor: a module that is off reads as off without colour, stays editable and follows host automation", "[editor][power]") {
     Rig rig; // Init: OSC 1 on, OSC 2 and 3 off, both filters off
     rig.editor->showPage(ZederiaEditor::Synth);
@@ -497,6 +547,12 @@ TEST_CASE("editor: the workshop keeps the frame and the drawing shape in view th
     CHECK(buttons[8]->latch); // Snap
     CHECK(buttons[8]->toggled());
     CHECK(buttons[9]->text() == "Grid 16");
+    const auto beforeRulerDrag = table.table().frames[0];
+    auto& wave = table.waveEditor();
+    wave.mouseDown(mouse(wave, {40.0f, static_cast<float>(wave.getHeight() - 2)}));
+    wave.mouseDrag(mouse(wave, {120.0f, 80.0f}));
+    wave.mouseUp(mouse(wave, {120.0f, 80.0f}));
+    CHECK(table.table().frames[0] == beforeRulerDrag);
     table.setFrame(1);
     buttons[3]->onClick(); // Ramp up
     CHECK(table.toolName() == "Ramp up");

@@ -105,12 +105,9 @@ public:
     }
     void draw(juce::Graphics& g) override {
         const Theme& t = theme();
-        auto area = getLocalBounds().toFloat().reduced(0.5f);
+        auto area = getLocalBounds().toFloat();
         const bool selected = page_.selectedLane() == lane_ && page_.selectedSlot() == slot_;
-        g.setColour(selected ? t.selection : isMouseOver() ? t.raised.brighter(0.05f) : t.raised);
-        g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(selected ? t.control.withAlpha(0.75f) : t.line); // the edited slot: a neutral edge
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        drawPanel(g, area, selected ? t.selection : isMouseOver() ? t.raised : t.sunken);
         auto inner = area.reduced(6.0f, 0.0f);
         g.setColour(t.textDim);
         g.fillPath(glyphPath(Glyph::Grip, inner.removeFromLeft(8.0f).withSizeKeepingCentre(8.0f, 12.0f)));
@@ -134,7 +131,7 @@ public:
         const juce::String mix = on ? juce::String(juce::roundToInt(mix_ * 100.0)) + " %" : juce::String("off");
         drawText(g, mix, inner.removeFromRight(40.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
         const juce::String name = effectName(type_) + ((state_ & 2) && on ? "  idle" : "");
-        drawText(g, name, inner, fittingSize(name, inner.getWidth(), kTextBody), on ? t.text : t.textDim);
+        drawText(g, name, inner, fittingSize(name, inner.getWidth(), kTextBody, selected), on ? t.text : t.textDim, juce::Justification::centredLeft, selected);
         drawFocus(g, getLocalBounds().toFloat());
     }
     void mouseDown(const juce::MouseEvent& e) override {
@@ -553,7 +550,13 @@ public:
             drawPlate(bg, area.withWidth(122.0f).reduced(1.0f));
         });
         const bool on = ctx_.processor.plainValue(reg().fxSlotOn(lane_, slot_)) >= 0.5;
-        drawText(g, effectName(type_).toUpperCase(), juce::Rectangle<float>(36.0f, 10.0f, 82.0f, 20.0f), fittingSize(effectName(type_).toUpperCase(), 82.0f, kTextBody, true), on ? t.text : t.textDim,
+        const bool selected = page_.selectedLane() == lane_ && page_.selectedSlot() == slot_;
+        // Match the nameplate on the unit to the selected row in the chain. The controls keep
+        // their native plate and a long rack keeps its horizontal seams.
+        if (selected)
+            drawPanel(g, area.withWidth(122.0f).reduced(1.0f), t.selection);
+        const auto name = effectName(type_).toUpperCase();
+        drawText(g, name, {36.0f, 10.0f, 82.0f, 20.0f}, fittingSize(name, 82.0f, kTextTitle, true), on ? t.text : t.textDim,
                  juce::Justification::centredLeft, true);
         juce::String where = juce::String(lane_ == 0 ? "A" : lane_ == 1 ? "B" : "M") + juce::String(slot_ + 1);
         if (!on)
@@ -569,10 +572,6 @@ public:
             g.fillRect(d);
             g.setColour(juce::Colours::white.withAlpha(t.dark ? 0.05f : 0.4f));
             g.fillRect(d.translated(1, 0));
-        }
-        if (page_.selectedLane() == lane_ && page_.selectedSlot() == slot_) { // the slot being edited: a neutral edge
-            g.setColour(t.control.withAlpha(0.7f));
-            g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.4f);
         }
     }
     void mouseDown(const juce::MouseEvent& e) override {

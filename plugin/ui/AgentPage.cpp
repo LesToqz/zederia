@@ -41,12 +41,27 @@ public:
         Card::draw(g);
         auto area = body().toFloat();
         area.removeFromTop(static_cast<float>(topReserve));
-        const bool bright = emphasize && emphasize();
+        if (journal) {
+            drawWell(g, area);
+            area.reduce(10.0f, 5.0f);
+            auto head = area.removeFromTop(22.0f);
+            drawText(g, "Time", head.removeFromLeft(92.0f), kTextBody, theme().text, juce::Justification::centredLeft, true);
+            drawText(g, "Action", head, kTextBody, theme().text, juce::Justification::centredLeft, true);
+            g.setColour(theme().line);
+            g.fillRect(area.removeFromTop(1.0f));
+        }
         for (const auto& line : lines_) {
-            if (area.getHeight() < 16.0f)
+            const float height = journal ? 23.0f : 17.0f;
+            if (area.getHeight() < height)
                 break;
-            drawText(g, fitLine(line, area.getWidth() - static_cast<float>(rightReserve), kTextSmall + 0.5f), area.removeFromTop(17.0f),
-                     kTextSmall + 0.5f, bright ? theme().text : theme().textDim);
+            auto row = area.removeFromTop(height);
+            const int split = journal ? line.indexOfChar('\t') : -1;
+            if (split >= 0) {
+                drawText(g, line.substring(0, split), row.removeFromLeft(92.0f), kTextSmall + 0.5f, theme().textDim);
+                drawText(g, fitLine(line.substring(split + 1), row.getWidth(), kTextBody), row, kTextBody, theme().text);
+            } else {
+                drawText(g, fitLine(line, row.getWidth() - static_cast<float>(rightReserve), kTextSmall + 0.5f), row, kTextSmall + 0.5f, theme().textDim);
+            }
             area.removeFromTop(1.0f);
         }
     }
@@ -61,7 +76,7 @@ public:
         return true;
     }
     juce::RectangleList<int> dirtyArea() override { return getLocalBounds(); }
-    std::function<bool()> emphasize; // the lines are entries (bright), not a note about the card (dim)
+    bool journal = false;
     void refreshNow() {
         if (provider_)
             lines_ = provider_();
@@ -171,10 +186,7 @@ public:
             drawText(g, fitLine(c.where, block.getWidth(), kTextSmall + 0.5f), block.removeFromTop(17.0f), kTextSmall + 0.5f, t.textDim);
             block.removeFromTop(2.0f);
             const auto well = block.removeFromTop(24.0f);
-            g.setColour(t.sunken);
-            g.fillRoundedRectangle(well, 4.0f);
-            g.setColour(t.line);
-            g.drawRoundedRectangle(well.reduced(0.5f), 4.0f, 1.0f);
+            drawWell(g, well);
             drawText(g, fitLine(oneLine(c.config()), well.getWidth() - 16.0f, kTextSmall), well.reduced(8.0f, 0.0f), kTextSmall, t.text);
             area.removeFromTop(static_cast<float>(kBlockGap));
         }
@@ -292,13 +304,13 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         for (auto it = entries.rbegin(); it != entries.rend() && lines.size() < 40; ++it) {
             const juce::String client(it->client), action(it->action);
             const juce::String what = client.isEmpty() || action.startsWith(client + ":") ? action : client + " " + action;
-            lines.add(it->time.toString(false, true, true, true) + "   " + what);
+            lines.add(it->time.toString(false, true, true, true) + "\t" + what);
         }
         if (lines.isEmpty())
             lines.add("Every action an agent takes is listed here, newest first. Undo (Ctrl+Z) or the history list takes it back.");
         return lines;
     });
-    log_->emphasize = [&link] { return !link.activity().empty(); }; // entries in full ink, the empty note dim
+    log_->journal = true;
     // The permissions are not this instance's: the heading says they hold for every agent.
     permissions_ = std::make_unique<LinesCard>("Permissions for every agent on this computer", [] {
         const auto p = zed::link::loadPermissions();

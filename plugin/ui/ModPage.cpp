@@ -3,6 +3,7 @@
 #include "Audit.h"
 #include "CurveEditor.h"
 
+#include "zederia/engine/ModMath.h"
 #include "zederia/patch/Modules.h"
 
 #include <set>
@@ -39,6 +40,7 @@ public:
         amount_.family = Family::Modulators;
         amount_.labelLeft = true;
         amount_.labelledBy = "Amount";
+        addMouseListener(this, true);
         for (juce::Component* c : std::initializer_list<juce::Component*>{&select_, &number_, &on_, &source_, &via_, &amount_, &polarity_, &curve_,
                                                                            &dest_, &mute_, &solo_, &remove_})
             addAndMakeVisible(c);
@@ -48,6 +50,8 @@ public:
         for (Button* b : {&select_, &on_, &source_, &via_, &polarity_, &curve_, &dest_, &mute_, &solo_, &remove_})
             b->textSize = kTextSmall;
         remove_.ghost = true;
+        source_.leftAlign = dest_.leftAlign = true;
+        dest_.boldText = true;
         select_.onClick = [this] { page_.setSelected(route_, !select_.toggled()); };
         on_.onClick = [this] { ctx_.session.setRouteEnabled(route_, !on_.toggled()); };
         mute_.onClick = [this] { ctx_.session.setRouteMute(route_, !mute_.toggled()); };
@@ -128,15 +132,25 @@ public:
         placeRow(area, {{&select_, 22}, {&number_, 24}, {&on_, 36}, {&source_, 108}, {&via_, 112}, {&amount_, kAmountColumnWidth}, {&polarity_, 38},
                         {&curve_, 66}, {&dest_, 230}, {&mute_, 26}, {&solo_, 26}, {&remove_, 24}},
                  4);
+        source_.setBounds(source_.getBounds().withTrimmedLeft(13));
     }
     void paint(juce::Graphics& g) override {
         const Theme& t = theme();
-        const auto area = getLocalBounds().toFloat().reduced(0.5f);
+        const auto area = getLocalBounds().toFloat();
         drawPanel(g, area, focused ? t.selection : t.panel);
-        g.setColour(colour_.withAlpha(audible_ ? 1.0f : 0.35f));
-        g.fillRoundedRectangle(area.withWidth(3.0f).reduced(0.0f, 4.0f), 1.5f);
+        const auto socket = juce::Rectangle<float>(8.0f, 8.0f).withCentre({source_.getX() - 7.0f, area.getCentreY()});
+        g.setColour(t.bg);
+        g.fillEllipse(socket);
+        g.setColour(audible_ ? colour_ : t.textFaint);
+        if (audible_) g.fillEllipse(socket.reduced(1.5f));
+        else g.drawEllipse(socket.reduced(1.5f), 1.0f);
     }
-    void mouseDown(const juce::MouseEvent&) override { page_.focusRoute(route_); }
+    void mouseDown(const juce::MouseEvent&) override {
+        if (!focused) page_.focusRoute(route_);
+    }
+    void focusOfChildComponentChanged(FocusChangeType) override {
+        if (!focused && hasKeyboardFocus(true)) page_.focusRoute(route_);
+    }
     int route() const { return route_; }
     bool focused = false;
 
@@ -356,8 +370,9 @@ void ModPage::focusRoute(int route) {
         zed::Shape shape = r->route.curveShape;
         curve_->setShape(shape);
     }
-    detailText_.setText(drawn ? "Draw how the source maps onto the destination." : "Choose Drawn as the curve to draw one; other curves are fixed shapes.");
+    detailText_.setText(drawn ? "Draw how the source maps onto the destination." : juce::String(kCurveNames[static_cast<int>(r->route.curve)]) + "  /  Curve response");
     resized();
+    repaint();
 }
 
 bool ModPage::reveal(const juce::String& module) {
@@ -425,7 +440,7 @@ void ModPage::layoutRows() {
     int y = 0;
     for (auto& r : rows_) {
         r->setBounds(0, y, w, 32);
-        y += 34;
+        y += 32;
     }
     list_.setSize(w, juce::jmax(y, viewport_.getHeight()));
 }
@@ -457,6 +472,36 @@ void ModPage::paint(juce::Graphics& g) {
     drawPlate(g, surface.removeFromTop(count_.getY()).toFloat());
     drawPanel(g, surface.removeFromRight(360).toFloat(), inspectorShown() ? t.panel : t.raised);
     drawWell(g, surface.toFloat());
+    // The four factory curves and the drawn editor occupy the same instrument window. Fixed
+    // curves show the exact magnitude transfer used in the engine, before Via and Amount.
+    if (const auto* route = ctx_.route(focus_); route != nullptr && route->route.curve != zed::ModCurve::Drawn) {
+        const auto glass = curve_->getBounds().toFloat();
+        drawWell(g, glass);
+        auto field = glass.reduced(14.0f, 10.0f);
+        drawText(g, "Output magnitude", field.removeFromTop(17.0f), kTextSmall, t.textDim);
+        auto axis = field.removeFromBottom(17.0f);
+        drawText(g, "0", axis.removeFromLeft(36.0f), kTextSmall, t.textDim);
+        drawText(g, "1", axis.removeFromRight(36.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
+        drawText(g, "Input magnitude", axis, kTextSmall, t.textDim, juce::Justification::centred);
+        g.setColour(t.displayGrid);
+        for (int i = 0; i <= 4; ++i) {
+            g.drawHorizontalLine(juce::roundToInt(field.getY() + field.getHeight() * i / 4.0f), field.getX(), field.getRight());
+            g.drawVerticalLine(juce::roundToInt(field.getX() + field.getWidth() * i / 4.0f), field.getY(), field.getBottom());
+        }
+        juce::Path line;
+        line.startNewSubPath(field.getBottomLeft());
+        for (int i = 1; i <= 96; ++i) {
+            const float x = i / 96.0f;
+            const float y = zed::modCurve(route->route.curve, x, nullptr);
+            line.lineTo(field.getX() + x * field.getWidth(), field.getBottom() - y * field.getHeight());
+        }
+        auto fill = line;
+        fill.lineTo(field.getBottomRight());
+        fill.closeSubPath();
+        g.setColour(route->colour.withAlpha(0.11f));
+        g.fillPath(fill);
+        strokeGlow(g, line, route->colour, 1.7f);
+    }
     auto header = juce::Rectangle<int>(list.getX() + 8, list.getY() - 22, list.getWidth(), 18);
     for (const auto& [title, w] : std::initializer_list<std::pair<const char*, int>>{
              {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", kAmountColumnWidth}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},
