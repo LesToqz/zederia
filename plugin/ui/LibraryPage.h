@@ -72,9 +72,9 @@ public:
     // The folder rows the tree shows now (open folders show their sub-folders).
     juce::StringArray visibleFolders() const;
     void setFolderOpen(const juce::String& relative, bool open);
-    // Sections of the left column fold away: "presets", "show", "type", "tag", "genre", "pack", "author".
+    // Disclosure is local to the open editor.
     void setSectionCollapsed(const juce::String& key, bool collapsed);
-    bool sectionCollapsed(const juce::String& key) const { return collapsed_.count(key) > 0; }
+    bool sectionCollapsed(const juce::String& key) const { return openSections_.count(key) == 0; }
 
     // What the results show when there are none, in front of the list: an empty library (Import
     // pack), an empty folder (Show all presets) or a search that matches nothing (Clear search).
@@ -97,6 +97,7 @@ private:
     void returnKeyPressed(int row) override { loadRow(row); }
 
     void filter();
+    void setScope(juce::String folder, juce::String facet);
     void rebuildFacets();
     void refreshDetail();
     void refreshEmpty();
@@ -113,17 +114,17 @@ private:
     juce::StringArray folders_; // every folder the tree can show (from the disk and from the presets)
     zed::PresetSort sort_ = zed::PresetSort::Name, secondary_ = zed::PresetSort::Type;
     bool descending_ = false;
-    std::set<juce::String> facetFilters_; // "type:bass", "tag:warm", "fav", "recent", "factory", "user"
+    juce::String facetFilter_; // Selecting a facet clears the folder, and vice versa.
     juce::String folderFilter_;
-    std::set<juce::String> openFolders_{userPresetsName()};
-    std::set<juce::String> collapsed_;
+    std::set<juce::String> openFolders_, openSections_;
     bool selectingInCode_ = false; // selections made by the page itself load nothing
-    TextField search_{"Search: words, tag:warm type:bass genre:house pack:\"Name\" author:me rating:3 fav", "Search presets"};
+    TextField search_{"Search presets by name or metadata", "Search presets"};
+    Button clearScope_{"", Glyph::Close};
     juce::TableListBox table_;
     Parts parts_;
     juce::Viewport facetView_;
     juce::Component facetList_;
-    std::vector<std::unique_ptr<Button>> facetButtons_;
+    std::vector<std::unique_ptr<juce::Component>> facetRows_;
     Button importButton_{"Import pack", Glyph::Folder}, newFolder_{"New folder", Glyph::Plus}, showFolder_{"Show in Explorer", Glyph::Folder},
         rescan_{"Rescan"}, duplicates_{"Find duplicates"}, modules_{"Module presets"};
     // Detail and bulk edit

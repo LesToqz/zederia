@@ -4,6 +4,7 @@
 // frame clock, the interface's cost, workshop latency, Simple view, rack and library actions, and
 // the keyboard (mouse, computer keys, releases that never arrive) and the wheels.
 #include "../support/TestUtil.h"
+#include "AgentLink.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "Prefs.h"
@@ -834,6 +835,92 @@ TEST_CASE("editor: the library searches, sorts, edits in bulk, exports and impor
     juce::ignoreUnused(bright);
 }
 
+TEST_CASE("editor: the library opens with folded sections and uses one sidebar filter at a time", "[editor][library]") {
+    Rig rig(nullptr, true);
+    rig.editor->showPage(ZederiaEditor::Library);
+    auto& lib = dynamic_cast<zui::LibraryPage&>(rig.editor->page(ZederiaEditor::Library));
+    const auto checkFolded = [](zui::LibraryPage& page) -> juce::Component* {
+        const juce::StringArray headings{"PRESETS", "USER PRESETS", "SHOW", "TYPE", "CHARACTER", "GENRE"};
+        juce::Component* sidebar = nullptr;
+        for (auto* button : all<zui::Button>(page))
+            if (button->getComponentID() == "section/presets")
+                sidebar = button->getParentComponent();
+        REQUIRE(sidebar != nullptr);
+        REQUIRE(sidebar->getNumChildComponents() == headings.size());
+        int previousBottom = 0;
+        for (int i = 0; i < headings.size(); ++i) {
+            auto* found = dynamic_cast<zui::Button*>(sidebar->getChildComponent(i));
+            REQUIRE(found != nullptr);
+            CHECK(found->text() == headings[i]);
+            CHECK(zui::visibleWithin(*found, &page));
+            CHECK(found->getY() >= previousBottom);
+            previousBottom = found->getBottom();
+        }
+        for (const char* key : {"presets", "user_presets", "show", "type", "tag", "genre"})
+            CHECK(page.sectionCollapsed(key));
+        CHECK(page.visibleFolders().isEmpty());
+        return sidebar;
+    };
+    auto* sidebar = checkFolded(lib);
+    const auto row = [sidebar](const char* id) -> zui::Button& {
+        CAPTURE(id);
+        auto* button = dynamic_cast<zui::Button*>(sidebar->findChildWithID(id));
+        REQUIRE(button != nullptr);
+        return *button;
+    };
+    const auto press = [&row](const char* id) {
+        REQUIRE(row(id).keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    };
+    press("section/presets");
+    CHECK(sidebar->findChildWithID("folder/Tests") != nullptr);
+    CHECK(sidebar->findChildWithID("folder/User Presets") == nullptr);
+    press("section/user_presets");
+    press("folder/User Presets");
+    CHECK(lib.folder() == "User Presets");
+    CHECK(lib.resultCount() == 0);
+
+    press("section/type");
+    press("filter/type:bass");
+    CHECK(lib.folder().isEmpty());
+    REQUIRE(lib.resultCount() == 1);
+    CHECK(lib.result(0).meta.type == "bass");
+    lib.selectRow(0);
+    REQUIRE(lib.selectionToolsShown());
+    press("filter/type:pluck");
+    REQUIRE(lib.resultCount() == 2);
+    CHECK(lib.selectedRows().empty());
+    CHECK_FALSE(lib.selectionToolsShown());
+    CHECK_FALSE(row("filter/type:bass").toggled());
+    CHECK(row("filter/type:pluck").toggled());
+    press("section/tag");
+    press("filter/tag:mono");
+    CHECK_FALSE(row("filter/type:pluck").toggled());
+    CHECK(row("filter/tag:mono").toggled());
+    REQUIRE(lib.resultCount() == 2);
+    CHECK(lib.result(0).meta.type == "bass");
+    CHECK(lib.result(1).meta.type == "lead");
+    press("folder/Tests");
+    CHECK_FALSE(row("filter/tag:mono").toggled());
+    CHECK(lib.resultCount() == 6);
+    lib.setQuery("tag:warm");
+
+    rig.open();
+    rig.editor->showPage(ZederiaEditor::Library);
+    auto& reopened = dynamic_cast<zui::LibraryPage&>(rig.editor->page(ZederiaEditor::Library));
+    checkFolded(reopened);
+    CHECK(reopened.folder() == "Tests");
+    REQUIRE(reopened.resultCount() == 1);
+    zui::Button* clearScope = nullptr;
+    for (auto* button : all<zui::Button>(reopened))
+        if (button->getTitle() == "Clear sidebar selection: Tests" && zui::visibleWithin(*button, &reopened))
+            clearScope = button;
+    REQUIRE(clearScope != nullptr);
+    REQUIRE(clearScope->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    CHECK(reopened.folder().isEmpty());
+    REQUIRE(reopened.resultCount() == 1);
+    CHECK(reopened.result(0).meta.type == "bass");
+}
+
 TEST_CASE("editor: the library shows the Presets folder as a tree, folds its sections and saves presets into folders", "[editor][library]") {
     Rig rig(nullptr, true);
     rig.editor->showPage(ZederiaEditor::Library);
@@ -843,12 +930,14 @@ TEST_CASE("editor: the library shows the Presets folder as a tree, folds its sec
     // The folders of the free presets and User Presets are made, empty, when the library opens.
     for (const auto& name : zui::LibraryPage::defaultFolders())
         CHECK(presets.getChildFile(name).isDirectory());
+    CHECK(lib.visibleFolders().isEmpty());
+    lib.setSectionCollapsed("presets", false);
     const auto top = lib.visibleFolders();
-    REQUIRE(top.size() == zui::LibraryPage::defaultFolders().size() + 1); // and the tests' own folder
+    REQUIRE(top.size() >= 2);
     CHECK(top[0] == "808");
     CHECK(top[1] == "Bass");
     CHECK(top.contains("Tests"));
-    CHECK(top[top.size() - 1] == "User Presets");
+    CHECK_FALSE(top.contains("User Presets"));
 
     // Locations as typed in the save dialog.
     juce::String error;
@@ -877,7 +966,10 @@ TEST_CASE("editor: the library shows the Presets folder as a tree, folds its sec
     REQUIRE(rig.processor.session().loadPresetFile(presets.getChildFile("Tests").getChildFile("pad.zpreset"), loadError));
     CHECK(rig.editor->defaultSaveLocation() == "User Presets");
     REQUIRE(rig.editor->savePresetTo("Snare", "User Presets/phonk1", "drum", "", error));
-    // The library shows them at once, each in its folder.
+    // The saved folders have their own section, independent of the factory tree.
+    lib.setSectionCollapsed("presets", true);
+    lib.setSectionCollapsed("user_presets", false);
+    CHECK_FALSE(lib.visibleFolders().contains("Tests"));
     CHECK(lib.visibleFolders().contains("User Presets/My Phonk Pack"));
     CHECK(lib.visibleFolders().contains("User Presets/phonk1"));
     lib.setFolder("User Presets/My Phonk Pack");
@@ -893,28 +985,25 @@ TEST_CASE("editor: the library shows the Presets folder as a tree, folds its sec
     CHECK(lib.resultCount() == 0);
     lib.setFolder("");
     CHECK(lib.resultCount() == 8);
-    // A closed folder hides the folders inside it; choosing a folder inside opens the way to it.
-    lib.setFolderOpen("User Presets", false);
+    // Closing the user section hides its children. Choosing a folder reveals it again.
+    lib.setSectionCollapsed("user_presets", true);
     CHECK_FALSE(lib.visibleFolders().contains("User Presets/phonk1"));
     lib.setFolder("User Presets/phonk1");
     CHECK(lib.visibleFolders().contains("User Presets/phonk1"));
     CHECK(lib.resultCount() == 1);
-    // Sections fold away, and the page remembers the folder, the open folders and the folded sections.
-    for (const char* key : {"presets", "show", "type", "tag", "genre"}) {
-        lib.setSectionCollapsed(key, true);
-        CHECK(lib.sectionCollapsed(key));
-    }
-    lib.setSectionCollapsed("presets", false);
+    // A saved project keeps its folder and results. Old expansion preferences must not
+    // unfold the sidebar on a fresh open, including projects saved by earlier versions.
     nlohmann::json state;
     lib.saveState(state);
-    lib.setSectionCollapsed("type", false);
+    state["folded"] = nlohmann::json::array();
+    state["open_folders"] = {"User Presets"};
     lib.setFolder("");
     lib.loadState(state);
-    CHECK(lib.sectionCollapsed("type"));
-    CHECK_FALSE(lib.sectionCollapsed("presets"));
+    for (const char* key : {"presets", "user_presets", "show", "type", "tag", "genre"})
+        CHECK(lib.sectionCollapsed(key));
     CHECK(lib.folder() == "User Presets/phonk1");
     CHECK(lib.resultCount() == 1);
-    // The page with folded sections and a deep folder chosen still lays out cleanly.
+    CHECK(lib.visibleFolders().isEmpty());
     rig.frames(2);
     std::vector<zui::Finding> findings;
     zui::writePng(zui::renderSnapshot(*rig.editor, &findings), snapshotFolder().getChildFile("library_100_folders.png"));
@@ -1002,7 +1091,49 @@ TEST_CASE("editor: the AGENT page's Connect panel offers a config and a prompt f
     auto& agent = dynamic_cast<zui::AgentPage&>(rig.editor->page(ZederiaEditor::Agent));
     CHECK_FALSE(agent.connectShown());
     agent.showConnect(true);
-    CHECK(agent.connectShown());
+    REQUIRE(agent.connectShown());
+    const juce::StringArray clients{"Claude Code", "Codex", "Antigravity"};
+    const juce::StringArray configs{zui::AgentPage::claudeJson(), zui::AgentPage::codexToml(), zui::AgentPage::antigravityJson()};
+    for (int i = 0; i < clients.size(); ++i) {
+        CAPTURE(clients[i]);
+        int tabCount = 0, promptCount = 0, configCount = 0;
+        zui::Button* currentTab = nullptr;
+        for (auto* button : all<zui::Button>(agent)) {
+            if (!zui::visibleWithin(*button, &agent))
+                continue;
+            if (button->tab && clients.contains(button->text())) {
+                ++tabCount;
+                CHECK(button->toggled() == (button->text() == clients[i]));
+                if (button->toggled())
+                    currentTab = button;
+            }
+            if (button->text() == "Copy prompt") {
+                ++promptCount;
+                CHECK(button->getTitle().contains(clients[i]));
+            }
+            if (button->text() == "Copy config") {
+                ++configCount;
+                CHECK(button->getTitle().contains(clients[i]));
+            }
+        }
+        CHECK(tabCount == clients.size());
+        CHECK(promptCount == 1);
+        CHECK(configCount == 1);
+        int previews = 0;
+        for (auto* editor : all<juce::TextEditor>(agent)) {
+            if (zui::visibleWithin(*editor, &agent) && editor->isReadOnly()) {
+                ++previews;
+                CHECK(editor->getTitle().contains(clients[i]));
+                CHECK(editor->isMultiLine());
+                CHECK(editor->getText() == configs[i]);
+            }
+        }
+        CHECK(previews == 1);
+        REQUIRE(currentTab != nullptr);
+        if (i + 1 < clients.size())
+            REQUIRE(currentTab->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    }
+    CHECK_FALSE(rig.processor.agentLink().enabled());
     rig.frames(2);
     std::vector<zui::Finding> findings;
     zui::writePng(zui::renderSnapshot(*rig.editor, &findings), snapshotFolder().getChildFile("overlay_connect_100.png"));
@@ -1011,6 +1142,23 @@ TEST_CASE("editor: the AGENT page's Connect panel offers a config and a prompt f
     for (const auto& f : findings)
         UNSCOPED_INFO(f.kind << ": " << f.where << ": " << f.detail);
     CHECK(findings.empty());
+    {
+        const juce::ScopedValueSetter<int> large(rig.ctx().prefs.textSize, 150);
+        const juce::ScopedValueSetter<bool> help(rig.ctx().prefs.helpStrip, true);
+        rig.editor->applyTheme();
+        for (const auto& client : clients) {
+            CAPTURE(client);
+            for (auto* tab : all<zui::Button>(agent))
+                if (tab->tab && tab->text() == client)
+                    tab->onClick();
+            auto issues = zui::checkLayout(*rig.editor);
+            zui::renderSnapshot(*rig.editor, &issues);
+            for (const auto& issue : issues)
+                UNSCOPED_INFO(issue.kind << ": " << issue.where << ": " << issue.detail);
+            CHECK(issues.empty());
+        }
+    }
+    rig.editor->applyTheme();
     agent.showConnect(false);
     CHECK_FALSE(agent.connectShown());
 

@@ -22,12 +22,58 @@ juce::String fitLine(juce::String text, float width, float size) {
     return text + dots;
 }
 
-// A configuration written on several lines, shown on one.
-juce::String oneLine(const juce::String& text) {
-    juce::StringArray words = juce::StringArray::fromTokens(text, " \r\n\t", "\"");
-    words.removeEmptyStrings();
-    return words.joinIntoString(" ");
-}
+class SetupBackdrop final : public juce::Component {
+public:
+    SetupBackdrop(AgentPage& owner, juce::Component& panel) : owner_(owner), panel_(panel) {
+        markOverlay(*this);
+        setAccessible(false);
+    }
+    void paint(juce::Graphics& g) override {
+        g.fillAll(theme().bg.withAlpha(0.76f));
+        juce::DropShadow(theme().bg.darker(1.0f).withAlpha(0.66f), 12, {0, 4}).drawForRectangle(g, panel_.getBounds());
+    }
+    void mouseUp(const juce::MouseEvent& e) override {
+        if (!e.mouseWasDraggedSinceMouseDown())
+            owner_.showConnect(false);
+    }
+
+private:
+    AgentPage& owner_;
+    juce::Component& panel_;
+};
+
+class ConfigPreview final : public juce::TextEditor {
+public:
+    ConfigPreview() {
+        setMultiLine(true, true);
+        setReadOnly(true);
+        setCaretVisible(false);
+        setScrollbarsShown(true);
+        setIndents(12, 7);
+        setJustification(juce::Justification::topLeft);
+    }
+    void lookAndFeelChanged() override {
+        juce::TextEditor::lookAndFeelChanged();
+        applyFontToAllText(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), (kTextSmall + 0.5f) * textScale(), juce::Font::plain)));
+        applyColourToAllText(findColour(textColourId), false);
+    }
+    bool keyPressed(const juce::KeyPress& key) override {
+        // JUCE's read-only editor handles Copy and Select All. Allow navigation and
+        // Shift-selection as well, including Page Down when larger text wraps a path.
+        for (const int code : {juce::KeyPress::leftKey, juce::KeyPress::rightKey, juce::KeyPress::upKey, juce::KeyPress::downKey,
+                               juce::KeyPress::homeKey, juce::KeyPress::endKey, juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey})
+            if (key.isKeyCode(code))
+                return juce::TextEditorKeyMapper<juce::TextEditor>::invokeKeyFunction(*this, key);
+        return juce::TextEditor::keyPressed(key);
+    }
+    void paintOverChildren(juce::Graphics& g) override {
+        juce::TextEditor::paintOverChildren(g);
+        if (hasKeyboardFocus(false)) {
+            g.setColour(theme().focus);
+            g.drawRect(getLocalBounds());
+        }
+    }
+};
 
 } // namespace
 
@@ -90,119 +136,190 @@ private:
     juce::StringArray lines_;
 };
 
-// The Connect panel: one block per agent client with its configuration and a prompt to copy.
-class AgentPage::ConnectPanel final : public Card {
+// The selected client owns the instructions, preview and both clipboard actions.
+class AgentPage::ConnectPanel final : public Card, private juce::Timer {
 public:
-    struct Client {
-        juce::String name, where;
-        std::function<juce::String()> config, prompt;
-    };
+    static constexpr int kPanelWidth = 780, kPanelHeight = 462;
 
-    explicit ConnectPanel(AgentPage& owner) : Card("Connect an agent", Family::Neutral), owner_(owner) {
+    explicit ConnectPanel(AgentPage& owner) : Card("Client setup", Family::Neutral), owner_(owner) {
         markOverlay(*this);
-        screws = false;
-        clients_ = {{"Claude Code", "Config: save it as .mcp.json in the folder you start Claude Code in. The prompt adds Zederia for every project.", claudeJson,
-                     claudePrompt},
-                    {"Codex", "Config: add it to config.toml in the .codex folder of your user profile (%USERPROFILE%\\.codex\\config.toml).", codexToml,
-                     codexPrompt},
-                    {"Antigravity", "Config: add it to mcp_config.json (the /mcp command shows where that file is).", antigravityJson, antigravityPrompt}};
-        auto& close = parts_.add<Button>(*this, "", Glyph::Close);
-        close.ghost = true;
-        close.setTitle("Close the Connect panel");
-        close.setTooltip("Close");
-        close.setBounds(0, 0, 24, 22);
-        close.onClick = [this] { owner_.showConnect(false); };
-        headerRight.push_back(&close);
-        for (const auto& c : clients_) {
-            auto& config = parts_.add<Button>(*this, "Copy config", Glyph::Copy);
-            config.textSize = kTextSmall + 0.5f;
-            config.setTitle("Copy the " + c.name + " config");
-            config.setHelp("Copy config", "Copies the " + c.name + " configuration for this computer's zederia-mcp to the clipboard.");
-            const auto text = c.config;
-            const juce::String name = c.name;
-            config.onClick = [this, text, name] {
-                owner_.ctx_.session.copyText(text());
-                if (owner_.ctx_.notify)
-                    owner_.ctx_.notify("Copied the " + name + " config. Paste it into the file named beside it, then restart " + name + ".");
-            };
-            auto& prompt = parts_.add<Button>(*this, "Copy prompt", Glyph::Wand);
-            prompt.textSize = kTextSmall + 0.5f;
-            prompt.accentStyle = true;
-            prompt.setTitle("Copy the prompt for " + c.name);
-            prompt.setHelp("Copy prompt", "Copies a request to paste into " + c.name + ": it checks the server, adds Zederia to its own settings and tells you when to restart.");
-            const auto request = c.prompt;
-            prompt.onClick = [this, request, name] {
-                owner_.ctx_.session.copyText(request());
-                if (owner_.ctx_.notify)
-                    owner_.ctx_.notify("Copied the prompt. Paste it into " + name + ": it sets Zederia up itself.");
-            };
-            config_.push_back(&config);
-            prompt_.push_back(&prompt);
-        }
-        auto& link = parts_.add<Button>(*this, "Link off");
-        link.switchStyle = true;
-        link.textSize = kTextSmall + 0.5f;
-        link.setTitle("Agent link for this instance");
-        link.setHelp("Agent link", "Lets agents reach this window's sound (live:... in list_targets). Not needed for headless sessions.");
-        link.onClick = [this] { owner_.toggleLink(); };
-        link_ = &link;
+        setFocusContainerType(FocusContainerType::keyboardFocusContainer);
+        headerHeight = 32;
+        for (juce::Component* c : std::initializer_list<juce::Component*>{&tabs_, &prompt_, &config_, &preview_, &link_, &close_})
+            addAndMakeVisible(*c);
+
+        tabs_.setTitle("Agent client");
+        tabs_.large = true;
+        tabs_.onChange = [this](int) {
+            selectClient();
+            focusClient();
+        };
+        prompt_.accentStyle = true;
+        prompt_.onClick = [this] {
+            copy(prompt_, client().prompt(), "Paste the copied prompt into " + name() + ".");
+        };
+        config_.onClick = [this] {
+            copy(config_, preview_.getText(), client().where);
+        };
+        link_.switchStyle = true;
+        link_.setTitle("Agent link for this instance");
+        link_.setHelp("Agent link", "Let connected agents play and edit this instance. Agents can also run their own separate sessions.");
+        link_.onClick = [this] {
+            owner_.toggleLink();
+            if (isShowing()) link_.grabKeyboardFocus();
+        };
+
+        close_.ghost = true;
+        close_.setTitle("Close client setup");
+        close_.setTooltip("Close client setup (Escape)");
+        close_.setBounds(0, 0, 28, 24);
+        close_.onClick = [this] { owner_.showConnect(false); };
+        headerRight.push_back(&close_);
+        selectClient();
+    }
+
+    void opened() {
+        serverFound_ = juce::File(serverPath()).existsAsFile();
+        setDescription(serverFound_ ? "The local Zederia server is installed." : "The local server is missing. Install Zederia first.");
+        resetFeedback();
+        focusClient();
+        repaint();
     }
 
     void setLinkState(bool on) {
-        link_->setToggled(on);
-        link_->setText(on ? "Link on" : "Link off");
+        link_.setToggled(on);
+        link_.setText(on ? "Link on" : "Link off");
+    }
+
+    bool keyPressed(const juce::KeyPress& key) override {
+        if (key != juce::KeyPress::escapeKey) return false;
+        owner_.showConnect(false);
+        return true;
     }
 
     void resized() override {
         Card::resized();
-        auto area = body();
-        area.removeFromTop(kIntroHeight);
-        for (std::size_t i = 0; i < clients_.size(); ++i) {
-            auto block = area.removeFromTop(kBlockHeight);
-            auto buttons = block.removeFromBottom(26).withTrimmedBottom(0);
-            config_[i]->setBounds(buttons.removeFromLeft(130));
-            buttons.removeFromLeft(8);
-            prompt_[i]->setBounds(buttons.removeFromLeft(130));
-            area.removeFromTop(kBlockGap);
-        }
-        link_->setBounds(area.removeFromTop(26).removeFromLeft(130));
+        auto area = body().reduced(12, 2);
+        tabs_.setBounds(area.removeFromTop(32));
+        area.removeFromTop(12);
+
+        auto guided = area.removeFromTop(50);
+        prompt_.setBounds(guided.removeFromRight(136).withSizeKeepingCentre(136, 32));
+        guided.removeFromRight(14);
+        promptArea_ = guided;
+        area.removeFromTop(10);
+
+        footer_ = area.removeFromBottom(44);
+        auto linkArea = footer_.withTrimmedTop(6);
+        link_.setBounds(linkArea.removeFromRight(116).withSizeKeepingCentre(116, 28));
+        area.removeFromBottom(10);
+
+        manualArea_ = area.removeFromTop(55);
+        fileHeader_ = area.removeFromTop(30);
+        config_.setBounds(fileHeader_.withTrimmedTop(2).withTrimmedBottom(2).withTrimmedRight(2).removeFromRight(120));
+        preview_.setBounds(area);
     }
 
     void draw(juce::Graphics& g) override {
         Card::draw(g);
-        const Theme& t = theme();
-        auto area = body().toFloat();
-        auto intro = area.removeFromTop(static_cast<float>(kIntroHeight));
-        drawText(g, "Pick your agent. Copy prompt: paste it into the agent and it sets Zederia up by itself.", intro.removeFromTop(17.0f), kTextSmall + 0.5f, t.text);
-        drawText(g, "Copy config: paste it into the agent's settings file yourself. Restart the agent afterwards so Zederia's tools load.",
-                 intro.removeFromTop(17.0f), kTextSmall + 0.5f, t.textDim);
-        const bool found = juce::File(serverPath()).existsAsFile();
-        drawText(g, fitLine((found ? "Server: " : "Not found yet: ") + serverPath() + (found ? juce::String() : juce::String("  (install Zederia first)")),
-                            intro.getWidth(), kTextSmall + 0.5f),
-                 intro.removeFromTop(17.0f), kTextSmall + 0.5f, found ? t.textDim : t.warning);
-        for (const auto& c : clients_) {
-            auto block = area.removeFromTop(static_cast<float>(kBlockHeight));
-            drawText(g, c.name, block.removeFromTop(20.0f), kTextTitle, t.text, juce::Justification::centredLeft, true);
-            drawText(g, fitLine(c.where, block.getWidth(), kTextSmall + 0.5f), block.removeFromTop(17.0f), kTextSmall + 0.5f, t.textDim);
-            block.removeFromTop(2.0f);
-            const auto well = block.removeFromTop(24.0f);
-            drawWell(g, well);
-            drawText(g, fitLine(oneLine(c.config()), well.getWidth() - 16.0f, kTextSmall), well.reduced(8.0f, 0.0f), kTextSmall, t.text);
-            area.removeFromTop(static_cast<float>(kBlockGap));
-        }
-        drawText(g, "Agents reach this window's sound only while the link is on; their own sessions need no link.",
-                 area.removeFromTop(26.0f).withTrimmedLeft(140.0f), kTextSmall + 0.5f, t.textDim);
+        const auto& t = theme();
+        const juce::String statusText = serverFound_ ? "Local server installed" : "Server missing. Install Zederia first.";
+        const auto ink = serverFound_ ? t.textDim : t.warning;
+        auto status = header().withRight(close_.getX() - 10).toFloat().removeFromRight(textWidth(statusText, kTextSmall) + 15.0f);
+        g.setColour(serverFound_ ? t.ok : t.warning);
+        g.fillEllipse(status.removeFromLeft(6.0f).withSizeKeepingCentre(6.0f, 6.0f));
+        status.removeFromLeft(7.0f);
+        drawText(g, statusText, status, kTextSmall, ink);
+
+        auto guided = promptArea_.toFloat();
+        drawText(g, "Set up with a prompt", guided.removeFromTop(26.0f), kTextLarge, t.text, juce::Justification::centredLeft, true);
+        drawText(g, client().instruction, guided, kTextBody, t.textDim);
+
+        auto manual = manualArea_.toFloat();
+        g.setColour(t.line);
+        g.fillRect(manual.removeFromTop(1.0f));
+        manual.removeFromTop(7.0f);
+        drawText(g, "Manual setup", manual.removeFromTop(22.0f), kTextTitle, t.text, juce::Justification::centredLeft, true);
+        drawText(g, client().where, manual, kTextBody, t.textDim);
+
+        drawPanel(g, fileHeader_.toFloat(), t.raised);
+        auto file = fileHeader_.withRight(config_.getX()).toFloat().reduced(12.0f, 0.0f);
+        drawText(g, client().file, file, kTextBody, t.text, juce::Justification::centredLeft, true);
+
+        auto foot = footer_.toFloat();
+        g.setColour(t.line);
+        g.fillRect(foot.removeFromTop(1.0f));
+        foot.removeFromTop(4.0f);
+        foot = foot.withRight(static_cast<float>(link_.getX()) - 12.0f);
+        drawText(g, "Agent link", foot.removeFromTop(20.0f), kTextBody, t.text, juce::Justification::centredLeft, true);
+        drawText(g, "Allow connected agents to play and edit this instance.", foot, kTextSmall + 0.5f, t.textDim);
     }
 
-    static constexpr int kIntroHeight = 58, kBlockHeight = 96, kBlockGap = 10;
-    static constexpr int kPanelHeight = 28 + 12 + kIntroHeight + 3 * (kBlockHeight + kBlockGap) + 26 + 6;
-
 private:
+    struct Client {
+        const char *instruction, *where, *file;
+        juce::String (*config)();
+        juce::String (*prompt)();
+    };
+    static constexpr Client clients_[] = {
+        {"Paste the prompt into Claude Code to add Zederia for all your projects.",
+         "Merge the Zederia entry into your project's .mcp.json, then start a new Claude Code session.",
+         ".mcp.json", claudeJson, claudePrompt},
+        {"Paste the prompt into Codex to add Zederia to your local settings.",
+         "Add the table to %USERPROFILE%\\.codex\\config.toml, then restart Codex.",
+         "config.toml", codexToml, codexPrompt},
+        {"Paste the prompt into Antigravity to connect Zederia.",
+         "Use /mcp to locate mcp_config.json, merge the Zederia entry, then reload MCP servers.",
+         "mcp_config.json", antigravityJson, antigravityPrompt}
+    };
+
+    const Client& client() const { return clients_[tabs_.selected()]; }
+    juce::String name() { return tabs_.tab(tabs_.selected()).text(); }
+
+    void selectClient() {
+        resetFeedback();
+        preview_.setTitle(name() + " configuration");
+        preview_.setDescription(client().where);
+        preview_.setText(client().config(), false);
+        preview_.setCaretPosition(0);
+        prompt_.setTitle("Copy the prompt for " + name());
+        prompt_.setHelp("Copy prompt", client().instruction);
+        config_.setTitle("Copy the " + name() + " config");
+        config_.setHelp("Copy config", client().where);
+        repaint();
+    }
+
+    void focusClient() {
+        if (isShowing())
+            tabs_.tab(tabs_.selected()).grabKeyboardFocus();
+    }
+
+    void copy(Button& action, const juce::String& content, const juce::String& nextStep) {
+        owner_.ctx_.session.copyText(content);
+        resetFeedback();
+        action.setText("Copied");
+        action.glyph = Glyph::Check;
+        if (isShowing()) action.grabKeyboardFocus();
+        startTimer(1800);
+        if (owner_.ctx_.notify)
+            owner_.ctx_.notify(nextStep);
+    }
+
+    void timerCallback() override { resetFeedback(); }
+    void resetFeedback() {
+        stopTimer();
+        prompt_.glyph = config_.glyph = Glyph::Copy;
+        prompt_.setText("Copy prompt");
+        config_.setText("Copy config");
+    }
+
     AgentPage& owner_;
-    Parts parts_;
-    std::vector<Client> clients_;
-    std::vector<Button*> config_, prompt_;
-    Button* link_ = nullptr;
+    TabStrip tabs_{{"Claude Code", "Codex", "Antigravity"}};
+    Button prompt_{"Copy prompt", Glyph::Copy}, config_{"Copy config", Glyph::Copy};
+    ConfigPreview preview_;
+    Button link_{"Link off"}, close_{"", Glyph::Close};
+    juce::Rectangle<int> promptArea_, manualArea_, fileHeader_, footer_;
+    bool serverFound_ = false;
 };
 
 // --- What the buttons copy -------------------------------------------------------------------------------
@@ -326,8 +443,8 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
         lines.add(p.readFolders.empty() ? juce::String("Allowed read folders: none (Zederia's own folders are always readable)") : r.dropLastCharacters(2));
         return lines;
     });
-    setup_ = std::make_unique<LinesCard>("Setup", [] {
-        return juce::StringArray{"Connect Claude Code, Codex or Antigravity to Zederia: copy a prompt for the agent, or its config."};
+    setup_ = std::make_unique<LinesCard>("Agent clients", [] {
+        return juce::StringArray{"Connect Claude Code, Codex or Antigravity to Zederia."};
     });
     for (auto* c : {link_.get(), clients_.get(), log_.get(), permissions_.get(), setup_.get()})
         addAndMakeVisible(*c);
@@ -406,10 +523,12 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
     // switches nothing on: the link has its own switch).
     auto& connect = parts_.add<Button>(*setup_, "Client setup", Glyph::Link);
     connect.textSize = kTextSmall + 0.5f;
-    connect.setHelp("Client setup", "Shows how to connect Claude Code, Codex or Antigravity: copy a prompt the agent follows to set Zederia up, or copy its config.");
+    connect.setHelp("Client setup", "Choose your agent and copy a setup prompt or its configuration file entry.");
     connect.onClick = [this] { showConnect(!connectShown()); };
     connectButton_ = &connect;
     connect_ = std::make_unique<ConnectPanel>(*this);
+    connectBackdrop_ = std::make_unique<SetupBackdrop>(*this, *connect_);
+    addChildComponent(*connectBackdrop_);
     addChildComponent(*connect_);
 
     refreshPermissions();
@@ -420,10 +539,17 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
 AgentPage::~AgentPage() = default;
 
 void AgentPage::showConnect(bool shown) {
+    if (connectShown() == shown)
+        return;
+    for (auto* card : {link_.get(), clients_.get(), log_.get(), permissions_.get(), setup_.get()})
+        card->setEnabled(!shown);
+    connectBackdrop_->setVisible(shown);
     connect_->setVisible(shown);
-    if (shown)
-        connect_->toFront(false);
     connectButton_->setToggled(shown);
+    if (shown)
+        connect_->opened();
+    else if (connectButton_->isShowing())
+        connectButton_->grabKeyboardFocus();
 }
 
 bool AgentPage::connectShown() const { return connect_ != nullptr && connect_->isVisible(); }
@@ -490,7 +616,8 @@ void AgentPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void AgentPage::resized() {
     auto area = getLocalBounds();
-    connect_->setBounds(juce::Rectangle<int>(780, ConnectPanel::kPanelHeight).withCentre(area.getCentre()).constrainedWithin(area));
+    connectBackdrop_->setBounds(area);
+    connect_->setBounds(juce::Rectangle<int>(ConnectPanel::kPanelWidth, ConnectPanel::kPanelHeight).withCentre(area.getCentre()).constrainedWithin(area));
     auto left = area.removeFromLeft(area.getWidth() / 2);
     link_->setBounds(left.removeFromTop(100));
     clients_->setBounds(left.removeFromTop(100));
