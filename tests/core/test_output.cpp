@@ -2,9 +2,12 @@
 // DC filter, output protection, latency, and quality modes that switch without clicks.
 #include "../support/Analysis.h"
 #include "../support/EngineRig.h"
+#include "zederia/table/TableData.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+
+#include <limits>
 
 using namespace zed;
 using Catch::Approx;
@@ -145,6 +148,41 @@ TEST_CASE("output: switching quality while a note plays does not click", "[outpu
     rig.runBlocks(24000, 512);
     CHECK(zedtest::largestJump(rig.left, at, at + 4800) <=
           1.5 * std::max(zedtest::largestJump(rig.left, at - 12000, at), zedtest::largestJump(rig.left, at + 12000, at + 24000)));
+}
+
+TEST_CASE("output: a value that is not a number never silences the engine for good", "[output][recovery]") {
+    // Nothing in a patch should produce one. If something ever does, it would stay in every
+    // recursive state it reaches (here the reverb's lines and the DC filter) and nothing would
+    // sound again until a reset. Instead that stretch is muted, the voices end, those states start
+    // again, and the next note plays.
+    Patch p = sinePatch();
+    p.set("global.dc_filter", 1);
+    p.addFxSlot(2, effect("reverb"));
+    EngineRig rig(p);
+    rig.engine.setTable(0, zedtest::sineTableData());
+    rig.run(512, {MidiEvent::noteOn(0, 57, 1.0f)});
+    rig.runBlocks(4800, 512);
+    REQUIRE(zedtest::peakOf(rig.left, 0, rig.left.size()) > 0.1f);
+    CHECK(rig.engine.outputRecoveries() == 0);
+
+    Wavetable broken;
+    Frame frame;
+    frame.fill(std::numeric_limits<float>::quiet_NaN());
+    broken.frames.push_back(frame);
+    rig.engine.setTable(0, TableData::build(broken)); // the playing voice crossfades to it
+    rig.runBlocks(4800, 512);
+    CHECK(rig.engine.outputRecoveries() > 0);
+    CHECK(rig.engine.activeVoices() == 0);
+
+    rig.engine.setTable(0, zedtest::sineTableData());
+    const std::size_t from = rig.left.size();
+    rig.run(512, {MidiEvent::noteOn(0, 60, 1.0f)});
+    rig.runBlocks(24000, 512);
+    CHECK(zedtest::peakOf(rig.left, from + 4800, rig.left.size()) > 0.1f);
+    bool finite = true;
+    for (const float s : rig.left)
+        finite = finite && std::isfinite(s);
+    CHECK(finite);
 }
 
 TEST_CASE("output: offline renders use the offline quality", "[output][quality]") {

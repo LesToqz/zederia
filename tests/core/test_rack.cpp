@@ -236,6 +236,77 @@ TEST_CASE("rack: an effect idles once its tail has died away, and wakes with new
     CHECK_FALSE(held.engine.fxSlotStatus(0, 1).on);
 }
 
+TEST_CASE("rack: a new layout takes over from sleeping effects at once, and none of them plays another effect's values",
+          "[rack][idle][preset]") {
+    // Browsing presets: by the time the next one loads, the last one's effects sleep. The new
+    // layout must not wait for the next note to replace them, and an effect still in place must
+    // never run with the values the store already holds for the new layout, in another effect's
+    // units: the compressor here would take the reverb's 12 kHz high cut as 12000 dB of make-up
+    // gain. The infinity and NaN that followed stayed in the DC filter and the engine was silent
+    // until it was reset.
+    Patch first = sinePatch();
+    first.set("global.dc_filter", 1);
+    first.set("osc1.level", 0.0); // a full-scale sine
+    addFx(first, 0, "drive");
+    addFx(first, 2, "compressor");
+    addFx(first, 2, "utility");
+    Patch second = sinePatch();
+    second.set("global.dc_filter", 1);
+    second.set("osc1.level", 0.0);
+    addFx(second, 0, "chorus");     // where the drive was
+    addFx(second, 2, "reverb");     // where the compressor was
+    addFx(second, 2, "compressor"); // where the utility was
+    addFx(second, 2, "utility");
+    EngineRig rig(first);
+    useSine(rig);
+    rig.run(512, {MidiEvent::noteOn(0, 57, 1.0f)});
+    rig.runBlocks(24000, 512);
+    rig.run(512, {MidiEvent::noteOff(0, 57)});
+    rig.runBlocks(48000, 512);
+    for (int slot = 0; slot < 2; ++slot)
+        REQUIRE(rig.engine.fxSlotStatus(2, slot).idle);
+
+    rig.engine.loadPatch(second);
+    rig.run(512);
+    rig.run(512);
+    CHECK(rig.engine.fxSlotStatus(2, 2).present); // the new layout is in place without waiting for a note
+
+    rig.runBlocks(48000, 512); // the new values have long glided in
+    const std::size_t from = rig.left.size();
+    rig.run(512, {MidiEvent::noteOn(0, 57, 1.0f)});
+    rig.runBlocks(24000, 512);
+    rig.run(512, {MidiEvent::noteOff(0, 57)});
+    rig.runBlocks(4800, 512);
+    bool finite = true;
+    for (std::size_t i = from; i < rig.left.size(); ++i)
+        finite = finite && std::isfinite(rig.left[i]);
+    CHECK(finite);
+    CHECK(zedtest::peakOf(rig.left, from, rig.left.size()) > 0.1f);
+    CHECK(rig.engine.outputRecoveries() == 0);
+}
+
+TEST_CASE("rack: switching lane B between parallel and series while its effects sleep holds nothing up", "[rack][idle]") {
+    // Lane B's effects fade out for the switch and back in after it. Asleep (nothing is sent to
+    // lane B), they used to keep their presence: the switch never finished, and every later rack
+    // change waited for it.
+    Patch p = sinePatch();
+    addFx(p, 1, "chorus");
+    EngineRig rig(p);
+    useSine(rig);
+    rig.runBlocks(48000, 512); // nothing reaches lane B, and the chorus goes to sleep
+    REQUIRE(rig.engine.fxSlotStatus(1, 0).idle);
+    rig.set("fx.b_routing", 1);
+    rig.run(512);
+    rig.run(512);
+    Patch next = p;
+    next.set("fx.b_routing", 1);
+    addFx(next, 2, "eq");
+    rig.engine.setRack(next);
+    rig.run(512);
+    rig.run(512);
+    CHECK(rig.engine.fxSlotStatus(2, 0).present);
+}
+
 TEST_CASE("rack: FX off plays the dry signal", "[rack]") {
     Patch dry = sinePatch();
     Patch wet = dry;

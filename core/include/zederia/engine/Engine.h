@@ -170,6 +170,11 @@ public:
 
     // --- What the engine is doing (any thread; updated once per block) ------------------------
     int activeVoices() const noexcept;
+    // How often the output held a value that is not a finite number. Nothing should cause one;
+    // when something does, process() mutes that stretch, ends the voices and clears the effects
+    // and the output stage, so the instrument plays again at the next note instead of staying
+    // silent until it is reset.
+    int outputRecoveries() const noexcept;
     // Position of a modulation source in Registry::modSources(), or of "ccN" after them; -1 when unknown.
     static int sourceIndex(std::string_view id);
     // A source's current output; per-voice sources report the most recent voice.

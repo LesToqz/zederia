@@ -629,3 +629,72 @@ TEST_CASE("plug-in: every host parameter comes back from the host project as it 
     second.getStateInformation(again);
     CHECK(again == state);
 }
+
+TEST_CASE("plug-in: clicking through presets in the library never silences the instrument", "[plugin][rack][library]") {
+    // The library loads a preset per click. Between clicks the effects of the last preset go to
+    // sleep. The next preset's rack must take over at once, and no effect still in place may run
+    // with the values the store already holds for another effect: a compressor that took a reverb's
+    // 12 kHz high cut as 12000 dB of make-up gain produced a NaN that stayed in the output stage,
+    // and every later preset was silent until the plug-in was reopened.
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                         .getChildFile("zederia-browse-" + juce::Uuid().toString());
+    REQUIRE(dir.createDirectory());
+    const auto& reg = Registry::get();
+    const auto preset = [&](const char* name, std::initializer_list<const char*> laneA, std::initializer_list<const char*> master,
+                            bool mono) {
+        Patch p;
+        p.meta.name = name;
+        p.set("global.master", 0.0);
+        if (mono) {
+            p.set("global.mode", reg.find("global.mode")->choiceIndex("mono"));
+            p.set("global.limiter", reg.find("global.limiter")->choiceIndex("soft_clip"));
+        }
+        for (const char* id : laneA)
+            REQUIRE(p.addFxSlot(0, reg.effectIndex(id)) >= 0);
+        for (const char* id : master)
+            REQUIRE(p.addFxSlot(2, reg.effectIndex(id)) >= 0);
+        const auto file = dir.getChildFile(juce::String(name) + ".zpreset");
+        REQUIRE(file.replaceWithText(savePatch(p)));
+        return file;
+    };
+    // Racks like the ones a library holds: the same effect at the same place in some, another
+    // effect or none at all in others.
+    const juce::File room = preset("Room Pluck", {"chorus"}, {"reverb", "utility", "limiter"}, false);
+    const juce::File hall = preset("Hall Pluck", {}, {"reverb"}, false);
+    const juce::File kick = preset("Dry Kick", {"drive"}, {"compressor", "utility"}, true);
+    const juce::File bell = preset("Echo Bell", {"drive"}, {"delay", "reverb"}, true);
+    const juce::File keys = preset("Tine Keys", {"chorus"}, {"reverb", "compressor", "utility"}, false);
+    const juce::File pad = preset("Wide Pad", {"chorus", "filter", "filter", "reverb"}, {}, false);
+
+    Host host;
+    const auto blocks = [&](int count) { // the message thread's timer runs between the blocks
+        for (int b = 0; b < count; ++b) {
+            host.run(1);
+            host.processor.serviceMessageThread();
+        }
+    };
+    const auto chord = [&](int root) {
+        const std::size_t from = host.left.size();
+        for (const int n : {root, root + 4, root + 7})
+            host.processor.keyboardState().noteOn(1, n, 1.0f);
+        blocks(40);
+        for (const int n : {root, root + 4, root + 7})
+            host.processor.keyboardState().noteOff(1, n, 0.0f);
+        blocks(20);
+        return host.peak(from);
+    };
+    for (const juce::File& file : {room, kick, bell, keys, pad, hall, room, bell, kick, keys, hall, pad, room}) {
+        juce::String error;
+        REQUIRE(host.processor.session().loadPresetFile(file, error));
+        blocks(60); // a moment on the preset before playing it
+        INFO(file.getFileNameWithoutExtension());
+        CHECK(chord(55) > 0.05f);
+        blocks(600); // about six seconds: the tails die away and the effects sleep before the next click
+    }
+    bool finite = true;
+    for (const float s : host.left)
+        finite = finite && std::isfinite(s);
+    CHECK(finite);
+    CHECK(host.processor.engine().outputRecoveries() == 0); // the output never needed rescuing
+    dir.deleteRecursively();
+}

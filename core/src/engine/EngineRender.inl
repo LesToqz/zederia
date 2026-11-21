@@ -429,6 +429,7 @@
         }
         runRack(out, split, left, right, frames);
         outputStage(left, right, frames);
+        guardOutput(left, right, frames);
         if (duckState == 1 && (qualityDuck <= 0.0f || activeCount == 0)) {
             appliedQuality = pendingQuality >= 0 ? pendingQuality : appliedQuality;
             pendingQuality = -1;

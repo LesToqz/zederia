@@ -8,7 +8,8 @@
 //   - an effect whose input would change (it moves, or what runs before it changes) fades out,
 //     moves while it is transparent, and fades back in. Everything else keeps running untouched.
 // While a plan waits for its fades, the effects keep their parameter values: the store may
-// already hold the new layout's values at the old positions.
+// already hold the new layout's values at the old positions, in another effect's units. An
+// effect that wakes or is cleared in that time takes its own last values again, never the store's.
 
 const ParamDef& defOf(int index) const { return *defs[static_cast<std::size_t>(index)]; }
 
@@ -26,9 +27,11 @@ int freePoolEntry() const {
     return -1;
 }
 
-bool rackFrozen() const {
-    return staged != nullptr || bSwitching || rackPending.load(std::memory_order_relaxed) != nullptr;
-}
+// A new layout is on its way: offered, or waiting for its fades. Its values may already have
+// reached the parameter store at positions where other effects still run.
+bool layoutWaiting() const { return staged != nullptr || rackPending.load(std::memory_order_relaxed) != nullptr; }
+
+bool rackFrozen() const { return layoutWaiting() || bSwitching; }
 
 void retireEffect(fx::Effect* effect) {
     if (effect != nullptr && !fxBin.put(effect) && fxHeldCount < kFxPool)
@@ -153,6 +156,8 @@ void applyStaged() {
             if (snapSmoothing)
                 x.g = x.gTarget; // the first block after a reset: the rack is in place, not fading in
             x.mix.aim(static_cast<float>(plan.values[k][1]), true);
+            for (int f = 0; f < x.params; ++f) // its own values, should it have to set them while another layout waits
+                x.cached[f] = plan.values[k][2 + f];
             x.needsSet = x.snap = true;
             x.effect->setCurves(plan.hasCurve[k][0] ? plan.curves[k][0] : nullptr,
                                 plan.hasCurve[k][1] ? plan.curves[k][1] : nullptr);
@@ -225,11 +230,16 @@ void finishBSwitch() {
     }
 }
 
-// Hands an instance its parameter values (in its own units).
+// Hands an instance its parameter values (in its own units). While a new layout waits, the store
+// can hold another effect's values at this position (a compressor would take a reverb's 12 kHz
+// high cut as 12000 dB of make-up gain, or an empty slot's zeros as a ratio of 0): the instance
+// keeps its own.
 void syncInstance(FxInstance& x) {
-    const int base = reg.fxSlotParam(x.lane, x.pos, 0);
-    for (int k = 0; k < x.params; ++k)
-        x.cached[k] = pe[static_cast<std::size_t>(base + k)];
+    if (!layoutWaiting()) {
+        const int base = reg.fxSlotParam(x.lane, x.pos, 0);
+        for (int k = 0; k < x.params; ++k)
+            x.cached[k] = pe[static_cast<std::size_t>(base + k)];
+    }
     x.effect->set(x.cached, fxCtx, x.snap);
     x.needsSet = x.snap = false;
 }
@@ -301,15 +311,23 @@ void runInstance(FxInstance& x, float* left, float* right, int frames) {
     if (x.idle) {
         while (start < frames && std::abs(left[start]) <= fx::kSilent && std::abs(right[start]) <= fx::kSilent)
             ++start;
-        if (start == frames && x.g >= x.gTarget) {
-            x.ran = false;
-            return;
+        if (start == frames) {
+            // Asleep, it passes the silence on unchanged at any presence, so a fade out (it is
+            // leaving, moving or switched off) is complete at once: a new layout never waits for
+            // an effect that sleeps until the next note.
+            if (x.g > x.gTarget)
+                x.g = x.gTarget;
+            if (x.g >= x.gTarget) {
+                x.ran = false;
+                return;
+            }
         }
         x.idle = false;
         x.silent = 0;
         x.peakIn = x.peakOut = 0.0f;
         x.needsSet = true; // values may have moved while it slept
-        x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(reg.fxSlotMix(x.lane, x.pos))]), false);
+        if (!layoutWaiting())
+            x.mix.aim(static_cast<float>(pe[static_cast<std::size_t>(reg.fxSlotMix(x.lane, x.pos))]), false);
     }
     if (x.needsClear) {
         x.effect->clear();
@@ -512,4 +530,45 @@ void outputStage(float* left, float* right, int frames) {
     } else if (protection == 2) {
         outLimiter.process(left, right, frames, kLimiterCeiling);
     }
+}
+
+// The last line of defence. A sample that is not a finite number stays in every recursive state it
+// reaches (the DC filter, the limiter, effect tails, voice filters) and would silence the
+// instrument until it is reset. Nothing should produce one; if something does, this run is muted,
+// the voices end, those states start again, and the next note plays.
+void guardOutput(float* left, float* right, int frames) {
+    bool finite = true;
+    for (int s = 0; s < frames; ++s)
+        finite = finite && std::isfinite(left[s]) && std::isfinite(right[s]);
+    if (finite)
+        return;
+    std::fill(left, left + frames, 0.0f);
+    std::fill(right, right + frames, 0.0f);
+    dcX[0] = dcX[1] = dcY[0] = dcY[1] = 0.0f;
+    outLimiter.reset();
+    for (int c = 0; c < 2; ++c) {
+        clipUp[c].reset();
+        clipDown[c].reset();
+    }
+    followerLevel = 0.0f;
+    for (FxInstance& x : pool) {
+        if (x.effect == nullptr)
+            continue;
+        x.effect->clear();
+        x.idle = false;
+        x.silent = 0;
+        x.peakIn = x.peakOut = 0.0f;
+        x.needsSet = x.snap = true;
+    }
+    for (int slot = 0; slot < kVoiceSlots; ++slot) {
+        Voice& v = voices[static_cast<std::size_t>(slot)];
+        if (!v.active)
+            continue;
+        v.active = false;
+        v.done = false;
+        allocator.voiceFinished(slot);
+    }
+    activeCount = 0;
+    lastStarted = -1;
+    recoveries.fetch_add(1, std::memory_order_relaxed);
 }
