@@ -409,14 +409,15 @@ void ZederiaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         if (peak > held.load(std::memory_order_relaxed))
             held.store(peak, std::memory_order_relaxed);
     }
-    // The newest output for the spectrum display (mono), and the callback's cost.
+    // Publish the mono output history for the displays, independently of the stereo audio buffer.
     {
         const float* l = buffer.getReadPointer(0);
         const float* r = buffer.getReadPointer(1);
-        int write = outputWrite_.load(std::memory_order_relaxed);
-        for (int i = 0; i < frames; ++i) {
-            outputRing_[static_cast<std::size_t>(write)] = 0.5f * (l[i] + r[i]);
-            write = (write + 1) & (kOutputRing - 1);
+        const int skip = std::max(0, frames - kOutputRing);
+        auto write = outputWrite_.load(std::memory_order_relaxed) + static_cast<std::uint64_t>(skip);
+        for (int i = skip; i < frames; ++i, ++write) {
+            auto& slot = outputRing_[static_cast<std::size_t>(write % kOutputRing)];
+            slot.store({0.5f * (l[i] + r[i]), static_cast<std::uint32_t>(write / kOutputRing)}, std::memory_order_relaxed);
         }
         outputWrite_.store(write, std::memory_order_release);
     }

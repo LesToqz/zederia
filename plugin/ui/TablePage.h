@@ -50,6 +50,10 @@ public:
     juce::Component& waveEditor();
     juce::Component& importWizard();
     void showImport();
+    // The drawing tool (tests and tools): its name as the tool buttons say it ("Free", "Ramp up").
+    juce::String toolName() const;
+    void setTool(const juce::String& name);
+    std::vector<Button*> toolButtons() const; // the common shapes, then More shapes, Snap and Grid
 
 private:
     void reload();
@@ -61,6 +65,8 @@ private:
     void saveTableAs();
     void applyFormula();
     void layoutRightTab();
+    void updateTools();
+    void showMoreShapes();
 
     std::shared_ptr<zed::Wavetable> table_;
     std::shared_ptr<const zed::Wavetable> loaded_; // what the processor had when we last looked
@@ -77,6 +83,10 @@ private:
     std::unique_ptr<ImportWizard> wizard_;
     TabStrip* rightTabs_ = nullptr;
     std::vector<juce::Component*> toolbar_, frameButtons_, waveTools_, formulaParts_;
+    std::vector<std::pair<Button*, int>> shapeButtons_; // the common drawing shapes and their tools
+    Button *moreShapes_ = nullptr, *snap_ = nullptr, *grid_ = nullptr;
+    Caption* frameCaption_ = nullptr;
+    Caption* shapeCaption_ = nullptr;
     TextField formula_{"Formula, for example sin(tau*t) * (1 - y) + saw(t) * y", "Formula"};
     TextField phaseFormula_{"Phase formula (harmonics, optional)", "Phase formula"};
     Caption formulaError_{"", kTextSmall, true};

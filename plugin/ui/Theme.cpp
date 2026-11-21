@@ -1,5 +1,6 @@
 #include "Theme.h"
 
+#include <atomic>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -9,7 +10,7 @@
 namespace zui {
 
 namespace themes {
-extern const std::string_view graphite, paper, contrast; // generated from plugin/themes/*.json
+extern const std::string_view graphite; // generated from plugin/themes/graphite.json
 }
 
 namespace {
@@ -19,7 +20,7 @@ struct Registry {
     juce::StringArray order;
     juce::String current = "Graphite";
     Registry() {
-        for (const auto json : {themes::graphite, themes::paper, themes::contrast}) {
+        for (const auto json : {themes::graphite}) {
             Theme t;
             juce::String error;
             if (Theme::fromJson(std::string(json), t, error)) {
@@ -80,17 +81,7 @@ juce::String chosenFace() {
 
 } // namespace
 
-juce::Colour Theme::accent(Family f) const {
-    switch (f) {
-    case Family::Sources: return sources;
-    case Family::Filters: return filters;
-    case Family::Modulators: return modulators;
-    case Family::Effects: return effects;
-    case Family::Play: return play;
-    case Family::Neutral: break;
-    }
-    return global;
-}
+juce::Colour Theme::accent(Family) const { return control; }
 
 const Theme& Theme::current() {
     auto& r = registry();
@@ -127,7 +118,16 @@ bool Theme::fromJson(const std::string& json, Theme& out, juce::String& error) {
         read("text", t.text); read("textDim", t.textDim); read("textFaint", t.textFaint);
         read("focus", t.focus); read("selection", t.selection); read("warning", t.warning); read("danger", t.danger); read("ok", t.ok);
         read("display", t.display); read("displayGrid", t.displayGrid); read("displayLine", t.displayLine);
-        read("sources", t.sources); read("filters", t.filters); read("modulators", t.modulators); read("effects", t.effects);
+        const auto optional = [&](const char* key, juce::Colour& c, juce::Colour fallback) {
+            c = fallback;
+            if (const auto it = colours.find(key); it != colours.end()) {
+                if (!it->is_string() || !parseColour(it->get<std::string>(), c))
+                    throw std::runtime_error(std::string("colour \"") + key + "\" is not #RRGGBB");
+            }
+        };
+        read("sources", t.sources);
+        optional("control", t.control, t.text);
+        optional("lamp", t.lamp, t.sources); read("filters", t.filters); read("modulators", t.modulators); read("effects", t.effects);
         read("play", t.play); read("global", t.global);
         for (int i = 0; i < 8; ++i)
             read(("mod" + std::to_string(i + 1)).c_str(), t.mod[i]);
@@ -145,17 +145,6 @@ bool Theme::fromJson(const std::string& json, Theme& out, juce::String& error) {
     }
 }
 
-void Theme::addUserThemes(const juce::File& folder) {
-    auto& r = registry();
-    for (const auto& file : folder.findChildFiles(juce::File::findFiles, false, "*.json")) {
-        Theme t;
-        juce::String error;
-        if (fromJson(file.loadFileAsString().toStdString(), t, error) && r.themes.count(t.name) == 0) {
-            r.order.add(t.name);
-            r.themes[t.name] = t;
-        }
-    }
-}
 
 double contrastRatio(juce::Colour a, juce::Colour b) {
     const double la = luminance(a), lb = luminance(b);
@@ -164,8 +153,15 @@ double contrastRatio(juce::Colour a, juce::Colour b) {
 
 // --- Text -------------------------------------------------------------------------------------------
 
+namespace {
+std::atomic<float> gTextScale{1.0f};
+} // namespace
+
+void setTextScale(float scale) { gTextScale = juce::jlimit(0.9f, 1.5f, scale); }
+float textScale() { return gTextScale.load(); }
+
 juce::Font font(float size, bool bold) {
-    return juce::Font(juce::FontOptions(chosenFace(), size, bold ? juce::Font::bold : juce::Font::plain));
+    return juce::Font(juce::FontOptions(chosenFace(), size * textScale(), bold ? juce::Font::bold : juce::Font::plain));
 }
 
 float textWidth(const juce::String& text, float size, bool bold) {
@@ -176,7 +172,7 @@ float textWidth(const juce::String& text, float size, bool bold) {
         std::unordered_map<juce::String, float> values;
     };
     static Widths cache;
-    const juce::String key = text + "\x1f" + juce::String(size, 2) + (bold ? "b" : "");
+    const juce::String key = text + "\x1f" + juce::String(size * textScale(), 2) + (bold ? "b" : "");
     {
         const std::lock_guard<std::mutex> lock(cache.mutex);
         if (const auto it = cache.values.find(key); it != cache.values.end())
@@ -200,13 +196,28 @@ void drawText(juce::Graphics& g, const juce::String& text, juce::Rectangle<float
               juce::Justification just, bool bold) {
     if (text.isEmpty())
         return;
-    if (AuditRecorder::active()) {
-        const float needed = textWidth(text, size, bold);
-        if (needed > box.getWidth() + 0.75f || size < kTextSmall - 0.01f || size > box.getHeight() + 2.0f)
-            AuditRecorder::note({AuditRecorder::painting(), text, box.getWidth(), needed, size});
-    }
-    if (!g.clipRegionIntersects(box.getSmallestIntegerContainer().expanded(2)))
+    const bool auditing = AuditRecorder::active();
+    const bool visible = g.clipRegionIntersects(box.getSmallestIntegerContainer().expanded(2));
+    if (!visible && !auditing)
         return; // outside the area being repainted: laying the glyphs out would be wasted
+    const float scale = textScale();
+    if (scale > 1.0f) {
+        // Larger text where there is room; where there is not, as large as fits, down to the size
+        // the layout was made for (which the snapshot checks have seen fit).
+        const float base = size / scale;
+        const float tallest = (box.getHeight() + 2.0f) / scale;
+        if (size > tallest)
+            size = std::max(base, tallest);
+        while (size > base && textWidth(text, size, bold) > box.getWidth())
+            size = std::max(base, size - 0.25f);
+    }
+    if (auditing) { // what is drawn: the width at the size used, the height in pixels
+        const float needed = textWidth(text, size, bold);
+        if (needed > box.getWidth() + 0.75f || size < kTextSmall / scale - 0.01f || size * scale > box.getHeight() + 2.0f)
+            AuditRecorder::note({AuditRecorder::painting(), text, box.getWidth(), needed, size * scale});
+    }
+    if (!visible)
+        return;
     g.setColour(colour);
     g.setFont(font(size, bold));
     g.drawText(text, box, just, true);

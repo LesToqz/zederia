@@ -146,6 +146,8 @@ public:
     bool rackLocked() const;
     FxSlotStatus fxSlotStatus(int lane, int slot) const noexcept;
     int fxSlotsRunning() const noexcept; // slots that processed audio in the last block
+    // The step of the arpeggiator's lane that sounded last while it runs, -1 when it is not running.
+    int arpStep() const noexcept;
     // The response of an EQ or Filter slot at its current settings, for the display. False when
     // the slot holds another kind of effect.
     bool fxResponse(int lane, int slot, std::span<const double> hz, std::span<float> magnitudeDb) const;

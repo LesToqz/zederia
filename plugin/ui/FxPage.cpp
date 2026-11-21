@@ -105,27 +105,33 @@ public:
     }
     void draw(juce::Graphics& g) override {
         const Theme& t = theme();
-        auto area = getLocalBounds().toFloat().reduced(0.5f);
+        auto area = getLocalBounds().toFloat();
         const bool selected = page_.selectedLane() == lane_ && page_.selectedSlot() == slot_;
-        g.setColour(selected ? t.selection : isMouseOver() ? t.raised.brighter(0.05f) : t.raised);
-        g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(selected ? t.effects : t.line);
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        drawPanel(g, area, selected ? t.selection : isMouseOver() ? t.raised : t.sunken);
         auto inner = area.reduced(6.0f, 0.0f);
         g.setColour(t.textDim);
         g.fillPath(glyphPath(Glyph::Grip, inner.removeFromLeft(8.0f).withSizeKeepingCentre(8.0f, 12.0f)));
         inner.removeFromLeft(6.0f);
+        // The same power glyph as the strip's: a lit lamp when on, a hollow ring when bypassed.
         const bool on = (state_ & 1) != 0;
-        const auto dot = inner.removeFromLeft(8.0f).withSizeKeepingCentre(8.0f, 8.0f);
-        g.setColour(!on ? t.textFaint : (state_ & 2) ? t.textDim : t.effects);
-        if (on)
-            g.fillEllipse(dot);
-        else
-            g.drawEllipse(dot, 1.2f);
+        const auto lamp = inner.removeFromLeft(12.0f).withSizeKeepingCentre(12.0f, 12.0f);
+        if (on) {
+            g.setColour((state_ & 2) ? t.lamp.withAlpha(0.6f) : t.lamp);
+            g.fillEllipse(lamp);
+            g.setColour(t.bg);
+            g.strokePath(glyphPath(Glyph::Power, lamp.reduced(2.6f)), juce::PathStrokeType(1.2f));
+        } else {
+            g.setColour(t.textFaint);
+            g.drawEllipse(lamp.reduced(0.6f), 1.1f);
+            g.strokePath(glyphPath(Glyph::Power, lamp.reduced(2.8f)), juce::PathStrokeType(1.0f));
+        }
         inner.removeFromLeft(6.0f);
-        const juce::String mix = juce::String(juce::roundToInt(mix_ * 100.0)) + " %";
+        const juce::String where = juce::String(lane_ == 0 ? "A" : lane_ == 1 ? "B" : "M") + juce::String(slot_ + 1);
+        drawText(g, where, inner.removeFromLeft(22.0f), kTextSmall, t.textDim);
+        const juce::String mix = on ? juce::String(juce::roundToInt(mix_ * 100.0)) + " %" : juce::String("off");
         drawText(g, mix, inner.removeFromRight(40.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
-        drawText(g, effectName(type_) + ((state_ & 2) && on ? "  idle" : ""), inner, kTextBody, on ? t.text : t.textFaint);
+        const juce::String name = effectName(type_) + ((state_ & 2) && on ? "  idle" : "");
+        drawText(g, name, inner, fittingSize(name, inner.getWidth(), kTextBody, selected), on ? t.text : t.textDim, juce::Justification::centredLeft, selected);
         drawFocus(g, getLocalBounds().toFloat());
     }
     void mouseDown(const juce::MouseEvent& e) override {
@@ -265,12 +271,6 @@ int paramIndexOf(const zed::EffectType& type, const std::string& id) {
         if (const auto& p = type.params[static_cast<std::size_t>(k)]; p.pointer == id || p.id.substr(p.id.rfind('.') + 1) == id)
             return k;
     return -1;
-}
-
-juce::Colour effectHue(int type) {
-    // One hue per effect type, spread around the family's accent so a chain reads at a glance.
-    const juce::Colour base = theme().effects;
-    return base.withRotatedHue(static_cast<float>(type) * 0.071f);
 }
 
 void showSlotMenu(Context& ctx, FxPage& page, int lane, int slot, juce::Component* target) {
@@ -530,8 +530,10 @@ public:
     bool tick() override {
         const auto status = ctx_.processor.engine().fxSlotStatus(lane_, slot_);
         const bool idle = status.idle;
-        if (idle != idle_) {
+        const bool on = ctx_.processor.plainValue(reg().fxSlotOn(lane_, slot_)) >= 0.5;
+        if (idle != idle_ || on != onShown_) {
             idle_ = idle;
+            onShown_ = on;
             return true;
         }
         return false;
@@ -541,21 +543,25 @@ public:
     void draw(juce::Graphics& g) override {
         const Theme& t = theme();
         const auto area = getLocalBounds().toFloat();
-        const juce::Colour hue = effectHue(type_);
         background_.draw(g, getLocalBounds(), 0, true, [&](juce::Graphics& bg) {
             bg.fillAll(t.bg);
             drawPanel(bg, area, t.panel);
-            // The name plate.
-            const auto plate = area.withWidth(122.0f).reduced(3.0f);
-            drawPlate(bg, plate, t.radius - 1.0f);
-            bg.setColour(hue);
-            bg.fillRoundedRectangle(plate.withWidth(4.0f).reduced(0.0f, 6.0f), 2.0f);
+            // The name plate: the effect's name, its address in the rack and its power.
+            drawPlate(bg, area.withWidth(122.0f).reduced(1.0f));
         });
         const bool on = ctx_.processor.plainValue(reg().fxSlotOn(lane_, slot_)) >= 0.5;
-        drawText(g, effectName(type_).toUpperCase(), juce::Rectangle<float>(36.0f, 10.0f, 82.0f, 20.0f), fittingSize(effectName(type_).toUpperCase(), 82.0f, kTextBody, true), on ? t.text : t.textFaint,
+        const bool selected = page_.selectedLane() == lane_ && page_.selectedSlot() == slot_;
+        // Match the nameplate on the unit to the selected row in the chain. The controls keep
+        // their native plate and a long rack keeps its horizontal seams.
+        if (selected)
+            drawPanel(g, area.withWidth(122.0f).reduced(1.0f), t.selection);
+        const auto name = effectName(type_).toUpperCase();
+        drawText(g, name, {36.0f, 10.0f, 82.0f, 20.0f}, fittingSize(name, 82.0f, kTextTitle, true), on ? t.text : t.textDim,
                  juce::Justification::centredLeft, true);
         juce::String where = juce::String(lane_ == 0 ? "A" : lane_ == 1 ? "B" : "M") + juce::String(slot_ + 1);
-        if (idle_ && on)
+        if (!on)
+            where << "  bypassed";
+        else if (idle_)
             where << "  idle";
         drawText(g, where, juce::Rectangle<float>(14.0f, 34.0f, 100.0f, 14.0f), kTextSmall, t.textDim);
         // Group names and the grooves between groups.
@@ -566,10 +572,6 @@ public:
             g.fillRect(d);
             g.setColour(juce::Colours::white.withAlpha(t.dark ? 0.05f : 0.4f));
             g.fillRect(d.translated(1, 0));
-        }
-        if (page_.selectedLane() == lane_ && page_.selectedSlot() == slot_) {
-            g.setColour(hue.withAlpha(0.85f));
-            g.drawRoundedRectangle(area.reduced(0.5f), t.radius, 1.4f);
         }
     }
     void mouseDown(const juce::MouseEvent& e) override {
@@ -638,6 +640,7 @@ private:
     CurveEditor* curves_[2] = {nullptr, nullptr};
     std::array<int, 5> state_{};
     bool idle_ = false;
+    bool onShown_ = true;
     CachedDrawing background_;
 };
 
@@ -765,18 +768,60 @@ private:
     std::vector<std::unique_ptr<SlotRow>> rows_;
 };
 
-// The rack: the selected lane's effects as strips, top to bottom in signal order.
+// The first empty position of the lane in the rack: a quiet bay with the add action where the
+// next effect will go (the chain's own menu of effects).
+class AddBay final : public juce::Component {
+public:
+    explicit AddBay(FxPage& page) : page_(page) {
+        setTitle("Empty rack position");
+        add_.textSize = kTextSmall + 0.5f;
+        add_.setHelp("Add effect", "Puts an effect at this position of the lane; any effect, any number of times, up to eight per lane.");
+        add_.onClick = [this] {
+            juce::PopupMenu menu;
+            const int lane = lane_, at = page_.slotCount(lane_);
+            FxPage* p = &page_;
+            addEffectsMenu(menu, [p, lane, at](int t) { p->insertEffect(lane, at, t); });
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&add_));
+        };
+        addAndMakeVisible(add_);
+    }
+    void setLane(int lane, int position) {
+        lane_ = lane;
+        position_ = position;
+        add_.setText("Add effect to " + juce::String(kLaneNames[lane]));
+        add_.setTitle("Add an effect at " + address() + " of " + juce::String(kLaneNames[lane]));
+        repaint();
+    }
+    juce::String address() const { return juce::String(lane_ == 0 ? "A" : lane_ == 1 ? "B" : "M") + juce::String(position_ + 1); }
+    Button& addButton() { return add_; }
+    void resized() override { add_.setBounds(getLocalBounds().reduced(14, 0).withSizeKeepingCentre(200, 28).withX(122 + 10)); }
+    void paint(juce::Graphics& g) override {
+        const Theme& t = theme();
+        drawPanel(g, getLocalBounds().toFloat(), t.raised);
+        drawText(g, address(), juce::Rectangle<float>(14.0f, 0.0f, 100.0f, static_cast<float>(getHeight())), kTextSmall, t.textDim);
+    }
+
+private:
+    FxPage& page_;
+    int lane_ = 0, position_ = 0;
+    Button add_{"Add effect", Glyph::Plus};
+};
+
+// The rack: the selected lane's effects as strips, top to bottom in signal order, and the bay of
+// its first empty position. The rest of the rack is plain enclosure.
 class SlotDetail final : public juce::Component {
 public:
-    SlotDetail(Context& ctx, FxPage& page) : ctx_(ctx), page_(page) {
+    SlotDetail(Context& ctx, FxPage& page) : ctx_(ctx), page_(page), bay_(page) {
         setTitle("Rack");
         viewport_.setViewedComponent(&content_, false);
         viewport_.setTitle("Effects of the lane");
         content_.setTitle("Effect strips");
         viewport_.setScrollBarsShown(true, false);
         viewport_.setScrollBarThickness(10);
+        content_.addChildComponent(bay_);
         addAndMakeVisible(viewport_);
     }
+    AddBay& bay() { return bay_; }
     void show(int lane, int slot) {
         if (lane != lane_ || strips_.empty() != (page_.slotCount(lane) == 0) || static_cast<int>(strips_.size()) != page_.slotCount(lane) || stale_) {
             lane_ = lane;
@@ -813,33 +858,34 @@ public:
         viewport_.setBounds(getLocalBounds());
         layoutStrips();
     }
-    void paint(juce::Graphics& g) override {
-        if (!strips_.empty())
-            return;
-        const Theme& t = theme();
-        const auto area = getLocalBounds().toFloat();
-        drawPanel(g, area, t.panel);
-        drawText(g, "No effects in " + juce::String(kLaneNames[lane_]) + " yet: add one from the chain on the left.", area, kTextBody, t.textDim,
-                 juce::Justification::centred);
-    }
+    void paint(juce::Graphics& g) override { drawWell(g, getLocalBounds().toFloat()); }
     int strips() const { return static_cast<int>(strips_.size()); }
 
 private:
     void layoutStrips() {
-        const int width = viewport_.getWidth() - viewport_.getScrollBarThickness() - 2;
+        const int width = viewport_.getWidth() - viewport_.getScrollBarThickness();
         int y = 0;
         for (auto& s : strips_) {
             const int h = s->layoutAt(width);
             s->setBounds(0, y, width, h);
-            y += h + 8;
+            y += h;
         }
-        content_.setSize(juce::jmax(1, width), juce::jmax(1, y - 8));
+        const int count = static_cast<int>(strips_.size());
+        const bool room = lane_ >= 0 && count < zed::kNumFxSlots;
+        bay_.setVisible(room);
+        if (room) {
+            bay_.setLane(lane_, count);
+            bay_.setBounds(0, y, width, 52);
+            y += 52;
+        }
+        content_.setSize(juce::jmax(1, width), juce::jmax(1, y));
         repaint();
     }
     Context& ctx_;
     FxPage& page_;
     juce::Viewport viewport_;
     juce::Component content_;
+    AddBay bay_;
     std::vector<std::unique_ptr<EffectStrip>> strips_;
     int lane_ = -1;
     bool stale_ = true;
@@ -978,11 +1024,9 @@ int FxPage::slotType(int lane, int slot) const {
 void FxPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void FxPage::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds();
     auto left = area.removeFromLeft(236);
-    area.removeFromLeft(8);
     rackCard_->setBounds(left.removeFromBottom(214));
-    left.removeFromBottom(8);
     lanes_.front()->setBounds(left);
     detail_->setBounds(area);
 }

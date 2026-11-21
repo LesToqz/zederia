@@ -3,6 +3,7 @@
 #include "Audit.h"
 #include "CurveEditor.h"
 
+#include "zederia/engine/ModMath.h"
 #include "zederia/patch/Modules.h"
 
 #include <set>
@@ -26,6 +27,7 @@ juce::String destName(int dest, const ZederiaProcessor& p) {
 }
 
 const char* const kCurveNames[5] = {"Linear", "Exp", "Log", "S", "Drawn"};
+constexpr int kAmountColumnWidth = 166;
 
 } // namespace
 
@@ -38,14 +40,18 @@ public:
         amount_.family = Family::Modulators;
         amount_.labelLeft = true;
         amount_.labelledBy = "Amount";
+        addMouseListener(this, true);
         for (juce::Component* c : std::initializer_list<juce::Component*>{&select_, &number_, &on_, &source_, &via_, &amount_, &polarity_, &curve_,
                                                                            &dest_, &mute_, &solo_, &remove_})
             addAndMakeVisible(c);
-        for (Button* b : {&select_, &on_, &mute_, &solo_})
+        for (Button* b : {&on_, &mute_, &solo_})
             b->toggleRole = true;
+        select_.checkbox = true; // a checkbox for bulk edits, apart from the route's own switches
         for (Button* b : {&select_, &on_, &source_, &via_, &polarity_, &curve_, &dest_, &mute_, &solo_, &remove_})
             b->textSize = kTextSmall;
         remove_.ghost = true;
+        source_.leftAlign = dest_.leftAlign = true;
+        dest_.boldText = true;
         select_.onClick = [this] { page_.setSelected(route_, !select_.toggled()); };
         on_.onClick = [this] { ctx_.session.setRouteEnabled(route_, !on_.toggled()); };
         mute_.onClick = [this] { ctx_.session.setRouteMute(route_, !mute_.toggled()); };
@@ -118,25 +124,33 @@ public:
     }
     void setSelectedLook(bool selected) {
         select_.setToggled(selected);
-        select_.glyph = selected ? Glyph::Close : Glyph::None;
         select_.repaint();
     }
     void resized() override {
         auto area = getLocalBounds().reduced(4, 3);
         area.removeFromLeft(4);
-        placeRow(area, {{&select_, 22}, {&number_, 24}, {&on_, 36}, {&source_, 108}, {&via_, 112}, {&amount_, 190}, {&polarity_, 38},
+        placeRow(area, {{&select_, 22}, {&number_, 24}, {&on_, 36}, {&source_, 108}, {&via_, 112}, {&amount_, kAmountColumnWidth}, {&polarity_, 38},
                         {&curve_, 66}, {&dest_, 230}, {&mute_, 26}, {&solo_, 26}, {&remove_, 24}},
                  4);
+        source_.setBounds(source_.getBounds().withTrimmedLeft(13));
     }
     void paint(juce::Graphics& g) override {
         const Theme& t = theme();
-        const auto area = getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(focused ? t.selection : t.panel);
-        g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(colour_.withAlpha(audible_ ? 1.0f : 0.35f));
-        g.fillRoundedRectangle(area.withWidth(3.0f).reduced(0.0f, 4.0f), 1.5f);
+        const auto area = getLocalBounds().toFloat();
+        drawPanel(g, area, focused ? t.selection : t.panel);
+        const auto socket = juce::Rectangle<float>(8.0f, 8.0f).withCentre({source_.getX() - 7.0f, area.getCentreY()});
+        g.setColour(t.bg);
+        g.fillEllipse(socket);
+        g.setColour(audible_ ? colour_ : t.textFaint);
+        if (audible_) g.fillEllipse(socket.reduced(1.5f));
+        else g.drawEllipse(socket.reduced(1.5f), 1.0f);
     }
-    void mouseDown(const juce::MouseEvent&) override { page_.focusRoute(route_); }
+    void mouseDown(const juce::MouseEvent&) override {
+        if (!focused) page_.focusRoute(route_);
+    }
+    void focusOfChildComponentChanged(FocusChangeType) override {
+        if (!focused && hasKeyboardFocus(true)) page_.focusRoute(route_);
+    }
     int route() const { return route_; }
     bool focused = false;
 
@@ -174,8 +188,13 @@ ModPage::ModPage(Context& ctx) : Page(ctx) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&search_, &sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_, &count_,
                                                                        &detailTitle_, &detailText_})
         addAndMakeVisible(c);
-    for (Button* b : {&sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_})
+    for (Button* b : {&sort_, &add_, &replace_, &mute_, &remove_, &selectAll_, &map_, &clearSearch_})
         b->textSize = kTextSmall + 0.5f;
+    add_.accentStyle = true; // the one primary action of the page
+    addChildComponent(clearSearch_);
+    markOverlay(clearSearch_); // it sits in the empty list, under the message
+    clearSearch_.setHelp("Clear search", "Show every route again.");
+    clearSearch_.onClick = [this] { setSearch({}); };
     search_.onTextChange = [this] { rebuild(); };
     sort_.setHelp("Sort", "Order the routes by number, source, destination or amount.");
     sort_.onClick = [this] {
@@ -228,14 +247,18 @@ ModPage::ModPage(Context& ctx) : Page(ctx) {
             return true;
         });
         selected_.clear();
+        updateActions();
     };
+    selectAll_.setHelp("Select all", "Checks every route the list shows (with a search, the routes that match it); again to clear.");
     selectAll_.onClick = [this] {
-        if (selected_.size() == shown_.size())
-            selected_.clear();
+        if (allShownSelected())
+            for (const int r : shown_)
+                selected_.erase(r);
         else
             selected_.insert(shown_.begin(), shown_.end());
         for (auto& r : rows_)
             r->setSelectedLook(selected_.count(r->route()) > 0);
+        updateActions();
     };
     map_.setHelp("Mod map", "Every connection drawn over the SYNTH page at once.");
     map_.onClick = [this] { if (onShowMap) onShowMap(); };
@@ -288,7 +311,32 @@ void ModPage::setSelected(int route, bool selected) {
         selected_.erase(route);
     for (auto& r : rows_)
         r->setSelectedLook(selected_.count(r->route()) > 0);
+    updateActions();
 }
+
+bool ModPage::allShownSelected() const {
+    if (shown_.empty())
+        return false;
+    for (const int r : shown_)
+        if (selected_.count(r) == 0)
+            return false;
+    return true;
+}
+
+void ModPage::updateActions() {
+    const int n = static_cast<int>(selected_.size());
+    for (Button* b : {&replace_, &mute_, &remove_})
+        b->setEnabledState(n > 0);
+    replace_.setText(n > 1 ? "Replace source (" + juce::String(n) + ")" : juce::String("Replace source"));
+    mute_.setText(n > 1 ? "Mute " + juce::String(n) + " selected" : juce::String("Mute selected"));
+    remove_.setText(n > 1 ? "Remove " + juce::String(n) + " selected" : juce::String("Remove selected"));
+    selectAll_.setEnabledState(!shown_.empty());
+    selectAll_.setText(allShownSelected() ? "Clear selection" : "Select all");
+    clearSearch_.setVisible(search_.getText().isNotEmpty() && shown_.empty() && !ctx_.routes().empty());
+    resized();
+}
+
+bool ModPage::inspectorShown() const { return ctx_.route(focus_) != nullptr; }
 
 void ModPage::replaceSelectedSource(const juce::String& source) { ctx_.session.replaceSource(selectedRoutes(), source); }
 
@@ -308,10 +356,11 @@ void ModPage::focusRoute(int route) {
         r->repaint();
     }
     const auto* r = ctx_.route(route);
-    if (r == nullptr) {
+    if (r == nullptr) { // no details without a route to inspect
         curve_->setVisible(false);
-        detailTitle_.setText("No route chosen");
-        detailText_.setText("Click a route to see its curve and details.");
+        detailTitle_.setText({});
+        detailText_.setText(ctx_.routes().empty() ? juce::String() : juce::String("Click a route to inspect it."));
+        repaint();
         return;
     }
     detailTitle_.setText("Route " + juce::String(route + 1) + ":  " + Context::sourceName(str(r->route.source)) + " > " + destName(r->dest, ctx_.processor));
@@ -321,8 +370,9 @@ void ModPage::focusRoute(int route) {
         zed::Shape shape = r->route.curveShape;
         curve_->setShape(shape);
     }
-    detailText_.setText(drawn ? "Draw how the source maps onto the destination." : "Choose Drawn as the curve to draw one; other curves are fixed shapes.");
+    detailText_.setText(drawn ? "Draw how the source maps onto the destination." : juce::String(kCurveNames[static_cast<int>(r->route.curve)]) + "  /  Curve response");
     resized();
+    repaint();
 }
 
 bool ModPage::reveal(const juce::String& module) {
@@ -382,6 +432,7 @@ void ModPage::rebuild() {
                    juce::String(zed::kNumModRoutes - static_cast<int>(ctx_.routes().size())) + " free");
     layoutRows();
     focusRoute(focus_ < static_cast<int>(ctx_.routes().size()) ? focus_ : -1);
+    updateActions();
 }
 
 void ModPage::layoutRows() {
@@ -389,23 +440,23 @@ void ModPage::layoutRows() {
     int y = 0;
     for (auto& r : rows_) {
         r->setBounds(0, y, w, 32);
-        y += 34;
+        y += 32;
     }
     list_.setSize(w, juce::jmax(y, viewport_.getHeight()));
 }
 
 void ModPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto toolbar = area.removeFromTop(30);
+    auto area = getLocalBounds();
+    auto toolbar = area.removeFromTop(42).reduced(8, 6);
     search_.setBounds(toolbar.removeFromLeft(300));
     toolbar.removeFromLeft(8);
-    placeRow(toolbar, {{&sort_, 140}, {&add_, 104}, {&replace_, 120}, {&mute_, 116}, {&remove_, 136}, {&selectAll_, 86}, {&map_, 126}}, 6);
-    area.removeFromTop(8);
+    placeRow(toolbar, {{&add_, 104}, {&sort_, 130}, {&replace_, 140}, {&mute_, 130}, {&remove_, 150}, {&selectAll_, 110}, {&map_, 126}}, 6);
     auto right = area.removeFromRight(360);
-    area.removeFromRight(8);
+    area.reduce(4, 0);
     count_.setBounds(area.removeFromTop(16).withTrimmedLeft(8)); // inside the list's panel, in line with the column titles
     area.removeFromTop(22); // column titles
     viewport_.setBounds(area);
+    clearSearch_.setBounds(juce::Rectangle<int>(130, 26).withCentre({area.getCentreX(), area.getY() + 68}));
     layoutRows();
     right = right.reduced(10, 0).withTrimmedTop(6); // inside its panel
     detailTitle_.setBounds(right.removeFromTop(20));
@@ -417,21 +468,55 @@ void ModPage::resized() {
 void ModPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
     const auto list = viewport_.getBounds();
-    // The list's panel holds the count and the column titles, its top in line with the detail panel's.
-    drawPanel(g, list.toFloat().expanded(4.0f, 0.0f).withTop(static_cast<float>(count_.getY()) - 4.0f).withBottom(static_cast<float>(list.getBottom()) + 4.0f), t.sunken);
+    auto surface = getLocalBounds();
+    drawPlate(g, surface.removeFromTop(count_.getY()).toFloat());
+    drawPanel(g, surface.removeFromRight(360).toFloat(), inspectorShown() ? t.panel : t.raised);
+    drawWell(g, surface.toFloat());
+    // The four factory curves and the drawn editor occupy the same instrument window. Fixed
+    // curves show the exact magnitude transfer used in the engine, before Via and Amount.
+    if (const auto* route = ctx_.route(focus_); route != nullptr && route->route.curve != zed::ModCurve::Drawn) {
+        const auto glass = curve_->getBounds().toFloat();
+        drawWell(g, glass);
+        auto field = glass.reduced(14.0f, 10.0f);
+        drawText(g, "Output magnitude", field.removeFromTop(17.0f), kTextSmall, t.textDim);
+        auto axis = field.removeFromBottom(17.0f);
+        drawText(g, "0", axis.removeFromLeft(36.0f), kTextSmall, t.textDim);
+        drawText(g, "1", axis.removeFromRight(36.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
+        drawText(g, "Input magnitude", axis, kTextSmall, t.textDim, juce::Justification::centred);
+        g.setColour(t.displayGrid);
+        for (int i = 0; i <= 4; ++i) {
+            g.drawHorizontalLine(juce::roundToInt(field.getY() + field.getHeight() * i / 4.0f), field.getX(), field.getRight());
+            g.drawVerticalLine(juce::roundToInt(field.getX() + field.getWidth() * i / 4.0f), field.getY(), field.getBottom());
+        }
+        juce::Path line;
+        line.startNewSubPath(field.getBottomLeft());
+        for (int i = 1; i <= 96; ++i) {
+            const float x = i / 96.0f;
+            const float y = zed::modCurve(route->route.curve, x, nullptr);
+            line.lineTo(field.getX() + x * field.getWidth(), field.getBottom() - y * field.getHeight());
+        }
+        auto fill = line;
+        fill.lineTo(field.getBottomRight());
+        fill.closeSubPath();
+        g.setColour(route->colour.withAlpha(0.11f));
+        g.fillPath(fill);
+        strokeGlow(g, line, route->colour, 1.7f);
+    }
     auto header = juce::Rectangle<int>(list.getX() + 8, list.getY() - 22, list.getWidth(), 18);
     for (const auto& [title, w] : std::initializer_list<std::pair<const char*, int>>{
-             {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", 190}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},
+             {"", 22}, {"#", 24}, {"On", 36}, {"Source", 108}, {"Via", 112}, {"Amount", kAmountColumnWidth}, {"Pol", 38}, {"Curve", 66}, {"Destination", 230},
              {"M", 26}, {"S", 26}}) {
         drawText(g, title, header.removeFromLeft(w).toFloat(), kTextSmall, t.textDim, juce::Justification::centredLeft, true);
         header.removeFromLeft(4);
     }
-    if (rows_.empty())
-        drawText(g, ctx_.routes().empty() ? "No routes yet. Drag a modulator chip onto any control, or use Add route."
-                                          : "No route matches the search.",
-                 list.toFloat().withHeight(60.0f), kTextBody, t.textDim, juce::Justification::centred);
-    const auto right = getLocalBounds().reduced(8).removeFromRight(360).withTrimmedTop(38);
-    drawPanel(g, right.toFloat().withTrimmedTop(-4.0f), t.panel);
+    if (rows_.empty()) {
+        // One message, where the routes would be: no routes yet, or none that match the search
+        // (with Clear search under it).
+        const juce::String message = ctx_.routes().empty() ? juce::String("No routes yet. Drag a modulator chip onto any control, or use Add route.")
+                                                           : "No route matches \"" + search_.getText().trim() + "\".";
+        const auto box = list.toFloat().withHeight(44.0f).translated(0.0f, 8.0f).reduced(12.0f, 0.0f);
+        drawText(g, message, box, fittingSize(message, box.getWidth(), kTextBody), t.textDim, juce::Justification::centred);
+    }
 }
 
 } // namespace zui

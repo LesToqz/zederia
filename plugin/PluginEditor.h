@@ -51,11 +51,17 @@ public:
     void showPalette();
     void showPrefs();
     void toggleHistory();
+    void toggleOutputMonitor();
     void setModMap(bool shown);
     bool modMapShown() const { return modMap_.isVisible(); }
     void openParamMenu(zui::ParamWidget& widget);
     void showMainMenu();
     void savePresetAs();
+    // What the save dialog does: name, location inside the Presets folder ("User Presets/My Pack";
+    // missing folders are made), type and comma-separated tags. False with a message on failure.
+    bool savePresetTo(const juce::String& name, const juce::String& location, const juce::String& type, const juce::String& tags, juce::String& error,
+                      juce::File* saved = nullptr);
+    juce::String defaultSaveLocation() const; // the dialog's first location
     void closeOverlays();
 
     // --- Frame clock --------------------------------------------------------------------------------
@@ -68,6 +74,7 @@ public:
     zui::Context& context() { return ctx_; }
     juce::Component& content();
     zui::TopBar& topBar() { return *topBar_; }
+    zui::OutputPanel& output() { return *output_; }
     zui::HelpStrip& helpStrip() { return *help_; }
     zui::ModDock& dock() { return *dock_; }
     zui::KeyboardLayer& keyboardLayer() { return *keys_; }
@@ -102,6 +109,9 @@ private:
     zui::Context ctx_;
     std::unique_ptr<Root> root_;
     std::unique_ptr<zui::TopBar> topBar_;
+    std::unique_ptr<zui::OutputPanel> output_;
+    std::unique_ptr<zui::OutputMonitor> monitor_;
+    std::unique_ptr<zui::Nameplate> nameplate_;
     std::unique_ptr<zui::TabStrip> tabs_;
     zui::Button simpleButton_{"Simple"}, mapButton_{"Mod map", zui::Glyph::Map}, findButton_{"Find", zui::Glyph::Search},
         prefsButton_{"", zui::Glyph::Gear};

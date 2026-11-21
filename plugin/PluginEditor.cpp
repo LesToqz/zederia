@@ -42,7 +42,7 @@ juce::StringArray ZederiaEditor::pageNames() { return {"SYNTH", "FX", "MOD", "TA
 ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     : juce::AudioProcessorEditor(processor), processor_(processor), ctx_(processor), modMap_(ctx_) {
     Theme::setCurrent(ctx_.prefs.theme);
-    Theme::addUserThemes(ctx_.prefs.userContentFolder().getChildFile("Themes"));
+    setTextScale(static_cast<float>(ctx_.prefs.textSize) / 100.0f);
     lnf_.applyTheme();
     setLookAndFeel(&lnf_);
     setTitle("Zederia");
@@ -51,6 +51,11 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     addAndMakeVisible(*root_);
 
     topBar_ = std::make_unique<TopBar>(ctx_);
+    output_ = std::make_unique<OutputPanel>(ctx_);
+    nameplate_ = std::make_unique<Nameplate>(ctx_);
+    monitor_ = std::make_unique<OutputMonitor>(ctx_, output_->scope);
+    output_->scope.onClick = [this] { toggleOutputMonitor(); };
+    monitor_->close.onClick = [this] { toggleOutputMonitor(); };
     tabs_ = std::make_unique<TabStrip>(pageNames());
     tabs_->large = true;
     tabs_->setTitle("Pages");
@@ -58,14 +63,15 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     dock_ = std::make_unique<ModDock>(ctx_);
     keys_ = std::make_unique<KeyboardLayer>(ctx_);
     help_ = std::make_unique<HelpStrip>();
+    markOverlay(*help_); // while hidden in the preferences it shows its messages over the keyboard's lower edge
     hoverList_ = std::make_unique<ModHoverList>(ctx_);
     palette_ = std::make_unique<CommandPalette>(ctx_);
     prefs_ = std::make_unique<PrefsPanel>(ctx_);
     history_ = std::make_unique<HistoryPanel>(ctx_);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
+    for (juce::Component* c : std::initializer_list<juce::Component*>{topBar_.get(), output_.get(), nameplate_.get(), tabs_.get(), &simpleButton_, &mapButton_, &findButton_,
                                                                        &prefsButton_, dock_.get(), keys_.get(), help_.get()})
         root_->addAndMakeVisible(c);
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get()})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&modMap_, hoverList_.get(), history_.get(), palette_.get(), prefs_.get(), monitor_.get()})
         root_->addChildComponent(c);
 
     simpleButton_.toggleRole = true;
@@ -147,7 +153,7 @@ ZederiaEditor::~ZederiaEditor() {
 void ZederiaEditor::paint(juce::Graphics& g) { g.fillAll(theme().bg); }
 
 juce::Rectangle<int> ZederiaEditor::pageArea() const {
-    auto area = juce::Rectangle<int>(kBaseWidth, kBaseHeight).withTrimmedTop(kHeaderHeight);
+    auto area = juce::Rectangle<int>(kBaseWidth, kBaseHeight).reduced(kChassisInset, 0).withTrimmedTop(kHeaderHeight);
     if (ctx_.prefs.helpStrip)
         area.removeFromBottom(kHelpStripHeight);
     area.removeFromBottom(kKeyboardHeight + kDockHeight);
@@ -171,43 +177,9 @@ void ZederiaEditor::paintFrame(juce::Graphics& g) {
 void ZederiaEditor::paintHeader(juce::Graphics& g) {
     const Theme& t = theme();
     drawChassis(g, juce::Rectangle<float>(static_cast<float>(kBaseWidth), static_cast<float>(kHeaderHeight)));
-    // One machined plate across the top, the logo on its own plate at the left.
-    const auto header = juce::Rectangle<float>(4.0f, 4.0f, kBaseWidth - 8.0f, kHeaderHeight - 6.0f);
-    drawPanel(g, header, t.panel);
-    for (const auto& p : {juce::Point<float>(header.getRight() - 8.0f, header.getY() + 8.0f), juce::Point<float>(header.getRight() - 8.0f, header.getBottom() - 8.0f)})
-        drawScrew(g, p, 2.8f, p.y * 0.1f);
-    const auto logo = juce::Rectangle<float>(10.0f, 9.0f, static_cast<float>(kLogoWidth) - 8.0f, kHeaderHeight - 16.0f);
-    drawWell(g, logo);
-    for (const auto& p : {logo.getTopLeft().translated(7.0f, 7.0f), logo.getTopRight().translated(-7.0f, 7.0f), logo.getBottomLeft().translated(7.0f, -7.0f),
-                          logo.getBottomRight().translated(-7.0f, -7.0f)})
-        drawScrew(g, p, 2.4f, p.x * 0.05f);
-    // The wordmark, spaced out, over a small wave that turns from sine to saw.
-    const juce::String word = "ZEDERIA";
-    const juce::Font mark = font(19.0f, true);
-    float width = 0.0f;
-    for (int i = 0; i < word.length(); ++i)
-        width += juce::GlyphArrangement::getStringWidth(mark, word.substring(i, i + 1)) + (i + 1 < word.length() ? 3.0f : 0.0f);
-    float x = logo.getCentreX() - width * 0.5f;
-    const float y = logo.getY() + 9.0f;
-    g.setFont(mark);
-    for (int i = 0; i < word.length(); ++i) {
-        const juce::String ch = word.substring(i, i + 1);
-        const float w = juce::GlyphArrangement::getStringWidth(mark, ch);
-        g.setColour(juce::Colours::black.withAlpha(0.6f));
-        g.drawText(ch, juce::Rectangle<float>(x, y + 1.0f, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
-        g.setColour(t.displayLine);
-        g.drawText(ch, juce::Rectangle<float>(x, y, w + 2.0f, 24.0f), juce::Justification::centredLeft, false);
-        x += w + 3.0f;
-    }
-    juce::Path wave;
-    const float wy = logo.getBottom() - 16.0f, wx0 = logo.getX() + 22.0f, wx1 = logo.getRight() - 22.0f;
-    for (int i = 0; i <= 64; ++i) {
-        const float u = static_cast<float>(i) / 64.0f;
-        const float shape = std::sin(u * juce::MathConstants<float>::twoPi * 3.0f) * (1.0f - u) + (std::fmod(u * 3.0f, 1.0f) * 2.0f - 1.0f) * u;
-        const juce::Point<float> p(wx0 + (wx1 - wx0) * u, wy - shape * 5.0f);
-        if (i == 0) wave.startNewSubPath(p); else wave.lineTo(p);
-    }
-    strokeGlow(g, wave, t.accent(Family::Sources), 1.3f);
+    const auto header = juce::Rectangle<int>(0, 4, kBaseWidth, kHeaderHeight - 4).reduced(kChassisInset, 0).toFloat();
+    drawPanel(g, header, t.raised);
+    drawPanel(g, header.withTrimmedLeft(header.getWidth() - kOutputWidth), t.bg);
 }
 
 void ZederiaEditor::resized() {
@@ -226,13 +198,21 @@ void ZederiaEditor::applyLayout() {
         return;
     const juce::ScopedValueSetter<bool> guard(layingOut_, true);
     auto area = root_->getLocalBounds();
-    // Header: the logo, then the preset bar over the page tabs.
-    auto header = area.removeFromTop(kHeaderHeight).withTrimmedLeft(kLogoWidth + 6).withTrimmedRight(14);
-    topBar_->setBounds(header.removeFromTop(kTopBarHeight + 4).withTrimmedTop(4));
-    auto tabRow = header.removeFromTop(kTabsHeight - 2);
-    help_->setVisible(ctx_.prefs.helpStrip);
+    // Header: the logo, then the preset bar over the page tabs, and the output (meter and Master)
+    // in a column of its own at the right, as tall as both rows.
+    auto header = area.removeFromTop(kHeaderHeight).reduced(kChassisInset, 0).withTrimmedTop(4);
+    nameplate_->setBounds(header.removeFromLeft(kLogoWidth));
+    output_->setBounds(header.removeFromRight(kOutputWidth).reduced(2, 2));
+    topBar_->setBounds(header.removeFromTop(kTopBarHeight));
+    auto tabRow = header.reduced(0, 1);
+    // A hidden help strip still shows messages ("Saved ...", errors) over the bottom edge for a few seconds.
+    help_->messageOnly = !ctx_.prefs.helpStrip;
+    help_->setVisible(ctx_.prefs.helpStrip || help_->showingMessage());
     if (ctx_.prefs.helpStrip)
         help_->setBounds(area.removeFromBottom(kHelpStripHeight));
+    else
+        help_->setBounds(area.withTop(area.getBottom() - kHelpStripHeight));
+    area.reduce(kChassisInset, 0);
     keys_->setBounds(area.removeFromBottom(kKeyboardHeight));
     dock_->setBounds(area.removeFromBottom(kDockHeight));
     tabRow.reduce(8, 0);
@@ -257,8 +237,9 @@ void ZederiaEditor::applyLayout() {
     modMap_.setBounds(area);
     modMap_.scope = root_.get();
     palette_->setBounds(juce::Rectangle<int>(560, 420).withCentre(root_->getLocalBounds().getCentre()).withY(80));
-    prefs_->setBounds(juce::Rectangle<int>(520, 600).withCentre(root_->getLocalBounds().getCentre()));
+    prefs_->setBounds(juce::Rectangle<int>(520, 640).withCentre(root_->getLocalBounds().getCentre()));
     history_->setBounds(juce::Rectangle<int>(360, 460).withPosition(330 + kLogoWidth, kHeaderHeight - 30));
+    monitor_->setBounds(area.getRight() - 714, kHeaderHeight, 714, 254);
     if (isTimerRunning())
         startTimerHz(ctx_.prefs.frameCap);
     applyRenderer();
@@ -266,8 +247,10 @@ void ZederiaEditor::applyLayout() {
 
 void ZederiaEditor::applyTheme() {
     Theme::setCurrent(ctx_.prefs.theme);
+    setTextScale(static_cast<float>(ctx_.prefs.textSize) / 100.0f);
     lnf_.applyTheme();
     sendLookAndFeelChange();
+    applyLayout(); // some parts size themselves to their text
     repaint();
 }
 
@@ -379,6 +362,7 @@ void ZederiaEditor::showPage(int id) {
     if (id < tabs_->count())
         tabs_->setSelected(id, false);
     hoverList_->setVisible(false);
+    monitor_->setVisible(false);
     modMap_.repaint();
     saveUiState();
 }
@@ -428,8 +412,23 @@ bool ZederiaEditor::revealParam(int index) {
 // --- Overlays ----------------------------------------------------------------------------------------
 
 void ZederiaEditor::closeOverlays() {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{palette_.get(), prefs_.get(), history_.get(), hoverList_.get()})
+    const bool returnToScope = monitor_->isVisible() && monitor_->hasKeyboardFocus(true);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{palette_.get(), prefs_.get(), history_.get(), hoverList_.get(), monitor_.get()})
         c->setVisible(false);
+    if (returnToScope && isShowing())
+        output_->scope.grabKeyboardFocus();
+}
+
+void ZederiaEditor::toggleOutputMonitor() {
+    const bool show = !monitor_->isVisible();
+    const bool keyboard = output_->scope.hasKeyboardFocus(false);
+    closeOverlays();
+    if (show) {
+        monitor_->setVisible(true);
+        monitor_->toFront(false);
+        if (keyboard && isShowing())
+            monitor_->close.grabKeyboardFocus();
+    }
 }
 
 void ZederiaEditor::showPalette() {
@@ -444,7 +443,7 @@ void ZederiaEditor::showPrefs() {
     closeOverlays();
     prefs_->refresh();
     prefs_->setVisible(true);
-    prefs_->toFront(true);
+    prefs_->toFront(false); // the keyboard stays with the editor (Escape closes the panel): no focus outline in it
 }
 
 void ZederiaEditor::toggleHistory() {
@@ -477,6 +476,7 @@ std::vector<CommandPalette::Entry> ZederiaEditor::paletteEntries() {
     action("Undo", "Ctrl+Z", [this] { ctx_.session.undo(); });
     action("Redo", "Ctrl+Shift+Z", [this] { ctx_.session.redo(); });
     action("Show history", "every change by name", [this] { toggleHistory(); });
+    action("Output monitor", "waveform, spectrum and reference trace", [this] { toggleOutputMonitor(); });
     action("Init", "start from the init sound", [this] { ctx_.session.initPatch(); });
     action("Save preset", "Ctrl+S", [this] { savePresetAs(); });
     action("Compare: switch A and B", "Ctrl+B", [this] { ctx_.session.switchAB(); });
@@ -485,10 +485,9 @@ std::vector<CommandPalette::Entry> ZederiaEditor::paletteEntries() {
     action("Mutate", "small changes", [this] { ctx_.session.mutate(0.5); });
     action("Mod map", "Ctrl+M", [this] { setModMap(!modMapShown()); });
     action("Simple view", "hide advanced controls", [this] { ctx_.prefs.simpleView = !ctx_.prefs.simpleView; Prefs::get().save(); applyLayout(); });
-    action("Preferences", "theme, size, behaviour", [this] { showPrefs(); });
+    action("Preferences", "size, text size, behaviour", [this] { showPrefs(); });
+    action("All notes off", "stops every note and sound", [this] { keys_->allNotesOff(); });
     action("FX off", "bypass the whole rack", [this] { ctx_.session.setValue(idx("global.fx_off"), ctx_.processor.plainValue(idx("global.fx_off")) >= 0.5 ? 0.0 : 1.0); });
-    for (const auto& themeName : Theme::names())
-        action("Theme " + themeName, "colours", [this, themeName] { ctx_.prefs.theme = themeName; Prefs::get().save(); applyTheme(); });
     for (const int s : {70, 100, 125, 150, 200, 300})
         action("Size " + juce::String(s) + " %", "window size", [this, s] { setScalePercent(s); });
     const zed::Patch patch = processor_.snapshot();
@@ -694,37 +693,154 @@ void ZederiaEditor::showMainMenu() {
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&topBar_->menu));
 }
 
+juce::String ZederiaEditor::defaultSaveLocation() const {
+    // The folder of the current preset when it is one of yours in User Presets (saving again keeps
+    // it in its pack), otherwise User Presets: a free or an agent's preset is saved as your copy.
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    const juce::File user = presets.getChildFile(LibraryPage::userPresetsName());
+    const juce::File current = ctx_.session.currentPreset();
+    if (current.existsAsFile() && current.isAChildOf(user))
+        return current.getParentDirectory().getRelativePathFrom(presets).replaceCharacter('\\', '/');
+    return LibraryPage::userPresetsName();
+}
+
+bool ZederiaEditor::savePresetTo(const juce::String& name, const juce::String& location, const juce::String& type, const juce::String& tags,
+                                 juce::String& error, juce::File* saved) {
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    const juce::File folder = LibraryPage::resolveLocation(presets, location, error);
+    if (folder == juce::File())
+        return false;
+    zed::PatchMeta m = processor_.meta();
+    m.name = name.trim().toStdString();
+    if (m.name.empty())
+        m.name = "Untitled";
+    m.type = type.trim().toLowerCase().toStdString();
+    m.tags.clear();
+    for (const auto& t : juce::StringArray::fromTokens(tags, ",", ""))
+        if (t.trim().isNotEmpty())
+            m.tags.push_back(t.trim().toLowerCase().toStdString());
+    if (m.author.empty())
+        m.author = ctx_.prefs.author.toStdString();
+    const juce::File file = folder.getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
+    if (!ctx_.session.savePresetFile(file, m, error))
+        return false;
+    if (saved != nullptr)
+        *saved = file;
+    if (auto& library = pages_[static_cast<std::size_t>(Library)]; library != nullptr)
+        static_cast<LibraryPage&>(*library).rescan(); // the new preset shows at once
+    return true;
+}
+
 void ZederiaEditor::savePresetAs() {
-    auto dialog = std::make_shared<juce::AlertWindow>("Save preset", "Saved in your Presets folder.", juce::MessageBoxIconType::NoIcon);
+    const juce::File presets = ctx_.userFolder().getChildFile("Presets");
+    LibraryPage::makeDefaultFolders(presets);
     const auto meta = processor_.meta();
+    auto dialog = std::make_shared<juce::AlertWindow>(
+        "Save preset", "Location is a folder in\n" + presets.getFullPathName() + "\nType User Presets/My Pack to make a folder for a pack.",
+        juce::MessageBoxIconType::NoIcon);
     dialog->addTextEditor("name", str(meta.name), "Name");
-    dialog->addTextEditor("type", str(meta.type), "Type (bass, lead, pad ...)");
+    dialog->addComboBox("location", LibraryPage::folderPaths(presets), "Location");
+    if (auto* where = dialog->getComboBoxComponent("location")) {
+        where->setEditableText(true);
+        where->setText(defaultSaveLocation(), juce::dontSendNotification);
+        where->setTitle("Location");
+    }
+    // A folder button under the location opens Explorer's folder picker inside the Presets folder.
+    struct Browse {
+        zui::Button button{"Choose folder...", zui::Glyph::Folder};
+        std::unique_ptr<juce::FileChooser> chooser;
+    };
+    auto browse = std::make_shared<Browse>();
+    browse->button.setSize(170, 26);
+    browse->button.setWantsKeyboardFocus(false); // no focus outline when Explorer's picker hands the window back
+    browse->button.textSize = kTextSmall + 0.5f;
+    browse->button.setHelp("Choose folder", "Pick the folder in Explorer; it must be inside the Presets folder.");
+    juce::Component::SafePointer<juce::AlertWindow> dialogPointer(dialog.get());
+    browse->button.onClick = [browse = std::weak_ptr<Browse>(browse), dialogPointer, presets] {
+        auto parts = browse.lock();
+        if (parts == nullptr || dialogPointer == nullptr)
+            return;
+        juce::String error;
+        auto* where = dialogPointer->getComboBoxComponent("location");
+        juce::File start = LibraryPage::resolveLocation(presets, where != nullptr ? where->getText() : juce::String(), error);
+        if (!start.isDirectory())
+            start = presets.getChildFile(LibraryPage::userPresetsName());
+        parts->chooser = std::make_unique<juce::FileChooser>("Save the preset in this folder", start);
+        parts->chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                    [dialogPointer, presets](const juce::FileChooser& fc) {
+                                        const juce::File chosen = fc.getResult();
+                                        if (chosen == juce::File() || dialogPointer == nullptr)
+                                            return;
+                                        if (chosen != presets && !chosen.isAChildOf(presets)) {
+                                            juce::AlertWindow::showAsync(juce::MessageBoxOptions{}
+                                                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                                                             .withTitle("Choose a folder inside Presets")
+                                                                             .withMessage("The library shows presets saved in " + presets.getFullPathName() +
+                                                                                          ". Choose that folder or one inside it.")
+                                                                             .withButton("OK", 1),
+                                                                         [](int) {});
+                                            return;
+                                        }
+                                        if (auto* where = dialogPointer->getComboBoxComponent("location"))
+                                            where->setText(chosen == presets ? juce::String("Presets")
+                                                                             : chosen.getRelativePathFrom(presets).replaceCharacter('\\', '/'),
+                                                           juce::dontSendNotification);
+                                    });
+    };
+    dialog->addCustomComponent(&browse->button);
+    juce::StringArray types{"808", "bass", "synth", "lead", "pad", "pluck", "keys", "arp", "seq", "chord", "drum", "fx", "texture"};
+    if (!meta.type.empty())
+        types.addIfNotAlreadyThere(str(meta.type));
+    dialog->addComboBox("type", types, "Type");
+    if (auto* type = dialog->getComboBoxComponent("type")) {
+        type->setEditableText(true);
+        type->setText(str(meta.type), juce::dontSendNotification);
+        type->setTitle("Type");
+    }
     juce::StringArray tags;
     for (const auto& t : meta.tags)
         tags.add(str(t));
     dialog->addTextEditor("tags", tags.joinIntoString(", "), "Tags, separated by commas");
     dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    dialog->enterModalState(true, juce::ModalCallbackFunction::create([this, dialog](int result) {
-        if (result != 1)
+    juce::Component::SafePointer<ZederiaEditor> safe(this);
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safe, dialog, presets, browse](int result) {
+        juce::ignoreUnused(browse); // the folder button lives as long as the dialog
+        if (result != 1 || safe == nullptr)
             return;
-        zed::PatchMeta m = processor_.meta();
-        m.name = dialog->getTextEditorContents("name").trim().toStdString();
-        if (m.name.empty())
-            m.name = "Untitled";
-        m.type = dialog->getTextEditorContents("type").trim().toLowerCase().toStdString();
-        m.tags.clear();
-        for (const auto& t : juce::StringArray::fromTokens(dialog->getTextEditorContents("tags"), ",", ""))
-            if (t.trim().isNotEmpty())
-                m.tags.push_back(t.trim().toLowerCase().toStdString());
-        if (m.author.empty())
-            m.author = ctx_.prefs.author.toStdString();
-        const juce::File file = ctx_.userFolder().getChildFile("Presets").getChildFile(juce::File::createLegalFileName(str(m.name)) + ".zpreset");
+        const juce::String name = dialog->getTextEditorContents("name");
+        const juce::String location = dialog->getComboBoxComponent("location") != nullptr ? dialog->getComboBoxComponent("location")->getText() : juce::String();
+        const juce::String type = dialog->getComboBoxComponent("type") != nullptr ? dialog->getComboBoxComponent("type")->getText() : juce::String();
+        const juce::String tags = dialog->getTextEditorContents("tags");
+        const auto save = [safe, name, location, type, tags] {
+            if (safe == nullptr)
+                return;
+            juce::String error;
+            juce::File file;
+            if (safe->savePresetTo(name, location, type, tags, error, &file))
+                safe->help_->message("Saved " + file.getFullPathName());
+            else
+                safe->help_->message(error);
+        };
+        // Replacing another preset of the same name asks first; saving the open preset again does not.
         juce::String error;
-        if (ctx_.session.savePresetFile(file, m, error))
-            help_->message("Saved " + file.getFullPathName());
-        else
-            help_->message(error);
+        const juce::File folder = LibraryPage::resolveLocation(presets, location, error);
+        const juce::String legal = juce::File::createLegalFileName(name.trim().isEmpty() ? juce::String("Untitled") : name.trim());
+        const juce::File target = folder == juce::File() ? juce::File() : folder.getChildFile(legal + ".zpreset");
+        if (target.existsAsFile() && target != safe->ctx_.session.currentPreset()) {
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions{}
+                                             .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                             .withTitle("Replace preset")
+                                             .withMessage("\"" + legal + "\" already exists in " + folder.getFullPathName() + ". Replace it?")
+                                             .withButton("Replace", 1)
+                                             .withButton("Cancel", 0),
+                                         [save](int replace) {
+                                             if (replace == 1)
+                                                 save();
+                                         });
+            return;
+        }
+        save();
     }), false);
 }
 
@@ -898,6 +1014,9 @@ std::vector<juce::Rectangle<int>> ZederiaEditor::tickFrame() {
     if (current_ >= 0 && pages_[static_cast<std::size_t>(current_)] != nullptr)
         tickTree(*pages_[static_cast<std::size_t>(current_)], dirty);
     tickTree(*topBar_, dirty);
+    tickTree(*output_, dirty);
+    tickTree(*nameplate_, dirty);
+    tickTree(*monitor_, dirty);
     if (topBar_->tick())
         dirty.push_back(getLocalArea(&topBar_->cpuText, topBar_->cpuText.getLocalBounds()));
     // The fixed layers under the page.

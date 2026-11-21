@@ -215,6 +215,7 @@ struct Engine::Impl {
     std::atomic<std::uint8_t> fxState[kRackSlots];
     std::atomic<float> fxMeterValue[kRackSlots];
     std::atomic<int> fxRunning{0};
+    std::atomic<int> arpStepShown{-1}; // the arpeggiator step that sounded last, for the interface
 
     void updateSmoothing() {
         smoothing = 1.0 - std::exp(-static_cast<double>(kInterval) / (kSmoothingSeconds * sampleRate));
@@ -1174,6 +1175,8 @@ FxSlotStatus Engine::fxSlotStatus(int lane, int slot) const noexcept {
 
 int Engine::fxSlotsRunning() const noexcept { return impl_->fxRunning.load(std::memory_order_relaxed); }
 
+int Engine::arpStep() const noexcept { return impl_->arpStepShown.load(std::memory_order_relaxed); }
+
 bool Engine::fxResponse(int lane, int slot, std::span<const double> hz, std::span<float> magnitudeDb) const {
     if (lane < 0 || lane >= kNumFxLanes || slot < 0 || slot >= kNumFxSlots)
         return false;
@@ -1306,6 +1309,7 @@ void Engine::process(const ProcessArgs& args) noexcept {
     const int playCount = s.player.process(s.playSettings(), *s.playData.current(), transport, args.frames, args.midi,
                                            s.playEvents, sendOut ? args.midiOut : nullptr,
                                            sendOut ? args.midiOutCapacity : 0, generated);
+    s.arpStepShown.store(s.player.playingStep(), std::memory_order_relaxed);
     if (args.midiOutCount != nullptr)
         *args.midiOutCount = sendOut ? generated : 0;
     const std::span<const MidiEvent> midi(s.playEvents, static_cast<std::size_t>(playCount));

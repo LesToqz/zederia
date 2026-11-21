@@ -213,7 +213,8 @@ public:
     std::vector<bool> lockMask() const;
 
     // --- What the interface shows ----------------------------------------------------------------
-    // The newest `count` samples of the output (mono), oldest first; fewer when not enough exist.
+    // The latest mono samples, oldest first, zero-padded at startup. Returns the count copied
+    // (at most the ring size), or zero with a silent buffer if the writer overtook both attempts.
     int readOutput(float* dest, int count) const;
     // Audio callback time against real time, in percent: smoothed average, and the peak since the last call.
     float cpuAverage() const { return cpuAverage_.load(std::memory_order_relaxed); }
@@ -312,8 +313,13 @@ private:
     void applyLoaded(const zed::Patch& state, bool honourLocks); // documentLock_ not held
     void buildTables();                                          // the table builder thread's work
     static constexpr int kOutputRing = 8192;
-    std::array<float, kOutputRing> outputRing_{};
-    std::atomic<int> outputWrite_{0};
+    struct OutputSample {
+        float mono;
+        std::uint32_t lap;
+    };
+    static_assert(std::atomic<OutputSample>::is_always_lock_free && std::atomic<std::uint64_t>::is_always_lock_free);
+    std::array<std::atomic<OutputSample>, kOutputRing> outputRing_{};
+    std::atomic<std::uint64_t> outputWrite_{0}; // total samples published by the callback
     std::atomic<float> cpuAverage_{0.0f}, cpuPeak_{0.0f};
     std::atomic<double> hostBpm_{120.0};
     std::atomic<bool> hostPlaying_{false};

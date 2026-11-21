@@ -10,13 +10,14 @@
 
 struct Prefs {
     // Interface
-    juce::String theme = "Graphite";
+    juce::String theme = "Graphite"; // the only theme; kept for old settings files
     int defaultScale = 100;      // percent of 1320 x 940, 70..300
+    int textSize = 120;          // percent of the text sizes the layout was made for, 90..150 in steps of 5
     bool rotaryDrag = false;     // false: knobs follow vertical drags; true: they follow the angle around them
     int wheel = 1;               // 0 off, 1 normal, 2 fine
     bool doubleClickTypes = false; // false: double-click resets; true: it opens value entry
     bool tooltips = true;
-    bool helpStrip = true;
+    bool helpStrip = false;      // hidden by default; the preferences show it
     bool macroStrip = true;      // kept for old settings files; the macros now live in the modulation dock
     bool computerKeys = true;    // the computer keyboard plays notes in two rows (Z S X D C ... from C, Q 2 W 3 E ... an octave up)
     int keysOctave = 3;          // the octave the lower row (Z) starts at (C3 = note 48), 0..7; the upper row (Q) is one higher

@@ -6,6 +6,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
+#include <numeric>
+
 namespace zui {
 
 namespace {
@@ -24,28 +27,178 @@ zed::PresetSort sortFor(int column) {
     }
 }
 
-// A short phrase that suits a preset's type (plan 3.11: audition by an automatic phrase).
-std::vector<zed::NoteSpec> phraseFor(const std::string& type) {
-    const juce::String t = juce::String(type).toLowerCase();
-    if (t.contains("bass"))
-        return {{36, 0.0, 0.22, 0.9}, {36, 0.25, 0.22, 0.7}, {43, 0.5, 0.22, 0.8}, {41, 0.75, 0.22, 0.8}, {36, 1.0, 0.5, 0.9}};
-    if (t.contains("pad") || t.contains("string") || t.contains("brass"))
-        return {{48, 0.0, 2.2, 0.7}, {55, 0.0, 2.2, 0.65}, {60, 0.0, 2.2, 0.65}, {64, 0.0, 2.2, 0.6}};
-    if (t.contains("lead"))
-        return {{60, 0.0, 0.35, 0.8}, {62, 0.4, 0.35, 0.8}, {64, 0.8, 0.35, 0.8}, {67, 1.2, 0.8, 0.9}};
-    if (t.contains("pluck") || t.contains("key") || t.contains("seq"))
-        return {{60, 0.0, 0.18, 0.8}, {64, 0.2, 0.18, 0.75}, {67, 0.4, 0.18, 0.8}, {72, 0.6, 0.18, 0.8}, {67, 0.8, 0.4, 0.7}};
-    if (t.contains("perc") || t.contains("drum"))
-        return {{48, 0.0, 0.1, 1.0}, {48, 0.5, 0.1, 0.8}, {55, 0.75, 0.1, 0.9}};
-    return {{48, 0.0, 1.2, 0.8}, {55, 0.0, 1.2, 0.7}, {64, 0.0, 1.2, 0.7}};
+// Where a folder sorts: the free presets' folders in their order, then other folders by name, then
+// User Presets last.
+int folderRank(const juce::String& path) {
+    const juce::String top = path.upToFirstOccurrenceOf("/", false, false);
+    if (top.equalsIgnoreCase(LibraryPage::userPresetsName()))
+        return 1000;
+    const int i = LibraryPage::defaultFolders().indexOf(top, true);
+    return i >= 0 ? i : 500;
+}
+
+void sortFolders(juce::StringArray& paths) {
+    std::sort(paths.begin(), paths.end(), [](const juce::String& a, const juce::String& b) {
+        const int ra = folderRank(a), rb = folderRank(b);
+        if (ra != rb)
+            return ra < rb;
+        return a.compareNatural(b, false) < 0;
+    });
+}
+
+void addFolderPath(juce::StringArray& paths, const juce::String& path) {
+    juce::String p = path.replaceCharacter('\\', '/').trimCharactersAtStart("/").trimCharactersAtEnd("/");
+    while (p.isNotEmpty()) { // the folder and every folder above it
+        if (!paths.contains(p, true))
+            paths.add(p);
+        if (!p.containsChar('/'))
+            break;
+        p = p.upToLastOccurrenceOf("/", false, false);
+    }
+}
+
+int depthOf(const juce::String& path) { return path.length() - path.removeCharacters("/").length(); }
+
+bool inUserPresets(const juce::String& path) {
+    return path.upToFirstOccurrenceOf("/", false, false).equalsIgnoreCase(LibraryPage::userPresetsName());
 }
 
 } // namespace
 
+// --- Folders -------------------------------------------------------------------------------------------
+
+const juce::StringArray& LibraryPage::defaultFolders() {
+    // The kinds of sound the free presets that come with Zederia are sorted into (empty until the
+    // factory presets are made), then the folder for your own presets.
+    static const juce::StringArray folders = [] {
+        juce::StringArray f{"808", "Bass", "Synth", "Lead", "Pad", "Pluck", "Keys", "Arp", "FX"};
+        f.add(userPresetsName());
+        return f;
+    }();
+    return folders;
+}
+
+void LibraryPage::makeDefaultFolders(const juce::File& presets) {
+    if (presets == juce::File())
+        return;
+    for (const auto& name : defaultFolders()) {
+        const juce::File folder = presets.getChildFile(name);
+        if (!folder.isDirectory())
+            folder.createDirectory();
+    }
+}
+
+juce::StringArray LibraryPage::folderPaths(const juce::File& presets) {
+    juce::StringArray paths;
+    if (!presets.isDirectory())
+        return paths;
+    for (const auto& dir : presets.findChildFiles(juce::File::findDirectories, true))
+        if (!dir.isHidden())
+            addFolderPath(paths, dir.getRelativePathFrom(presets));
+    sortFolders(paths);
+    return paths;
+}
+
+juce::File LibraryPage::resolveLocation(const juce::File& presets, const juce::String& typed, juce::String& error) {
+    juce::String text = typed.trim().replaceCharacter('\\', '/');
+    if (text.isEmpty())
+        return presets.getChildFile(userPresetsName());
+    const bool full = (text.length() > 1 && text[1] == ':') || text.startsWith("//");
+    if (full) {
+        const juce::File chosen(text.replaceCharacter('/', '\\'));
+        if (chosen == presets)
+            return presets;
+        if (!chosen.isAChildOf(presets)) {
+            error = "Choose a folder inside " + presets.getFullPathName() + ": the library shows the presets there.";
+            return {};
+        }
+        text = chosen.getRelativePathFrom(presets).replaceCharacter('\\', '/');
+    }
+    juce::StringArray parts = juce::StringArray::fromTokens(text, "/", "");
+    for (auto& part : parts)
+        part = part.trim();
+    parts.removeEmptyStrings();
+    // "Zederia/Presets/User Presets" and "Presets/User Presets" name the same folder as "User Presets".
+    if (parts.size() >= 2 && parts[0].equalsIgnoreCase(presets.getParentDirectory().getFileName()) && parts[1].equalsIgnoreCase(presets.getFileName()))
+        parts.removeRange(0, 2);
+    else if (!parts.isEmpty() && parts[0].equalsIgnoreCase(presets.getFileName()))
+        parts.remove(0);
+    juce::File folder = presets;
+    for (auto part : parts) {
+        if (part == "." || part == "..")
+            continue; // never above the Presets folder
+        part = juce::File::createLegalFileName(part).trim();
+        while (part.endsWithChar('.'))
+            part = part.dropLastCharacters(1).trim();
+        if (part.isNotEmpty())
+            folder = folder.getChildFile(part);
+    }
+    return folder;
+}
+
+// --- The empty results -----------------------------------------------------------------------------------
+
+// In front of the list while it has no rows: what is empty, what to do about it and the action
+// that does it, beside the message. A screen reader reads the message as the view's name.
+class LibraryPage::EmptyView final : public Widget {
+public:
+    EmptyView() {
+        setAccessible(true);
+        markOverlay(*this); // it sits over the empty list
+        action.textSize = kTextSmall + 0.5f;
+        addAndMakeVisible(action);
+    }
+    void set(const juce::String& title, const juce::String& text, const juce::String& actionText, Glyph glyph, std::function<void()> onAction) {
+        title_ = title;
+        text_ = text;
+        setTitle(title + ". " + text);
+        action.setText(actionText);
+        action.glyph = glyph;
+        action.onClick = std::move(onAction);
+        resized();
+        repaint();
+    }
+    void resized() override {
+        const int w = static_cast<int>(textWidth(action.text(), kTextSmall + 0.5f)) + 44;
+        action.setBounds(juce::Rectangle<int>(juce::jmin(w, getWidth()), 26).withCentre({getWidth() / 2, 70}));
+    }
+    void draw(juce::Graphics& g) override {
+        const Theme& t = theme();
+        const auto area = getLocalBounds().toFloat();
+        drawText(g, title_, area.withHeight(22.0f).translated(0.0f, 4.0f), kTextTitle, t.text, juce::Justification::centred, true);
+        drawText(g, text_, area.withHeight(18.0f).translated(0.0f, 28.0f), fittingSize(text_, area.getWidth(), kTextBody), t.textDim, juce::Justification::centred);
+    }
+    bool hasVisibleLabel() const override { return true; }
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override {
+        return std::make_unique<juce::AccessibilityHandler>(*this, juce::AccessibilityRole::staticText);
+    }
+    juce::String message() const { return title_ + ". " + text_; }
+    Button action{"Import pack", Glyph::Folder};
+
+private:
+    juce::String title_, text_;
+};
+
+// --- The page ------------------------------------------------------------------------------------------
+
 LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     setTitle("LIBRARY");
+    empty_ = std::make_unique<EmptyView>();
+    addChildComponent(*empty_);
     addAndMakeVisible(search_);
+    const juce::String searchHelp = "Search by name or enter filters such as tag:warm, type:bass, genre:house, pack:\"My Pack\", author:me, rating:3 or fav.";
+    search_.setDescription(searchHelp);
+    if (ctx_.prefs.tooltips)
+        search_.setTooltip(searchHelp);
     search_.onTextChange = [this] { filter(); };
+    addChildComponent(clearScope_);
+    clearScope_.leftAlign = true;
+    clearScope_.textSize = kTextSmall + 0.5f;
+    clearScope_.onClick = [this] {
+        setFolder({});
+        if (isShowing())
+            search_.grabKeyboardFocus();
+    };
     auto& header = table_.getHeader();
     const int columnFlags = juce::TableHeaderComponent::defaultFlags;
     header.addColumn("Fav", Fav, 36, 30, 40, columnFlags);
@@ -61,21 +214,22 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     table_.setRowHeight(24);
     table_.setMultipleSelectionEnabled(true);
     table_.setTitle("Presets");
-    table_.setColour(juce::ListBox::backgroundColourId, theme().panel);
+    table_.setHelpText("Click a preset to load it. Ctrl or Shift selects several for tags, ratings, moving and export.");
+    table_.setColour(juce::ListBox::backgroundColourId, theme().sunken);
     addAndMakeVisible(table_);
     facetView_.setViewedComponent(&facetList_, false);
     facetView_.setScrollBarsShown(true, false);
-    facetView_.setTitle("Facets");
+    facetView_.setTitle("Folders and filters");
     markScrolling(facetList_);
     addAndMakeVisible(facetView_);
-    for (Button* b : {&audition_, &load_, &importButton_, &rescan_, &duplicates_, &modules_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
+    for (Button* b : {&importButton_, &newFolder_, &showFolder_, &rescan_, &duplicates_, &modules_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
         b->textSize = kTextSmall + 0.5f;
     for (auto& s : stars_) {
         s.textSize = kTextSmall;
         s.toggleRole = true;
     }
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&audition_, &load_, &importButton_, &rescan_, &duplicates_, &modules_, &detailTitle_, &detailText_,
-                                                                       &tagField_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&importButton_, &newFolder_, &showFolder_, &rescan_, &duplicates_, &modules_, &detailTitle_,
+                                                                       &detailText_, &tagField_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
         addAndMakeVisible(c);
     for (int i = 0; i < 5; ++i) {
         addAndMakeVisible(stars_[i]);
@@ -83,11 +237,7 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
         stars_[i].setHelp("Rating", "Rate the selected presets.");
         stars_[i].onClick = [this, i] { setRating(i + 1); };
     }
-    audition_.setHelp("Audition", "Load the selected preset and play a short phrase that suits its type. Or play the keyboard.");
-    audition_.onClick = [this] { if (!selectedRows().empty()) audition(selectedRows().front()); };
-    load_.setHelp("Load", "Load the selected preset (double-click or Enter does the same).");
-    load_.onClick = [this] { if (!selectedRows().empty()) loadRow(selectedRows().front()); };
-    importButton_.setHelp("Import pack", "Import a .zpack file or a folder of presets; sounds already in the library are skipped. Dropping one on the page works too.");
+    importButton_.setHelp("Import pack", "Import a .zpack file or a folder of presets into User Presets; sounds already in the library are skipped. Dropping one on the page works too.");
     importButton_.onClick = [this] {
         auto chooser = std::make_shared<juce::FileChooser>("Import a pack or a folder of presets", juce::File::getSpecialLocation(juce::File::userDesktopDirectory), "*.zpack");
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectDirectories,
@@ -98,11 +248,19 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
                                      ctx_.notify(juce::String(added) + " presets imported, " + juce::String(skipped) + " duplicates skipped.");
                              });
     };
+    newFolder_.setHelp("New folder", "Makes a folder inside the selected folder (inside User Presets when none is selected), for a pack of your own.");
+    newFolder_.onClick = [this] { newFolder(); };
+    showFolder_.setHelp("Show in Explorer", "Opens the selected folder (or the Presets folder) in Explorer.");
+    showFolder_.onClick = [this] {
+        const juce::File chosen = presetsFolder().getChildFile(folderFilter_);
+        (chosen.isDirectory() ? chosen : presetsFolder()).startAsProcess();
+    };
     rescan_.setHelp("Rescan", "Read the preset folders again.");
     rescan_.onClick = [this] { rescan(); };
     duplicates_.setHelp("Find duplicates", "Select presets whose sounds are identical.");
     duplicates_.onClick = [this] {
         const auto groups = zed::duplicatePresets(presets_);
+        const juce::ScopedValueSetter<bool> quiet(selectingInCode_, true);
         table_.deselectAllRows();
         int found = 0;
         for (const auto& group : groups)
@@ -123,9 +281,9 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     favourite_.toggleRole = true;
     favourite_.setHelp("Favourite", "Mark the selected presets as favourites.");
     favourite_.onClick = [this] { setFavourite(!favourite_.toggled()); };
-    move_.setHelp("Move to folder", "Move the selected user presets into a sub-folder of your Presets folder.");
+    move_.setHelp("Move to folder", "Move the selected user presets into a folder inside your Presets folder.");
     move_.onClick = [this] {
-        auto chooser = std::make_shared<juce::FileChooser>("Move presets to", presetsFolder());
+        auto chooser = std::make_shared<juce::FileChooser>("Move presets to", presetsFolder().getChildFile(userPresetsName()));
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this, chooser](const juce::FileChooser& fc) {
             if (fc.getResult().isDirectory())
                 moveTo(fc.getResult());
@@ -156,13 +314,23 @@ LibraryPage::~LibraryPage() { table_.setModel(nullptr); }
 juce::File LibraryPage::presetsFolder() const { return ctx_.userFolder().getChildFile("Presets"); }
 
 void LibraryPage::rescan() {
+    const juce::ScopedValueSetter<bool> quiet(selectingInCode_, true);
     problems_.clear();
+    makeDefaultFolders(presetsFolder());
     const auto library = ctx_.processor.library();
     const std::string user = library.userDir().empty() ? ctx_.prefs.userContentFolder().getFullPathName().toStdString() : library.userDir();
     presets_ = zed::scanPresets(library.factoryDir(), user, &problems_);
     for (auto& p : presets_) // favourites of factory presets live in the preferences
         if (p.factory && ctx_.prefs.factoryFavourites.contains(str(p.path)))
             p.meta.favourite = true;
+    // The tree: the folders on disk (empty ones too) and the folders the presets are in (factory
+    // presets of a kind share the folder of that kind).
+    folders_ = folderPaths(presetsFolder());
+    for (const auto& p : presets_)
+        addFolderPath(folders_, str(p.folder));
+    sortFolders(folders_);
+    if (folderFilter_.isNotEmpty() && !folders_.contains(folderFilter_, true))
+        folderFilter_.clear();
     rebuildFacets();
     filter();
 }
@@ -180,22 +348,29 @@ void LibraryPage::setSort(zed::PresetSort key, bool descending) {
     filter();
 }
 
+bool LibraryPage::inFolder(const zed::PresetInfo& p) const {
+    if (folderFilter_.isEmpty())
+        return true;
+    const juce::String f = str(p.folder);
+    return f.equalsIgnoreCase(folderFilter_) || f.startsWithIgnoreCase(folderFilter_ + "/");
+}
+
 void LibraryPage::filter() {
+    const juce::ScopedValueSetter<bool> quiet(selectingInCode_, true);
     juce::String text = search_.getText();
-    for (const auto& f : facetFilters_)
-        if (f != "recent")
-            text << " " << (f.contains(" ") ? f.upToFirstOccurrenceOf(":", true, false) + "\"" + f.fromFirstOccurrenceOf(":", false, false) + "\"" : f);
+    if (facetFilter_.isNotEmpty() && facetFilter_ != "recent")
+        text << " " << (facetFilter_.contains(" ") ? facetFilter_.upToFirstOccurrenceOf(":", true, false) + "\"" + facetFilter_.fromFirstOccurrenceOf(":", false, false) + "\"" : facetFilter_);
     const auto query = zed::parsePresetQuery(text.toStdString());
     results_.clear();
     for (int i = 0; i < static_cast<int>(presets_.size()); ++i) {
         const auto& p = presets_[static_cast<std::size_t>(i)];
-        if (!zed::presetMatches(p, query))
+        if (!zed::presetMatches(p, query) || !inFolder(p))
             continue;
-        if (facetFilters_.count("recent") && !ctx_.prefs.recent.contains(str(p.path)))
+        if (facetFilter_ == "recent" && !ctx_.prefs.recent.contains(str(p.path)))
             continue;
         results_.push_back(i);
     }
-    if (facetFilters_.count("recent") && search_.getText().isEmpty() && sort_ == zed::PresetSort::Name) {
+    if (facetFilter_ == "recent" && search_.getText().isEmpty() && sort_ == zed::PresetSort::Name) {
         std::sort(results_.begin(), results_.end(), [&](int a, int b) {
             return ctx_.prefs.recent.indexOf(str(presets_[static_cast<std::size_t>(a)].path)) < ctx_.prefs.recent.indexOf(str(presets_[static_cast<std::size_t>(b)].path));
         });
@@ -205,76 +380,287 @@ void LibraryPage::filter() {
     table_.updateContent();
     table_.repaint();
     refreshDetail();
+    refreshEmpty();
+}
+
+LibraryPage::Empty LibraryPage::emptyState() const {
+    if (resultCount() > 0)
+        return Empty::None;
+    if (presets_.empty())
+        return Empty::Library;
+    if (folderFilter_.isNotEmpty() && search_.getText().trim().isEmpty())
+        return Empty::Folder;
+    return Empty::Search;
+}
+
+juce::String LibraryPage::emptyMessage() const { return emptyState() == Empty::None ? juce::String() : empty_->message(); }
+
+Button* LibraryPage::emptyAction() { return emptyState() == Empty::None ? nullptr : &empty_->action; }
+
+void LibraryPage::clearSearch() {
+    search_.setText({}, false);
+    setScope(folderFilter_, {});
+}
+
+void LibraryPage::refreshEmpty() {
+    const Empty state = emptyState();
+    switch (state) {
+    case Empty::Library:
+        empty_->set("No presets yet", "Save a sound from the top bar, or bring in presets from a pack or a folder.", "Import pack", Glyph::Folder,
+                    [this] { if (importButton_.onClick) importButton_.onClick(); });
+        break;
+    case Empty::Folder:
+        empty_->set("This folder is empty", "Save a preset into " + folderFilter_.fromLastOccurrenceOf("/", false, false) + " from the top bar (Save).",
+                    "Show all presets", Glyph::None, [this] { setFolder({}); });
+        break;
+    case Empty::Search:
+        empty_->set("No preset matches", juce::String("Nothing in ") + (folderFilter_.isEmpty() ? juce::String("the library") : folderFilter_.fromLastOccurrenceOf("/", false, false)) +
+                        " matches the search and filters.", "Clear search", Glyph::Close, [this] { clearSearch(); });
+        break;
+    case Empty::None: break;
+    }
+    empty_->setVisible(state != Empty::None);
+    if (state != Empty::None)
+        empty_->toFront(false);
+}
+
+bool LibraryPage::selectionToolsShown() const { return favourite_.isVisible(); }
+
+void LibraryPage::setFolder(const juce::String& relative) {
+    if (relative.isNotEmpty()) {
+        openSections_.insert(inUserPresets(relative) ? "user_presets" : "presets");
+        for (juce::String p = relative; p.isNotEmpty(); p = p.containsChar('/') ? p.upToLastOccurrenceOf("/", false, false) : juce::String())
+            openFolders_.insert(p.toLowerCase());
+    }
+    setScope(relative, {});
+}
+
+void LibraryPage::setScope(juce::String folder, juce::String facet) {
+    const juce::ScopedValueSetter<bool> quiet(selectingInCode_, true);
+    if (folderFilter_ != folder || facetFilter_ != facet)
+        table_.deselectAllRows();
+    folderFilter_ = std::move(folder);
+    facetFilter_ = std::move(facet);
+    rebuildFacets();
+    filter();
+}
+
+void LibraryPage::setFolderOpen(const juce::String& relative, bool open) {
+    if (relative.equalsIgnoreCase(userPresetsName())) {
+        setSectionCollapsed("user_presets", !open);
+        return;
+    }
+    if (open)
+        openFolders_.insert(relative.toLowerCase());
+    else
+        openFolders_.erase(relative.toLowerCase());
+    rebuildFacets();
+}
+
+void LibraryPage::setSectionCollapsed(const juce::String& key, bool collapsed) {
+    if (collapsed)
+        openSections_.erase(key);
+    else
+        openSections_.insert(key);
+    rebuildFacets();
+}
+
+juce::StringArray LibraryPage::visibleFolders() const {
+    juce::StringArray out;
+    for (const auto& path : folders_) {
+        if (sectionCollapsed(inUserPresets(path) ? "user_presets" : "presets"))
+            continue;
+        bool shown = true;
+        for (juce::String p = path; p.containsChar('/') && shown;) {
+            p = p.upToLastOccurrenceOf("/", false, false);
+            shown = p.equalsIgnoreCase(userPresetsName()) || openFolders_.count(p.toLowerCase()) > 0;
+        }
+        if (shown)
+            out.add(path);
+    }
+    return out;
 }
 
 void LibraryPage::rebuildFacets() {
-    facetButtons_.clear();
-    facetHeadings_.clear();
-    std::vector<int> all(presets_.size());
-    for (std::size_t i = 0; i < all.size(); ++i)
-        all[i] = static_cast<int>(i);
+    const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    const auto focusId = focused && facetList_.isParentOf(focused) ? focused->getComponentID() : juce::String();
+    facetRows_.clear();
     int y = 0;
-    const int w = 210;
-    const auto heading = [&](const juce::String& text) {
-        auto c = std::make_unique<Caption>(text, kTextSmall, true);
-        c->bold = true;
-        c->setBounds(6, y, w - 6, 18);
-        facetList_.addAndMakeVisible(*c);
-        facetHeadings_.push_back(std::move(c));
-        y += 20;
-    };
-    const auto add = [&](const juce::String& key, const juce::String& label) {
-        auto b = std::make_unique<Button>(label);
+    constexpr int w = 210;
+
+    const auto button = [&](const juce::String& id, const juce::String& label, Glyph glyph, int x, int width, int height) -> Button& {
+        auto b = std::make_unique<Button>(label, glyph);
+        b->setComponentID(id);
         b->ghost = true;
-        b->toggleRole = true;
         b->leftAlign = true;
         b->textSize = kTextSmall + 0.5f;
-        b->setToggled(facetFilters_.count(key) > 0);
-        b->setTitle("Filter: " + label);
-        b->onClick = [this, key] {
-            if (facetFilters_.count(key))
-                facetFilters_.erase(key);
-            else
-                facetFilters_.insert(key);
-            rebuildFacets();
-            filter();
-        };
-        b->setBounds(0, y, w, 22);
-        y += 23;
-        facetList_.addAndMakeVisible(*b);
-        facetButtons_.push_back(std::move(b));
+        b->setBounds(x, y, width, height);
+        auto& row = *b;
+        facetList_.addAndMakeVisible(row);
+        facetRows_.push_back(std::move(b));
+        return row;
     };
-    heading("SHOW");
-    add("fav", "Favourites");
-    add("recent", "Recent");
-    add("factory", "Factory");
-    add("user", "Yours");
-    for (const auto& [facet, title] : {std::pair{"type", "TYPE"}, std::pair{"tag", "CHARACTER"}, std::pair{"genre", "GENRE"}, std::pair{"pack", "PACK"}, std::pair{"author", "AUTHOR"}}) {
-        const auto counts = zed::presetFacet(presets_, all, facet);
-        if (counts.empty())
+    const auto heading = [&](const juce::String& key, const juce::String& label) {
+        const bool open = !sectionCollapsed(key);
+        auto& b = button("section/" + key, label, open ? Glyph::ChevronDown : Glyph::ChevronRight, 0, w, 26);
+        b.boldText = b.dimText = true;
+        b.textSize = kTextSmall;
+        b.setTitle(label + (open ? " (shown)" : " (folded)"));
+        b.setHelp(label, open ? "Collapse this section." : "Expand this section.");
+        b.onClick = [this, key, open] { setSectionCollapsed(key, open); };
+        y += 28;
+        return open;
+    };
+    const auto addFacet = [&](const juce::String& key, const juce::String& label) {
+        auto& b = button("filter/" + key, label, Glyph::None, 8, w - 8, 22);
+        b.toggleRole = true;
+        b.setToggled(facetFilter_ == key);
+        b.setTitle("Filter: " + label);
+        b.onClick = [this, key] { setScope({}, facetFilter_ == key ? juce::String() : key); };
+        y += 23;
+    };
+
+    const auto visible = visibleFolders();
+    std::map<juce::String, int> counts;
+    std::set<juce::String> parents;
+    if (!visible.isEmpty()) {
+        for (const auto& item : presets_) {
+            for (auto path = str(item.folder).toLowerCase(); path.isNotEmpty(); path = path.upToLastOccurrenceOf("/", false, false)) {
+                ++counts[path];
+                if (!path.containsChar('/'))
+                    break;
+            }
+        }
+        for (const auto& path : folders_)
+            if (path.containsChar('/'))
+                parents.insert(path.upToLastOccurrenceOf("/", false, false).toLowerCase());
+    }
+    const auto addFolders = [&](bool user) {
+        for (const auto& path : visible) {
+            if (inUserPresets(path) != user)
+                continue;
+            const bool root = path.equalsIgnoreCase(userPresetsName());
+            const auto name = root ? juce::String("All user presets") : path.fromLastOccurrenceOf("/", false, false);
+            const auto key = path.toLowerCase();
+            const int x = 4 + 14 * juce::jlimit(0, 4, depthOf(path) - (user ? 1 : 0));
+            if (!root && parents.count(key)) {
+                const bool open = openFolders_.count(key) > 0;
+                auto& arrow = button("disclose/" + path, {}, open ? Glyph::ChevronDown : Glyph::ChevronRight, x, 18, 22);
+                arrow.setTitle((open ? "Close " : "Open ") + name);
+                arrow.setHelp(name, open ? "Hide subfolders." : "Show subfolders.");
+                arrow.onClick = [this, path, open] { setFolderOpen(path, !open); };
+            }
+            const int indent = root ? 8 : x + 18;
+            auto& b = button("folder/" + path, name + "  (" + juce::String(counts[key]) + ")", root ? Glyph::None : Glyph::Folder, indent, w - indent, 22);
+            b.toggleRole = true;
+            b.setToggled(folderFilter_.equalsIgnoreCase(path));
+            b.setTitle("Folder " + path);
+            b.setHelp(name, "Show presets in this folder and its subfolders. Click again to show all presets.");
+            b.onClick = [this, path] { setFolder(folderFilter_.equalsIgnoreCase(path) ? juce::String() : path); };
+            y += 23;
+        }
+    };
+    if (heading("presets", "PRESETS")) {
+        auto& b = button("all", "All presets  (" + juce::String(static_cast<int>(presets_.size())) + ")", Glyph::None, 8, w - 8, 22);
+        b.toggleRole = true;
+        b.setToggled(folderFilter_.isEmpty() && facetFilter_.isEmpty());
+        b.setTitle("Show presets from every folder");
+        b.onClick = [this] { setFolder({}); };
+        y += 23;
+        addFolders(false);
+    }
+    if (heading("user_presets", "USER PRESETS"))
+        addFolders(true);
+    if (heading("show", "SHOW")) {
+        addFacet("fav", "Favourites");
+        addFacet("recent", "Recent");
+        addFacet("factory", "Factory");
+        addFacet("user", "Yours");
+    }
+    std::vector<int> all;
+    for (const auto& [facet, title] : {std::pair{"type", "TYPE"}, std::pair{"tag", "CHARACTER"}, std::pair{"genre", "GENRE"}}) {
+        if (!heading(facet, title))
             continue;
-        y += 6;
-        heading(title);
-        for (const auto& [value, count] : counts)
-            add(juce::String(facet) + ":" + str(value), str(value) + "  (" + juce::String(count) + ")");
+        if (all.empty()) {
+            all.resize(presets_.size());
+            std::iota(all.begin(), all.end(), 0);
+        }
+        const auto values = zed::presetFacet(presets_, all, facet);
+        for (const auto& [value, count] : values)
+            addFacet(juce::String(facet) + ":" + str(value), str(value) + "  (" + juce::String(count) + ")");
+        if (values.empty()) {
+            auto hint = std::make_unique<Caption>("No " + juce::String(title).toLowerCase() + " assigned");
+            hint->setBounds(14, y, w - 14, 22);
+            facetList_.addAndMakeVisible(*hint);
+            facetRows_.push_back(std::move(hint));
+            y += 23;
+        }
     }
     facetList_.setSize(w, y + 4);
+    const auto scope = folderFilter_.isNotEmpty() ? folderFilter_ : facetFilter_;
+    if (scope.isNotEmpty()) {
+        auto label = folderFilter_.isNotEmpty() ? folderFilter_.fromLastOccurrenceOf("/", false, false) : facetFilter_;
+        if (facetFilter_ == "fav") label = "Favourites";
+        if (facetFilter_ == "recent") label = "Recent";
+        if (facetFilter_ == "factory") label = "Factory";
+        if (facetFilter_ == "user") label = "Yours";
+        clearScope_.setText(label);
+        clearScope_.setTitle("Clear sidebar selection: " + scope);
+        clearScope_.setHelp(scope, "Clear this selection and keep the search text.");
+    }
+    if (clearScope_.isVisible() != scope.isNotEmpty()) {
+        clearScope_.setVisible(scope.isNotEmpty());
+        resized();
+    }
+    if (focusId.isNotEmpty())
+        if (auto* replacement = facetList_.findChildWithID(focusId))
+            replacement->grabKeyboardFocus();
     facetList_.repaint();
 }
 
-void LibraryPage::paintRowBackground(juce::Graphics& g, int, int width, int height, bool selected) {
-    if (selected) {
-        g.setColour(theme().selection);
-        g.fillRect(0, 0, width, height);
-    }
+void LibraryPage::newFolder() {
+    const juce::File base = folderFilter_.isNotEmpty() && presetsFolder().getChildFile(folderFilter_).isDirectory()
+                                ? presetsFolder().getChildFile(folderFilter_)
+                                : presetsFolder().getChildFile(userPresetsName());
+    auto dialog = std::make_shared<juce::AlertWindow>("New folder", "Inside " + base.getFullPathName(), juce::MessageBoxIconType::NoIcon);
+    dialog->addTextEditor("name", "My Pack", "Name");
+    dialog->addButton("Make", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<LibraryPage> safe(this);
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safe, dialog, base](int result) {
+        if (result != 1 || safe == nullptr)
+            return;
+        const juce::String typed = dialog->getTextEditorContents("name").trim();
+        juce::String error;
+        const juce::File folder = typed.isEmpty() ? juce::File() : resolveLocation(base, typed, error);
+        if (folder == juce::File() || folder == base) {
+            if (safe->ctx_.notify)
+                safe->ctx_.notify(error.isNotEmpty() ? error : juce::String("Give the folder a name."));
+            return;
+        }
+        if (!folder.createDirectory()) {
+            if (safe->ctx_.notify)
+                safe->ctx_.notify("Could not make " + folder.getFullPathName());
+            return;
+        }
+        safe->rescan();
+        safe->setFolder(folder.getRelativePathFrom(safe->presetsFolder()).replaceCharacter('\\', '/'));
+    }), false);
 }
 
-void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, int height, bool) {
+void LibraryPage::paintRowBackground(juce::Graphics& g, int row, int width, int height, bool selected) {
+    const auto& t = theme();
+    if (row >= resultCount()) return;
+    g.setColour(selected ? t.selection : row % 2 == 0 ? t.sunken : t.display);
+    g.fillRect(0, 0, width, height);
+}
+
+void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, int height, bool selected) {
     if (row < 0 || row >= resultCount())
         return;
     const Theme& t = theme();
     const auto& p = result(row);
-    const auto box = juce::Rectangle<float>(6.0f, 0.0f, static_cast<float>(width) - 10.0f, static_cast<float>(height));
+    auto box = juce::Rectangle<float>(6.0f, 0.0f, static_cast<float>(width) - 10.0f, static_cast<float>(height));
     juce::String text;
     switch (column) {
     case Fav:
@@ -287,21 +673,45 @@ void LibraryPage::paintCell(juce::Graphics& g, int row, int column, int width, i
     case Type: text = str(p.meta.type); break;
     case Pack: text = str(p.meta.pack.empty() ? p.folder : p.meta.pack); break;
     case Author: text = str(p.meta.author); break;
-    case Rating: text = p.meta.rating > 0 ? juce::String::repeatedString("*", p.meta.rating) : juce::String("-"); break;
+    case Rating:
+        if (p.meta.rating > 0) {
+            g.setColour(t.lamp);
+            g.fillPath(glyphPath(Glyph::StarFilled, box.removeFromLeft(12.0f).withSizeKeepingCentre(11.0f, 11.0f)));
+            box.removeFromLeft(3.0f);
+            text = juce::String(p.meta.rating) + "/5";
+        } else {
+            text = juce::String::fromUTF8("\xe2\x80\x94");
+        }
+        break;
     case Modified: text = juce::Time(p.fileTime * 1000).formatted("%Y-%m-%d"); break;
     case Origin: text = p.factory ? "Factory" : "Yours"; break;
     default: break;
     }
-    drawText(g, text, box, fittingSize(text, box.getWidth(), kTextSmall + 0.5f), column == Name ? t.text : t.textDim);
+    const bool bold = column == Name && selected;
+    drawText(g, text, box, fittingSize(text, box.getWidth(), column == Name ? kTextBody : kTextSmall + 0.5f, bold),
+             column == Name ? t.text : t.textDim, juce::Justification::centredLeft, bold);
 }
 
 void LibraryPage::sortOrderChanged(int column, bool forwards) { setSort(sortFor(column), !forwards); }
 
 void LibraryPage::cellDoubleClicked(int row, int, const juce::MouseEvent&) { loadRow(row); }
 
-void LibraryPage::selectedRowsChanged(int) { refreshDetail(); }
+void LibraryPage::selectedRowsChanged(int) {
+    refreshDetail();
+    if (selectingInCode_)
+        return;
+    // A click (or an arrow key) that leaves one preset selected loads it. Ctrl and Shift build a
+    // selection for bulk edits without loading anything.
+    const auto rows = selectedRows();
+    const auto mods = juce::ModifierKeys::getCurrentModifiers();
+    if (rows.size() == 1 && !mods.isCommandDown() && !mods.isShiftDown() && !mods.isPopupMenu())
+        loadRow(rows.front());
+}
 
-void LibraryPage::selectRow(int row, bool add) { table_.selectRow(row, false, !add); }
+void LibraryPage::selectRow(int row, bool add) {
+    const juce::ScopedValueSetter<bool> quiet(selectingInCode_, true);
+    table_.selectRow(row, false, !add);
+}
 
 std::vector<int> LibraryPage::selectedRows() const {
     std::vector<int> out;
@@ -320,12 +730,6 @@ bool LibraryPage::loadRow(int row) {
     if (!ok && ctx_.notify)
         ctx_.notify(error);
     return ok;
-}
-
-void LibraryPage::audition(int row) {
-    if (!loadRow(row))
-        return;
-    ctx_.processor.audition(phraseFor(result(row).meta.type));
 }
 
 bool LibraryPage::rewrite(const zed::PresetInfo& info, const std::function<void(zed::PatchMeta&)>& change) {
@@ -442,7 +846,8 @@ int LibraryPage::importPack(const juce::File& source, int& skipped) {
     std::set<std::uint64_t> known;
     for (const auto& p : presets_)
         known.insert(p.soundHash);
-    const juce::File target = presetsFolder().getChildFile(juce::File::createLegalFileName(source.getFileNameWithoutExtension()));
+    // A pack becomes a folder of your own presets: User Presets/<pack name>.
+    const juce::File target = presetsFolder().getChildFile(userPresetsName()).getChildFile(juce::File::createLegalFileName(source.getFileNameWithoutExtension()));
     int added = 0;
     const auto take = [&](const std::string& bytes, const juce::String& fileName) {
         const zed::LoadResult loaded = zed::loadPatch(bytes);
@@ -502,10 +907,16 @@ void LibraryPage::filesDropped(const juce::StringArray& files, int, int) {
 
 void LibraryPage::refreshDetail() {
     const auto rows = selectedRows();
+    // The tools that edit presets show only while there are presets to edit.
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&tagField_, &addTag_, &removeTag_, &favourite_, &move_, &export_, &blend_})
+        c->setVisible(!rows.empty());
+    for (auto& s : stars_)
+        s.setVisible(!rows.empty());
     if (rows.empty()) {
         detailTitle_.setText(juce::String(resultCount()) + " of " + juce::String(static_cast<int>(presets_.size())) + " presets");
-        detailText_.setText(problems_.empty() ? juce::String("Select a preset to see it; select several to edit them together.")
-                                              : juce::String(static_cast<int>(problems_.size())) + " files could not be read.");
+        detailText_.setText(!problems_.empty() ? juce::String(static_cast<int>(problems_.size())) + " files could not be read."
+                            : resultCount() == 0 ? juce::String()
+                                                 : juce::String("Click a preset to load it; Ctrl or Shift selects several to edit together."));
         favourite_.setToggled(false);
         for (auto& s : stars_)
             s.setToggled(false);
@@ -570,17 +981,20 @@ void LibraryPage::showModules() {
 }
 
 void LibraryPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto toolbar = area.removeFromTop(30);
-    search_.setBounds(toolbar.removeFromLeft(520));
+    auto area = getLocalBounds();
+    auto toolbar = area.removeFromTop(42).reduced(8, 6);
+    auto searchArea = toolbar.removeFromLeft(470);
+    if (clearScope_.isVisible()) {
+        clearScope_.setBounds(searchArea.removeFromRight(152));
+        searchArea.removeFromRight(4);
+    }
+    search_.setBounds(searchArea);
     toolbar.removeFromLeft(8);
-    placeRow(toolbar, {{&audition_, 100}, {&load_, 70}, {&importButton_, 118}, {&rescan_, 76}, {&duplicates_, 120}, {&modules_, 130}}, 6);
-    area.removeFromTop(8);
-    facetView_.setBounds(area.removeFromLeft(226).reduced(2)); // its panel (2 px around it) lines up with the results
-    area.removeFromLeft(8);
+    placeRow(toolbar, {{&importButton_, 112}, {&newFolder_, 104}, {&showFolder_, 136}, {&rescan_, 76}, {&duplicates_, 120}, {&modules_, 130}}, 6);
+    facetView_.setBounds(area.removeFromLeft(226).reduced(6, 3));
     auto right = area.removeFromRight(300);
-    area.removeFromRight(8);
     table_.setBounds(area);
+    empty_->setBounds(area.withTrimmedTop(48).withHeight(104).reduced(16, 0));
     right = right.reduced(10, 8);
     detailTitle_.setBounds(right.removeFromTop(22));
     detailText_.setBounds(right.removeFromTop(36));
@@ -609,16 +1023,26 @@ void LibraryPage::resized() {
 
 void LibraryPage::paint(juce::Graphics& g) {
     const Theme& t = theme();
-    drawPanel(g, facetView_.getBounds().toFloat().expanded(2.0f), t.panel);
-    const auto right = getLocalBounds().reduced(8).withTrimmedTop(38).removeFromRight(300);
+    drawPlate(g, getLocalBounds().withHeight(table_.getY()).toFloat());
+    drawPanel(g, facetView_.getBounds().expanded(6, 3).toFloat(), t.panel);
+    const auto right = getLocalBounds().withTrimmedTop(table_.getY()).removeFromRight(300);
     drawPanel(g, right.toFloat(), t.panel);
-    if (resultCount() == 0)
-        drawText(g, presets_.empty() ? "No presets yet: save one from the top bar, or import a pack." : "No preset matches.", table_.getBounds().toFloat().withHeight(80.0f).translated(0.0f, 40.0f),
-                 kTextBody, t.textDim, juce::Justification::centred);
+    // An empty list says so in front of it (EmptyView): the list paints its own background.
 }
 
-void LibraryPage::saveState(nlohmann::json& state) const { state["query"] = search_.getText().toStdString(); }
+void LibraryPage::saveState(nlohmann::json& state) const {
+    state["query"] = search_.getText().toStdString();
+    state["folder"] = folderFilter_.toStdString();
+}
 
-void LibraryPage::loadState(const nlohmann::json& state) { setQuery(juce::String(state.value("query", std::string()))); }
+void LibraryPage::loadState(const nlohmann::json& state) {
+    openSections_.clear();
+    openFolders_.clear();
+    facetFilter_.clear();
+    const juce::String folder(state.value("folder", std::string()));
+    folderFilter_ = folders_.contains(folder, true) ? folder : juce::String();
+    rebuildFacets();
+    setQuery(juce::String(state.value("query", std::string())));
+}
 
 } // namespace zui

@@ -28,11 +28,19 @@ public:
         return p;
     }
     int steps() const { return static_cast<int>(ctx_.processor.plainValue(idx("arp.steps"))); }
+    bool arpOn() const { return ctx_.processor.plainValue(idx("arp.on")) >= 0.5; }
+    int playing() const { return playing_; }
     bool tick() override {
         const int s = steps(), slot = page_.patternSlot();
-        if (s != shownSteps_ || slot != shownSlot_) {
+        const int rate = static_cast<int>(ctx_.processor.plainValue(idx("arp.rate")));
+        const int playing = ctx_.processor.engine().arpStep();
+        const bool on = arpOn();
+        if (s != shownSteps_ || slot != shownSlot_ || rate != shownRate_ || playing != playing_ || on != onShown_) {
             shownSteps_ = s;
             shownSlot_ = slot;
+            shownRate_ = rate;
+            playing_ = playing;
+            onShown_ = on;
             return true;
         }
         return false;
@@ -65,24 +73,59 @@ public:
         const auto p = editing_ ? live_ : pattern();
         const int n = juce::jmax(1, steps());
         const float w = r.state.getWidth() / static_cast<float>(n);
+        const bool on = arpOn();
+        const auto& rates = zed::tempoDivisions();
+        const int rate = juce::jlimit(0, static_cast<int>(rates.size()) - 1, static_cast<int>(ctx_.processor.plainValue(idx("arp.rate"))));
+        const double stepBeats = zed::divisionInBeats(rates[static_cast<std::size_t>(rate)]);
+        const float beatWidth = w / static_cast<float>(stepBeats);
+        // Place guides in quarter notes. Triplet and dotted divisions can put a guide inside
+        // a step, and a short pattern can stop halfway through a beat.
+        for (int beat = 0; beat < static_cast<int>(std::ceil(n * stepBeats)); ++beat) {
+            const float x = r.velocity.getX() + beatWidth * static_cast<float>(beat);
+            const float width = std::min(beatWidth, r.velocity.getRight() - x);
+            if (width <= 0.0f || beatWidth < 7.0f) break;
+            if ((beat & 1) == 0) {
+                g.setColour(t.displayGrid.withAlpha(0.26f));
+                g.fillRect(x, r.velocity.getY(), width, r.velocity.getHeight());
+            }
+            g.setColour(t.lineStrong);
+            g.drawVerticalLine(juce::roundToInt(x), r.velocity.getY(), r.velocity.getBottom());
+        }
+        for (float fraction : {0.25f, 0.5f, 0.75f}) {
+            g.setColour(t.displayGrid);
+            g.drawHorizontalLine(juce::roundToInt(r.velocity.getY() + r.velocity.getHeight() * fraction), r.velocity.getX(), r.velocity.getRight());
+        }
         for (int i = 0; i < n; ++i) {
             const auto s = p.step(i);
             const float x = r.state.getX() + w * static_cast<float>(i);
             const bool focused = i == focusStep_ && showsFocus();
+            const bool current = on && i == playing_;
+            const bool strikes = s.state == zed::StepState::On;
             auto cell = juce::Rectangle<float>(x + 1.0f, r.state.getY(), w - 2.0f, r.state.getHeight());
-            g.setColour(s.state == zed::StepState::On ? t.play : s.state == zed::StepState::Tie ? t.play.withAlpha(0.45f) : t.sunken);
-            g.fillRoundedRectangle(cell, 2.0f);
+            g.setColour(current ? t.lamp : strikes ? (on ? t.raised : t.panel) : t.display);
+            g.fillRect(cell);
+            g.setColour(current ? t.lamp.brighter(0.3f) : strikes ? t.lineStrong : t.displayGrid);
+            g.fillRect(cell.withHeight(1.0f));
+            if (s.state == zed::StepState::Tie) {
+                g.setColour(t.lineStrong);
+                g.drawRect(cell, 1.0f);
+            }
             if (focused) {
                 g.setColour(t.focus);
                 g.drawRoundedRectangle(cell, 2.0f, 1.5f);
             }
             if (w > 16.0f)
-                drawText(g, s.state == zed::StepState::On ? juce::String(i + 1) : s.state == zed::StepState::Tie ? "tie" : "-", cell, kTextSmall,
-                         s.state == zed::StepState::On ? t.bg : t.textDim, juce::Justification::centred);
-            const auto bar = juce::Rectangle<float>(x + 2.0f, r.velocity.getBottom() - r.velocity.getHeight() * static_cast<float>(s.velocity), w - 4.0f,
-                                                    r.velocity.getHeight() * static_cast<float>(s.velocity));
-            g.setColour(t.play.withAlpha(s.state == zed::StepState::Rest ? 0.25f : 0.8f));
+                drawText(g, s.state == zed::StepState::On ? juce::String(i + 1) : s.state == zed::StepState::Tie ? "tie" : juce::String::fromUTF8("\xe2\x80\x93"), cell,
+                         kTextSmall, current ? t.bg : on && strikes ? t.text : t.textDim, juce::Justification::centred,
+                         s.state != zed::StepState::Rest);
+            const float capWidth = juce::jlimit(3.0f, 26.0f, w * 0.58f);
+            const float h = (r.velocity.getHeight() - 2.0f) * static_cast<float>(s.velocity);
+            const auto bar = juce::Rectangle<float>(x + (w - capWidth) * 0.5f, r.velocity.getBottom() - 2.0f - h, capWidth, h + 2.0f);
+            const auto ink = current ? t.lamp : t.control;
+            g.setColour(ink.withAlpha(!strikes ? 0.08f : on ? 0.38f : 0.2f));
             g.fillRect(bar);
+            g.setColour(ink.withAlpha(!strikes ? 0.35f : on ? 1.0f : 0.62f));
+            g.fillRect(bar.withHeight(strikes ? 2.0f : 1.0f));
             const auto tcell = juce::Rectangle<float>(x + 1.0f, r.transpose.getY(), w - 2.0f, r.transpose.getHeight());
             g.setColour(t.raised);
             g.fillRect(tcell);
@@ -176,7 +219,9 @@ private:
     PlayPage& page_;
     zed::ArpPattern live_;
     bool editing_ = false;
-    int region_ = 0, startTranspose_ = 0, focusStep_ = 0, shownSteps_ = -1, shownSlot_ = -1;
+    int region_ = 0, startTranspose_ = 0, focusStep_ = 0, shownSteps_ = -1, shownSlot_ = -1, playing_ = -1;
+    int shownRate_ = -1;
+    bool onShown_ = false;
 };
 
 // --- Chord memory ----------------------------------------------------------------------------------------
@@ -206,7 +251,7 @@ public:
         for (int s = 0; s <= 24; ++s) {
             const auto cell = juce::Rectangle<float>(inner.getX() + w * static_cast<float>(s), inner.getY(), w - 1.0f, inner.getHeight() - 14.0f);
             const bool on = std::find(n.begin(), n.end(), s) != n.end();
-            g.setColour(on ? t.play : black[s % 12] ? t.sunken : t.raised);
+            g.setColour(on ? t.control : black[s % 12] ? t.sunken : t.raised); // a note of the chord: a lit key
             g.fillRoundedRectangle(cell, 2.0f);
             if (s == focus_ && showsFocus()) {
                 g.setColour(t.focus);
@@ -266,9 +311,11 @@ public:
     zed::Clip clip() const { return editing_ ? live_ : ctx_.processor.clip(page_.clipSlot()); }
     std::set<int> selected;
 
-    juce::Rectangle<float> notesArea() const { return getLocalBounds().toFloat().reduced(4.0f).withTrimmedLeft(30.0f).withTrimmedBottom(46.0f); }
+    juce::Rectangle<float> notesArea() const {
+        return getLocalBounds().toFloat().reduced(4.0f).withTrimmedLeft(38.0f).withTrimmedTop(17.0f).withTrimmedBottom(46.0f);
+    }
     juce::Rectangle<float> velocityArea() const {
-        return getLocalBounds().toFloat().reduced(4.0f).withTrimmedLeft(30.0f).removeFromBottom(40.0f);
+        return getLocalBounds().toFloat().reduced(4.0f).withTrimmedLeft(38.0f).removeFromBottom(40.0f).withTrimmedBottom(14.0f);
     }
     void range(const zed::Clip& c, int& low, int& high) const {
         low = 48;
@@ -298,6 +345,7 @@ public:
         range(c, low, high);
         const double beats = std::max(1.0, c.lengthBeats());
         const float rowH = area.getHeight() / static_cast<float>(high - low + 1);
+        const auto vel = velocityArea();
         for (int k = low; k <= high; ++k) { // keyboard lanes
             const int pc = ((k % 12) + 12) % 12;
             const bool black = pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
@@ -306,38 +354,77 @@ public:
                 g.setColour(t.sunken);
                 g.fillRect(area.getX(), y, area.getWidth(), rowH);
             }
-            if (pc == 0)
-                drawText(g, str(zed::noteName(k)), juce::Rectangle<float>(4.0f, y + rowH - 13.0f, 30.0f, 13.0f), kTextSmall, t.textDim);
+            const float keyWidth = black ? 4.0f : 8.0f;
+            g.setColour(black ? t.raised : t.textFaint);
+            g.fillRect(area.getX() - keyWidth - 2.0f, y, keyWidth, juce::jmax(1.0f, rowH - 0.5f));
+            if (pc == 0) {
+                g.setColour(t.lineStrong);
+                g.drawHorizontalLine(juce::roundToInt(y + rowH), area.getX(), area.getRight());
+                if (rowH * 12.0f >= 14.0f)
+                    drawText(g, str(zed::noteName(k)), juce::Rectangle<float>(4.0f, juce::jlimit(area.getY(), area.getBottom() - 13.0f, y + rowH * 0.5f - 6.5f), 26.0f, 13.0f),
+                             kTextSmall, t.textDim);
+            }
         }
-        for (double b = 0.0; b <= beats + 1e-9; b += 1.0) {
-            const float x = area.getX() + area.getWidth() * static_cast<float>(b / beats);
-            g.setColour(std::fmod(b, c.beatsPerBar) < 1e-9 ? t.lineStrong : t.displayGrid);
-            g.fillRect(x, area.getY(), 1.0f, area.getHeight() + 46.0f);
+        const auto ruler = area.withY(area.getY() - 17.0f).withHeight(16.0f);
+        g.setColour(t.sunken);
+        g.fillRect(ruler);
+        const int beatsPerBar = juce::jmax(1, c.beatsPerBar);
+        const float beatWidth = area.getWidth() / static_cast<float>(beats);
+        // Print positions against the clip's own meter. As clips get longer the ruler drops
+        // subdivisions, then beats, then intermediate bars to keep numbers apart.
+        const int barStride = juce::jmax(1, static_cast<int>(std::ceil(42.0f / (beatWidth * beatsPerBar))));
+        const double increment = beatWidth * grid >= 14.0f ? grid : beatWidth >= 10.0f ? 1.0 : static_cast<double>(beatsPerBar * barStride);
+        for (double b = 0.0; b < beats - 1e-9; b += increment) {
+            const float x = area.getX() + beatWidth * static_cast<float>(b);
+            const int beat = juce::roundToInt(b);
+            const bool whole = std::abs(b - beat) < 1e-6;
+            const bool downbeat = whole && beat % beatsPerBar == 0;
+            g.setColour(downbeat ? t.lineStrong : whole ? t.displayGrid.brighter(0.2f) : t.displayGrid);
+            g.drawVerticalLine(juce::roundToInt(x), whole ? ruler.getY() : area.getY(), vel.getBottom());
+            const bool label = (downbeat && beat / beatsPerBar % barStride == 0) || (whole && beatWidth >= 42.0f);
+            if (label && area.getRight() - x >= 40.0f) {
+                const auto position = juce::String(beat / beatsPerBar + 1) + "." + juce::String(beat % beatsPerBar + 1);
+                const auto box = juce::Rectangle<float>(x + 4.0f, ruler.getY(), juce::jmin(70.0f, area.getRight() - x - 4.0f), ruler.getHeight());
+                drawText(g, position, box, kTextSmall, downbeat ? t.text : t.textDim, juce::Justification::centredLeft, downbeat);
+            }
         }
-        const auto vel = velocityArea();
+        g.setColour(t.lineStrong);
+        g.drawHorizontalLine(juce::roundToInt(vel.getBottom()), area.getX(), area.getRight());
+        drawText(g, "Vel", {4.0f, vel.getCentreY() - 8.0f, 30.0f, 16.0f}, kTextSmall, t.textDim);
         for (int i = 0; i < static_cast<int>(c.notes.size()); ++i) {
             const auto& n = c.notes[static_cast<std::size_t>(i)];
             const auto box = noteBox(n, area, low, rowH, beats);
             const bool sel = selected.count(i) > 0;
-            g.setColour((sel ? t.focus : t.play).withAlpha(0.45f + 0.55f * static_cast<float>(n.velocity)));
-            g.fillRoundedRectangle(box, 2.0f);
-            g.setColour(sel ? t.focus : t.play);
-            g.drawRoundedRectangle(box, 2.0f, 1.0f);
+            const auto ink = sel ? t.focus : t.control;
+            g.setColour(ink.withAlpha(0.38f + 0.55f * static_cast<float>(n.velocity)));
+            g.fillRect(box);
+            g.setColour(ink);
+            g.fillRect(box.withWidth(juce::jmin(2.0f, box.getWidth()))); // MIDI onset
+            if (sel) g.drawRect(box, 1.0f);
             const float x = box.getX();
-            g.setColour(sel ? t.focus : t.play);
-            g.fillRect(juce::Rectangle<float>(x, vel.getBottom() - vel.getHeight() * static_cast<float>(n.velocity), 3.0f, vel.getHeight() * static_cast<float>(n.velocity)));
+            const float v = vel.getHeight() * static_cast<float>(n.velocity);
+            g.fillRect(x, vel.getBottom() - v, 1.0f, v);
+            const float handleY = juce::jlimit(vel.getY(), vel.getBottom() - 3.0f, vel.getBottom() - v - 1.5f);
+            g.fillRect(x, handleY, 3.0f, 3.0f);
         }
+        const auto info = getLocalBounds().toFloat().reduced(8.0f, 3.0f).removeFromBottom(14.0f);
         drawText(g, juce::String(static_cast<int>(c.notes.size())) + " notes, " + juce::String(c.bars, 2) + " bars" + (c.name.empty() ? "" : "  " + str(c.name)),
-                 getLocalBounds().toFloat().reduced(40.0f, 6.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
-        if (c.notes.empty())
-            drawText(g, "Empty clip: double-click to add notes, or drop a MIDI file here.", area, kTextBody, t.textDim, juce::Justification::centred);
+                 info, kTextSmall, t.textDim, juce::Justification::centredRight);
+        if (c.notes.empty()) {
+            const juce::String hint = "Double-click to add a note or drop a MIDI file here.";
+            const auto caption = area.withSizeKeepingCentre(juce::jmin(area.getWidth(), textWidth(hint, kTextBody) + 20.0f), 24.0f);
+            g.setColour(t.display);
+            g.fillRect(caption);
+            drawText(g, hint, caption.reduced(4.0f, 0.0f), kTextBody, t.textDim, juce::Justification::centred);
+        }
         drawFocus(g, getLocalBounds().toFloat());
     }
     juce::Rectangle<float> noteBox(const zed::ClipNote& n, juce::Rectangle<float> area, int low, float rowH, double beats) const {
         const float x0 = area.getX() + area.getWidth() * static_cast<float>(n.start / beats);
         const float x1 = area.getX() + area.getWidth() * static_cast<float>((n.start + n.length) / beats);
         const float y = area.getBottom() - rowH * static_cast<float>(n.key - low + 1);
-        return {x0, y + 1.0f, std::max(3.0f, x1 - x0 - 1.0f), rowH - 2.0f};
+        const float inset = std::min(1.0f, rowH * 0.17f);
+        return {x0, y + inset, std::max(3.0f, x1 - x0 - 1.0f), juce::jmax(1.0f, rowH - 2.0f * inset)};
     }
     int noteAt(juce::Point<float> p, bool& edge) const {
         const auto c = clip();
@@ -717,12 +804,11 @@ bool PlayPage::exportClipFile(const juce::File& file) {
 void PlayPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void PlayPage::resized() {
-    auto area = getLocalBounds().reduced(8);
-    auto top = area.removeFromTop(juce::jmax(300, area.getHeight() / 2 - 20));
+    auto area = getLocalBounds();
+    constexpr int minClipHeight = 276; // includes the clip information row when the help strip is visible
+    auto top = area.removeFromTop(juce::jmin(300, area.getHeight() - minClipHeight));
     chords_->setBounds(top.removeFromRight(440));
-    top.removeFromRight(8);
     arp_->setBounds(top);
-    area.removeFromTop(8);
     clips_->setBounds(area);
 }
 

@@ -14,7 +14,10 @@
 
 namespace zui {
 
-// One accent hue per module family (plan 3.13).
+// The module families (plan 3.13). Controls of every family share one ink: colour is kept for
+// signal and state (a lit power lamp, the trace that sounds, a modulation route, meters and
+// warnings), so OSC, Filter and FX read as parts of one instrument. The family hues remain for
+// the displays that draw signal flow (the signal map, the workshop).
 enum class Family { Neutral, Sources, Filters, Modulators, Effects, Play };
 
 struct Theme {
@@ -24,15 +27,18 @@ struct Theme {
     juce::Colour text, textDim, textFaint;
     juce::Colour focus, selection, warning, danger, ok;
     juce::Colour display, displayGrid, displayLine;
+    // The ink of an engaged control (value arcs, fader thumbs, a chosen segment, a switch that is
+    // on) and the lamp of a module that is on. Optional in a token file (defaults: text, sources).
+    juce::Colour control, lamp;
     juce::Colour sources, filters, modulators, effects, play, global;
     juce::Colour mod[8]; // modulation route colours, chosen to stay apart under colour-blindness
     float radius = 6.0f;
     float glow = 0.3f; // strength of the soft line under luminous display curves (0: none)
-    // The hardware finish (plan 3.13 "Look"): grain on panels and the chassis, and how much
-    // panels, knobs and screws read as machined metal (0: flat).
+    // Grain strength on satin metal and walnut, and the depth of machined controls (0: flat).
     float texture = 0.0f;
     float metal = 0.0f;
 
+    // The control ink for a family (the same for every family; see above).
     juce::Colour accent(Family f) const;
     juce::Colour modColour(int index) const { return mod[((index % 8) + 8) % 8]; }
 
@@ -42,8 +48,6 @@ struct Theme {
     static juce::StringArray names();
     // Parses a token file; false with a message when a colour is missing or malformed.
     static bool fromJson(const std::string& json, Theme& out, juce::String& error);
-    // Adds the token files found in a folder (Documents/Zederia/Themes) to names().
-    static void addUserThemes(const juce::File& folder);
 };
 
 inline const Theme& theme() { return Theme::current(); }
@@ -52,10 +56,18 @@ inline const Theme& theme() { return Theme::current(); }
 double contrastRatio(juce::Colour a, juce::Colour b);
 
 // --- Text ------------------------------------------------------------------------------------------
-inline constexpr float kTextSmall = 11.0f;  // the smallest text anywhere at 100 % (plan 3.13)
+inline constexpr float kTextSmall = 11.0f;  // the smallest text anywhere at 100 % (plan 3.13): legends
+inline constexpr float kValueText = 12.0f;  // a control's value: a step above its legend
+inline constexpr float kPrimaryValueText = 14.5f; // the value of a primary control (cutoff, master)
 inline constexpr float kTextBody = 12.5f;
 inline constexpr float kTextTitle = 14.0f;
 inline constexpr float kTextLarge = 17.0f;
+
+// The text size preference: every size below is multiplied by it when text is drawn or measured
+// (0.9 to 1.5; 1 is the size the layout was made for). drawText() keeps enlarged text inside its
+// box by giving back as much of the enlargement as it must, never going below the base size.
+void setTextScale(float scale);
+float textScale();
 
 juce::Font font(float size, bool bold = false);
 float textWidth(const juce::String& text, float size, bool bold = false);

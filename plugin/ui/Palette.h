@@ -56,8 +56,11 @@ private:
         std::unique_ptr<Button> value;
         std::function<juce::String()> current;
         std::function<void(Button&)> change;
+        std::unique_ptr<Button> minus, plus; // stepped rows: - value +
+        std::function<void(int)> step;
     };
     void addRow(const juce::String& label, const juce::String& help, std::function<juce::String()> current, std::function<void(Button&)> change);
+    void addStepRow(const juce::String& label, const juce::String& help, std::function<juce::String()> current, std::function<void(int)> step);
     Context& ctx_;
     std::vector<std::unique_ptr<Row>> rows_;
     std::unique_ptr<ChoiceBox> offlineQuality;

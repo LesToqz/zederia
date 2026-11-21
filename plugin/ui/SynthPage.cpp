@@ -65,31 +65,59 @@ juce::String characterLabel(int type) {
     return "Character";
 }
 
-// Tabs over groups of controls: only the selected group is visible.
+bool shownIn(const FlowItem& item, bool simple) {
+    if (auto* w = dynamic_cast<const Widget*>(item.c))
+        return shownInView(*w, simple);
+    return true;
+}
+
+// Tabs over groups of controls: only the selected group is visible. A group can place its items
+// itself (custom) instead of flowing them; it then says how tall it is.
 struct Sections {
+    struct Custom {
+        std::function<void(juce::Rectangle<int>, bool simple)> place;
+        int height = 0;
+    };
     TabStrip* tabs = nullptr;
     std::vector<std::vector<FlowItem>> groups;
+    std::vector<Custom> custom; // per group; empty place: flowed
     std::vector<bool> advancedTab;
     int rowHeight = kKnobH;
+    int gap = 4, tabHeight = 24, tabGap = 6;
+    bool tabShown(int i, bool simple) const { return !(simple && i < static_cast<int>(advancedTab.size()) && advancedTab[static_cast<std::size_t>(i)]); }
+    int groupHeight(int g, int width, bool simple) const {
+        if (g < static_cast<int>(custom.size()) && custom[static_cast<std::size_t>(g)].place)
+            return custom[static_cast<std::size_t>(g)].height;
+        return flowHeight(width, groups[static_cast<std::size_t>(g)], rowHeight, gap, [simple](const FlowItem& i) { return shownIn(i, simple); });
+    }
+    // The tallest group a tab can show, so the area above can be given everything else and stays
+    // put when another tab is chosen.
+    int tallest(int width, bool simple) const {
+        int h = 0;
+        for (int g = 0; g < static_cast<int>(groups.size()); ++g)
+            if (tabShown(g, simple))
+                h = std::max(h, groupHeight(g, width, simple));
+        return h;
+    }
     void layout(juce::Rectangle<int> area, bool simple) {
         if (tabs != nullptr) {
             for (int i = 0; i < tabs->count(); ++i)
-                tabs->setTabVisible(i, !(simple && i < static_cast<int>(advancedTab.size()) && advancedTab[static_cast<std::size_t>(i)]));
+                tabs->setTabVisible(i, tabShown(i, simple));
             if (!tabs->tab(tabs->selected()).isVisible())
                 tabs->setSelected(0, false);
-            tabs->setBounds(area.removeFromTop(24));
-            area.removeFromTop(6);
+            tabs->setBounds(area.removeFromTop(tabHeight));
+            area.removeFromTop(tabGap);
         }
         const int current = tabs != nullptr ? tabs->selected() : 0;
         for (int g = 0; g < static_cast<int>(groups.size()); ++g)
-            for (auto& item : groups[static_cast<std::size_t>(g)]) {
-                bool show = g == current;
-                if (auto* w = dynamic_cast<Widget*>(item.c))
-                    show = show && shownInView(*w, simple);
-                item.c->setVisible(show);
-            }
-        if (current < static_cast<int>(groups.size()))
-            flow(area, groups[static_cast<std::size_t>(current)], rowHeight, 4);
+            for (auto& item : groups[static_cast<std::size_t>(g)])
+                item.c->setVisible(g == current && shownIn(item, simple));
+        if (current >= static_cast<int>(groups.size()))
+            return;
+        if (current < static_cast<int>(custom.size()) && custom[static_cast<std::size_t>(current)].place)
+            custom[static_cast<std::size_t>(current)].place(area, simple);
+        else
+            flow(area, groups[static_cast<std::size_t>(current)], rowHeight, gap);
     }
     void hideAll() {
         if (tabs != nullptr)
@@ -118,6 +146,7 @@ public:
         power.family = Family::Sources;
         powerSwitch = &power;
         onHeaderClick = [this] { page_.focusSource(source_); };
+        offMark = source >= 3; // an oscillator that is off says so by its hollow lamp and graphite display
         if (source < 3)
             buildOsc();
         else if (source == 3)
@@ -154,31 +183,55 @@ public:
 
     void layoutBody(juce::Rectangle<int> body) override {
         const bool simple = ctx_.simpleView();
-        if (tableName_ != nullptr) {
+        if (source_ == 4) {
             auto row = body.removeFromTop(22);
             prevTable_->setBounds(row.removeFromLeft(22));
             nextTable_->setBounds(row.removeFromRight(22));
             tableName_->setBounds(row.reduced(2, 0));
             body.removeFromTop(4);
         }
-        if (view_ != nullptr) {
-            view_->setBounds(body.removeFromTop(76));
-            body.removeFromTop(4);
+        if (source_ >= 3) { // Sub and Texture: their controls in rows
+            for (auto& item : main_)
+                if (auto* w = dynamic_cast<Widget*>(item.c))
+                    w->setVisible(shownInView(*w, simple));
+            flow(body, main_, kKnobH, 4);
+            return;
         }
+        // An oscillator. The same control sits in the same place in Table and Classic, so the three
+        // oscillators line up whatever their engines: Position (Table) or Shape (Classic) first,
+        // then Level, Pan and Fine, then Coarse (Table) or Width (Classic); in Classic, Coarse joins
+        // the PITCH group. The display takes every pixel the tallest group of the tabs leaves.
         const bool classic = engine_ != nullptr && ctx_.processor.plainValue(engine_->param()) >= 0.5;
-        for (auto& item : main_)
-            if (auto* w = dynamic_cast<Widget*>(item.c)) {
-                bool show = shownInView(*w, simple);
-                if (std::find(classicParts_.begin(), classicParts_.end(), item.c) != classicParts_.end())
-                    show = show && classic;
-                if (std::find(tableParts_.begin(), tableParts_.end(), item.c) != tableParts_.end())
-                    show = show && !classic;
-                w->setVisible(show);
-            }
-        const int used = flow(body, main_, kKnobH, source_ < 3 ? 2 : 4);
-        body.removeFromTop(used + 4);
-        if (sections_.tabs != nullptr)
-            sections_.layout(body, simple);
+        sections_.groups[3] = classic ? pitchClassic_ : pitchTable_;
+        for (auto* c : swappable_)
+            c->setVisible(false);
+        const auto& main = classic ? mainClassic_ : mainTable_;
+        const int tallest = sections_.tallest(body.getWidth(), simple);
+        constexpr int performanceRowHeight = 76;
+        const int viewH = juce::jmax(60, body.getHeight() - 4 - (performanceRowHeight + 2) - (sections_.tabHeight + sections_.tabGap) - tallest);
+        view_->setBounds(body.removeFromTop(viewH));
+        // The asset selector is part of the display bezel. Classic generates its own cycle.
+        auto picker = view_->getLocalBounds().withTrimmedLeft(45).withTrimmedRight(48).removeFromTop(23).withTrimmedTop(3);
+        prevTable_->setBounds(picker.removeFromLeft(20));
+        nextTable_->setBounds(picker.removeFromRight(20));
+        tableName_->setBounds(picker);
+        for (auto* b : {prevTable_, tableName_, nextTable_})
+            b->setVisible(!classic);
+        body.removeFromTop(4);
+        auto mainRow = body.removeFromTop(performanceRowHeight);
+        body.removeFromTop(2);
+        sections_.layout(body, simple);
+        for (auto& item : main)
+            if (auto* w = dynamic_cast<Widget*>(item.c))
+                w->setVisible(shownInView(*w, simple));
+        // The row keeps its columns: a hidden control (Coarse in Simple view) leaves its place empty.
+        for (std::size_t i = 0; i < main.size(); ++i) {
+            const int w = i == 0 ? mainRow.getWidth() / 4 : mainRow.getWidth() / static_cast<int>(main.size() - i);
+            auto cell = mainRow.removeFromLeft(w);
+            if (i != 0)
+                cell = cell.removeFromBottom(kKnobH);
+            main[i].c->setBounds(cell);
+        }
     }
 
     bool tickCard() {
@@ -303,49 +356,104 @@ private:
         headerRight.push_back(engine_);
         addTableRow(false);
         view_ = &parts_.add<WavetableView>(*this, ctx_, source_);
-        view_->setHelp("Table", "The table in depth with the playing position lit, or the cycle as it sounds now. Click to switch.");
+        for (auto* b : {prevTable_, tableName_, nextTable_})
+            view_->addAndMakeVisible(*b);
+        tableName_->ghost = true;
+        tableName_->boldText = true;
+        view_->setHelp("Table", "The table in depth with the playing position lit, or the cycle as it sounds now. The 3D / 2D button switches.");
         auto& position = knob("position", "Position");
         auto& coarse = knob("coarse", "Coarse", true);
         auto& shape = knob("classic.shape", "Shape");
+        position.valueSize = shape.valueSize = kPrimaryValueText;
         auto& width = knob("classic.pulse_width", "Width");
-        tableParts_ = {&position, &coarse};
-        classicParts_ = {&shape, &width};
-        main_ = {{&position, kKnobW}, {&shape, kKnobW}, {&width, kKnobW}, {&knob("level", "Level"), kKnobW}, {&knob("pan", "Pan"), kKnobW},
-                 {&knob("fine", "Fine"), kKnobW}, {&coarse, kKnobW}};
+        auto& level = knob("level", "Level");
+        auto& pan = knob("pan", "Pan");
+        auto& fine = knob("fine", "Fine");
+        swappable_ = {&position, &coarse, &shape, &width};
+        mainTable_ = {{&position, kKnobW}, {&level, kKnobW}, {&pan, kKnobW}, {&fine, kKnobW}, {&coarse, kKnobW}};
+        mainClassic_ = {{&shape, kKnobW}, {&level, kKnobW}, {&pan, kKnobW}, {&fine, kKnobW}, {&width, kKnobW}};
         addTabs({"UNISON", "SPREAD", "WARP", "PITCH"}, {false, true, false, false});
+        sections_.gap = 2;
+        sections_.rowHeight = kSmallKnobH;
+        sections_.tabHeight = 22;
+        sections_.tabGap = 4;
         // Unison: how many voices and how they spread.
         auto& voices = part<NumberBox>("unison.voices", "Voices");
         voices.costWarning = true;
         sections_.groups.push_back({{&voices, 50, kChoiceH}, {&knob("unison.detune", "Detune"), kKnobW}, {&knob("unison.blend", "Blend"), kKnobW},
                                     {&knob("unison.width", "Width"), kKnobW}, {&knob("unison.range", "Range", true), kKnobW}});
-        sections_.groups.push_back({{&knob("unison.position_spread", "Pos sprd"), kKnobW}, {&knob("unison.warp_spread", "Warp sprd"), kKnobW},
-                                    {&part<ChoiceBox>("unison.law", "Spread law"), 86, kChoiceH, true}, {&part<ChoiceBox>("unison.stack", "Stack"), 112, kChoiceH},
-                                    {&part<ChoiceBox>("unison.phase", "Start"), 80, kChoiceH}});
-        // Warp: two slots, each a mode, an amount, a source for the cross-modulation modes and its curve.
+        // Spread: the laws on one row, the two spreads below.
+        sections_.groups.push_back({{&part<ChoiceBox>("unison.law", "Spread law"), 86, kChoiceH}, {&part<ChoiceBox>("unison.stack", "Stack"), 112, kChoiceH},
+                                    {&part<ChoiceBox>("unison.phase", "Start"), 80, kChoiceH},
+                                    {&knob("unison.position_spread", "Pos sprd"), kKnobW, 0, true}, {&knob("unison.warp_spread", "Warp sprd"), kKnobW}});
+        // Warp: the two slots side by side, each a column: its mode over its amount, the source of
+        // the cross-modulation modes and the button that draws its curve.
         std::vector<FlowItem> warpItems;
+        struct Slot {
+            ChoiceBox* mode;
+            Knob* amount;
+            ChoiceBox* source;
+            Button* curve;
+        };
+        auto slots = std::make_shared<std::array<Slot, 2>>();
         for (int slot = 0; slot < 2; ++slot) {
             const juce::String id = slot == 0 ? "warp_a" : "warp_b";
             auto& mode = part<ChoiceBox>(id + ".mode", slot == 0 ? "Warp A" : "Warp B");
             mode.groupOf = warpGroup;
+            auto& amount = knob(id + ".amount", "Amount");
             auto& source = part<ChoiceBox>(id + ".source", "Source", true);
             auto& curve = parts_.add<Button>(*this, "", Glyph::Pencil);
             curve.setTitle(juce::String("Edit warp ") + (slot == 0 ? "A" : "B") + " curve");
             curve.setTooltip(curve.getTitle());
             curve.setHelp("Edit curve", "Draw this warp's phase curve in the display below (the curve modes use it).");
             curve.onClick = [this, slot] { page_.focusWarpCurve(source_, slot); };
-            warpItems.push_back({&mode, 112, kChoiceH, slot == 1});
-            warpItems.push_back({&knob(id + ".amount", "Amount"), kKnobW});
-            warpItems.push_back({&source, 80, kChoiceH});
-            warpItems.push_back({&curve, 24, 24});
+            (*slots)[static_cast<std::size_t>(slot)] = {&mode, &amount, &source, &curve};
+            for (juce::Component* c : std::initializer_list<juce::Component*>{&mode, &amount, &source, &curve})
+                warpItems.push_back({c, 0});
         }
         sections_.groups.push_back(warpItems);
-        // Pitch and phase, and where the oscillator goes.
+        sections_.custom.resize(4);
+        sections_.custom[0].height = kKnobH;
+        sections_.custom[0].place = [this](juce::Rectangle<int> area, bool) {
+            const auto& items = sections_.groups.front();
+            int count = static_cast<int>(std::count_if(items.begin(), items.end(), [](const FlowItem& i) { return i.c->isVisible(); }));
+            // Centre this single-row bank in the space shared with the two-row Warp and Pitch banks.
+            auto row = area.withSizeKeepingCentre(area.getWidth(), juce::jmin(kKnobH, area.getHeight()));
+            for (const auto& item : items) {
+                if (!item.c->isVisible())
+                    continue;
+                auto cell = row.removeFromLeft(row.getWidth() / count--);
+                if (item.height > 0)
+                    cell = cell.withSizeKeepingCentre(std::min(cell.getWidth(), item.width), item.height);
+                item.c->setBounds(cell);
+            }
+        };
+        sections_.custom[2].height = kChoiceH + 2 + kSmallKnobH;
+        sections_.custom[2].place = [slots](juce::Rectangle<int> area, bool) {
+            constexpr int kColumnGap = 8;
+            const int colW = (area.getWidth() - kColumnGap) / 2;
+            for (int s = 0; s < 2; ++s) {
+                const auto& slot = (*slots)[static_cast<std::size_t>(s)];
+                auto col = juce::Rectangle<int>(area.getX() + s * (colW + kColumnGap), area.getY(), colW, kChoiceH + 2 + kSmallKnobH);
+                slot.mode->setBounds(col.removeFromTop(kChoiceH));
+                col.removeFromTop(2);
+                slot.amount->setBounds(col.removeFromLeft(52));
+                col.removeFromLeft(2);
+                slot.curve->setBounds(col.removeFromRight(24).withSizeKeepingCentre(24, 24));
+                col.removeFromRight(2);
+                slot.source->setBounds(col.withSizeKeepingCentre(col.getWidth(), kChoiceH));
+            }
+        };
+        // Pitch and phase, and where the oscillator goes: the switches on one row, the dials below.
         auto& phaseMode = part<Segmented>("phase_mode", "Phase");
         phaseMode.names = {"Reset", "Continue"};
-        sections_.groups.push_back({{&part<NumberBox>("octave", "Octave"), 50, kChoiceH}, {&part<NumberBox>("semi", "Semi"), 50, kChoiceH},
-                                    {&knob("sends.filter_balance", "F1 / F2", true), kKnobW}, {&knob("sends.direct", "Direct", true), kKnobW},
-                                    {&part<Toggle>("keytrack", "Key", true), 58, 22},
-                                    {&knob("phase", "Phase"), kKnobW, 0, true}, {&knob("phase_random", "Random"), kKnobW}, {&phaseMode, 140, kChoiceH}});
+        pitchTable_ = {{&part<NumberBox>("octave", "Octave"), 50, kChoiceH}, {&part<NumberBox>("semi", "Semi"), 50, kChoiceH},
+                       {&part<Toggle>("keytrack", "Key", true), 58, 22}, {&phaseMode, 120, kChoiceH},
+                       {&knob("phase", "Phase"), kKnobW, 0, true}, {&knob("phase_random", "Random"), kKnobW},
+                       {&knob("sends.filter_balance", "F1 / F2", true), kKnobW}, {&knob("sends.direct", "Direct", true), kKnobW}};
+        pitchClassic_ = pitchTable_;
+        pitchClassic_.push_back({&coarse, kKnobW});
+        sections_.groups.push_back(pitchTable_);
     }
 
     void buildSub() {
@@ -371,7 +479,7 @@ private:
         main_ = {{&knob("level", "Level"), kKnobW}, {&knob("pan", "Pan"), kKnobW}, {&knob("pitch", "Pitch"), kKnobW}, {&knob("fine", "Fine", true), kKnobW},
                  {&knob("start", "Start"), kKnobW},
                  {&knob("random_start", "Rnd start", true), kKnobW, 0, true}, {&knob("sends.filter_balance", "F1 / F2", true), kKnobW},
-                 {&mode, 104, kChoiceH}, {&part<Toggle>("keytrack", "Key track"), 86, 22}};
+                 {&mode, 100, kChoiceH}, {&part<Toggle>("keytrack", "Key track"), 75, 22}};
     }
 
     Context& ctx_;
@@ -382,9 +490,11 @@ private:
     WavetableView* view_ = nullptr;
     Button *prevTable_ = nullptr, *nextTable_ = nullptr, *tableName_ = nullptr;
     Segmented* engine_ = nullptr;
-    std::vector<FlowItem> main_;
+    std::vector<FlowItem> main_;                    // Sub and Texture
+    std::vector<FlowItem> mainTable_, mainClassic_; // an oscillator's first row, by engine
+    std::vector<FlowItem> pitchTable_, pitchClassic_;
+    std::vector<juce::Component*> swappable_;       // the parts that change places with the engine
     Sections sections_;
-    std::vector<juce::Component*> classicParts_, tableParts_;
     bool lastClassic_ = false;
 };
 
@@ -413,6 +523,11 @@ public:
             w.advanced = adv;
             return w;
         };
+        // Cutoff is the dial that defines the sound: the largest, with its value and unit large on
+        // it; the precision controls keep their row beside it.
+        cutoff_ = &k("cutoff", "Cutoff");
+        cutoff_->valueSize = kPrimaryValueText;
+        cutoff_->trackInset = 9.0f;
         character_ = &k("character", "Body");
         auto& mix = parts_.add<Fader>(*this, ctx, (prefix_ + ".mix").toRawUTF8(), "Mix");
         mix.family = Family::Filters;
@@ -422,14 +537,24 @@ public:
         mode.labelledBy = "Mix";
         mode.family = Family::Filters;
         mode.advanced = true;
-        items_ = {{&k("cutoff", "Cutoff"), 52}, {&k("resonance", "Res"), 52}, {&k("drive", "Drive"), 52}, {character_, 52},
-                  {&k("stereo_offset", "Stereo", true), 52}, {&k("keytrack", "Key track"), 52},
-                  {&mix, 200, 22, true}, {&mode, 104, 22}};
+        items_ = {{&k("resonance", "Res"), 50}, {&k("drive", "Drive"), 50}, {character_, 50}, {&k("stereo_offset", "Stereo", true), 50},
+                  {&k("keytrack", "Key track"), 50}, {&mix, 158, 22, true}, {&mode, 100, 22}};
+        for (auto* child : getChildren())
+            child->addMouseListener(this, false);
+    }
+    void mouseDown(const juce::MouseEvent& event) override {
+        if (event.eventComponent == this)
+            Card::mouseDown(event);
+        else if (!event.mods.isPopupMenu())
+            page_.focusFilter(slot_);
     }
     void layoutBody(juce::Rectangle<int> body) override {
         for (auto& item : items_)
             if (auto* w = dynamic_cast<Widget*>(item.c))
                 w->setVisible(shownInView(*w, ctx_.simpleView()));
+        cutoff_->setBounds(body.removeFromLeft(76).withSizeKeepingCentre(76, juce::jmin(body.getHeight(), 100)));
+        body.removeFromLeft(4);
+        body = body.withSizeKeepingCentre(body.getWidth(), juce::jmin(body.getHeight(), kKnobH + 3 + 22));
         flow(body, items_, kKnobH, 3);
     }
     bool tickCard() {
@@ -449,7 +574,7 @@ private:
     juce::String prefix_;
     Parts parts_;
     ChoiceBox* type_ = nullptr;
-    Knob* character_ = nullptr;
+    Knob *cutoff_ = nullptr, *character_ = nullptr;
     std::vector<FlowItem> items_;
     int lastType_ = -1;
 };
@@ -464,6 +589,8 @@ public:
         tabs.setTitle("Voice sections");
         tabs.onChange = [this](int) { resized(); };
         sections_.tabs = &tabs;
+        sections_.rowHeight = kSmallKnobH;
+        sections_.gap = 3;
         sections_.advancedTab = {false, false, false, false, true, true, true};
         const auto knob = [&](const char* id, const char* label, Family f = Family::Neutral) -> Knob& {
             auto& k = parts_.add<Knob>(*this, ctx, id, label);
@@ -472,18 +599,22 @@ public:
         };
         const auto fader = [&](const char* id, const char* label) -> Fader& {
             auto& f = parts_.add<Fader>(*this, ctx, id, label);
-            f.labelWidth = 120;
+            f.labelWidth = 105;
             return f;
         };
         auto& routing = fader("voice.filter_routing", "Series / parallel");
         routing.family = Family::Filters;
-        sections_.groups.push_back({{&routing, 320, 22, true}, {&fader("fx.filter1_balance", "F1 to lane B"), 320, 22, true},
-                                    {&fader("fx.filter2_balance", "F2 to lane B"), 320, 22, true}, {&fader("fx.direct_balance", "Direct to lane B"), 320, 22, true}});
+        sections_.groups.push_back({{&routing, 296, 28, true}, {&fader("fx.filter1_balance", "F1 to lane B"), 296, 28, true},
+                                    {&fader("fx.filter2_balance", "F2 to lane B"), 296, 28, true}, {&fader("fx.direct_balance", "Direct to lane B"), 296, 28, true}});
         auto& mode = parts_.add<Segmented>(*this, ctx, "global.mode", "Mode");
         mode.names = {"Poly", "Mono", "Legato"};
-        voices_ = &parts_.add<Caption>(*this, "0 voices", kTextSmall, true);
+        voiceMode_ = &mode;
+        modeCaption_ = &parts_.add<Caption>(*this, mode.valueText(), kTextSmall, true);
+        modeCaption_->justification = juce::Justification::centredRight;
+        modeCaption_->setSize(90, 18);
+        headerRight = {modeCaption_};
         sections_.groups.push_back({{&mode, 170, kChoiceH}, {&parts_.add<NumberBox>(*this, ctx, "global.polyphony", "Polyphony"), 70, kChoiceH},
-                                    {voices_, 70, 18}, {&parts_.add<ChoiceBox>(*this, ctx, "voice.steal", "Stealing"), 110, kChoiceH, true},
+                                    {&parts_.add<ChoiceBox>(*this, ctx, "voice.steal", "Stealing"), 110, kChoiceH, true},
                                     {&parts_.add<ChoiceBox>(*this, ctx, "voice.priority", "Priority"), 90, kChoiceH},
                                     {&knob("voice.velocity_sens", "Velocity"), kKnobW}});
         auto& glideMode = parts_.add<Segmented>(*this, ctx, "global.glide_mode", "Glide mode");
@@ -518,8 +649,8 @@ public:
                                     {&load, 104, 22, true}, {&equal, 56, 22}, {lockTuning_, 54, 22}, {tuningName_, 300, 16, true}});
         auto& follower = parts_.add<Segmented>(*this, ctx, "global.follower.source", "Follower hears");
         follower.names = {"Instrument", "Side-chain"};
-        sections_.groups.push_back({{&parts_.add<Toggle>(*this, ctx, "global.mpe", "MPE"), 64, 22}, {&knob("global.mpe_bend_range", "MPE bend"), kKnobW},
-                                    {&parts_.add<Toggle>(*this, ctx, "global.midi_out", "MIDI out"), 84, 22}, {&parts_.add<Toggle>(*this, ctx, "global.midi_thru", "MIDI thru"), 90, 22},
+        sections_.groups.push_back({{&parts_.add<Toggle>(*this, ctx, "global.mpe", "MPE"), 54, 22}, {&knob("global.mpe_bend_range", "MPE bend"), kKnobW},
+                                    {&parts_.add<Toggle>(*this, ctx, "global.midi_out", "MIDI out"), 83, 22}, {&parts_.add<Toggle>(*this, ctx, "global.midi_thru", "MIDI thru"), 88, 22},
                                     {&follower, 170, kChoiceH, true}, {&knob("global.follower.attack", "Attack"), kKnobW}, {&knob("global.follower.release", "Release"), kKnobW}});
         sections_.groups.push_back({{&parts_.add<ChoiceBox>(*this, ctx, "global.limiter", "Protection"), 110, kChoiceH},
                                     {&parts_.add<Toggle>(*this, ctx, "global.dc_filter", "DC filter"), 90, 22},
@@ -528,10 +659,10 @@ public:
     }
     void layoutBody(juce::Rectangle<int> body) override { sections_.layout(body, ctx_.simpleView()); }
     bool tickCard() {
-        const int v = ctx_.processor.activeVoices();
-        if (v != voicesShown_) {
-            voicesShown_ = v;
-            voices_->setText(juce::String(v) + (v == 1 ? " voice" : " voices"));
+        const int mode = juce::roundToInt(voiceMode_->value());
+        if (mode != modeShown_) {
+            modeShown_ = mode;
+            modeCaption_->setText(voiceMode_->valueText());
         }
         return false;
     }
@@ -568,10 +699,11 @@ private:
     Context& ctx_;
     Parts parts_;
     Sections sections_;
-    Caption* voices_ = nullptr;
+    Segmented* voiceMode_ = nullptr;
+    Caption* modeCaption_ = nullptr;
     Caption* tuningName_ = nullptr;
     Button* lockTuning_ = nullptr;
-    int voicesShown_ = -1;
+    int modeShown_ = -1;
 };
 
 // --- Stage -------------------------------------------------------------------------------------------
@@ -589,7 +721,7 @@ public:
         screws = false;
         for (juce::Component* c : std::initializer_list<juce::Component*>{&filter_, &scope_, &warp_})
             addChildComponent(c);
-        for (Button* b : {&viewToggle_, &shapes_, &steps_, &snap_, &copy_, &paste_, &mapButton_}) {
+        for (Button* b : {&filter1_, &filter2_, &viewToggle_, &shapes_, &steps_, &snap_, &copy_, &paste_, &mapButton_}) {
             b->textSize = kTextSmall;
             addAndMakeVisible(*b);
         }
@@ -600,17 +732,23 @@ public:
         copy_.setSize(22, 18);
         paste_.setSize(22, 18);
         mapButton_.setSize(22, 18);
-        headerRight = {&mapButton_, &paste_, &copy_, &snap_, &steps_, &shapes_, &viewToggle_};
+        filter1_.setSize(30, 18);
+        filter2_.setSize(30, 18);
+        filter1_.setTitle("Show Filter 1 response");
+        filter2_.setTitle("Show Filter 2 response");
+        filter1_.setTooltip(filter1_.getTitle());
+        filter2_.setTooltip(filter2_.getTitle());
+        filter1_.toggleRole = filter2_.toggleRole = true;
+        filter1_.onClick = [this] { showFilter(0); };
+        filter2_.onClick = [this] { showFilter(1); };
+        headerRight = {&mapButton_, &paste_, &copy_, &snap_, &steps_, &shapes_, &viewToggle_, &filter2_, &filter1_};
         steps_.toggleRole = snap_.toggleRole = mapButton_.toggleRole = true;
         mapButton_.setTitle("Signal map");
         mapButton_.setTooltip("Signal map");
         mapButton_.setHelp("Signal map", "The routing of the whole sound; click a part to go to it.");
         mapButton_.onClick = [this] { setMapShown(!mapShown_); };
-        viewToggle_.onClick = [this] {
-            filter_.showPhase = !filter_.showPhase;
-            filter_.repaint();
-            updateButtons();
-        };
+        viewToggle_.onClick = [this] { filter_.togglePhase(); };
+        filter_.onPhaseChanged = [this] { updateButtons(); };
         steps_.onClick = [this] { warp_.stepMode = !warp_.stepMode; warp_.repaint(); updateButtons(); };
         snap_.onClick = [this] { warp_.snap = !warp_.snap; updateButtons(); };
         copy_.setTitle("Copy curve");
@@ -664,6 +802,8 @@ public:
         show(View::WarpCurve);
     }
     void showFilter(int slot) {
+        if (view_ == View::Filter && slot_ == slot)
+            return;
         slot_ = slot;
         filter_.setSlot(slot);
         show(View::Filter);
@@ -686,8 +826,12 @@ public:
 private:
     void updateButtons() {
         const bool curve = view_ == View::WarpCurve;
+        filter1_.setVisible(view_ == View::Filter);
+        filter2_.setVisible(view_ == View::Filter);
+        filter1_.setToggled(slot_ == 0);
+        filter2_.setToggled(slot_ == 1);
         viewToggle_.setVisible(view_ == View::Filter);
-        viewToggle_.setText(filter_.showPhase ? "Magnitude" : "Phase");
+        viewToggle_.setText(filter_.isShowingPhase() ? "Magnitude" : "Phase");
         for (Button* b : {&shapes_, &steps_, &snap_, &copy_, &paste_})
             b->setVisible(curve);
         steps_.setToggled(warp_.stepMode);
@@ -695,7 +839,7 @@ private:
         mapButton_.setToggled(mapShown_);
         juce::String t;
         switch (view_) {
-        case View::Filter: t = "Filter " + juce::String(slot_ + 1); break;
+        case View::Filter: t = "Filter response"; break;
         case View::WarpCurve: t = "Warp " + juce::String(warpSlot_ == 0 ? "A" : "B"); break;
         case View::Scope: t = Context::sourceName(scope_.source); break;
         }
@@ -725,7 +869,7 @@ private:
     FilterResponseView filter_;
     SourceScope scope_;
     CurveEditor warp_;
-    Button viewToggle_{"Phase"}, shapes_{"Shapes"}, steps_{"Steps"}, snap_{"Snap"}, copy_{"", Glyph::Copy}, paste_{"", Glyph::Paste}, mapButton_{"", Glyph::Map};
+    Button filter1_{"F1"}, filter2_{"F2"}, viewToggle_{"Phase"}, shapes_{"Shapes"}, steps_{"Steps"}, snap_{"Snap"}, copy_{"", Glyph::Copy}, paste_{"", Glyph::Paste}, mapButton_{"", Glyph::Map};
     View view_ = View::Filter;
     bool mapShown_ = false;
     int slot_ = 0, osc_ = 0, warpSlot_ = 0;
@@ -815,30 +959,23 @@ SynthPage::~SynthPage() = default;
 void SynthPage::paint(juce::Graphics&) {} // the chassis shows through
 
 void SynthPage::resized() {
-    auto area = getLocalBounds().reduced(8);
+    auto area = getLocalBounds();
     auto right = area.removeFromRight(360);
-    area.removeFromLeft(0);
-    area.removeFromRight(8);
-    // Three oscillators side by side; Sub, Texture and the Stage below them.
-    auto top = area.removeFromTop(372);
+    // Reserve the two lower control rows even with the help strip open.
+    auto top = area.removeFromTop(juce::jmin(390, juce::jmax(0, area.getHeight() - 208)));
     map_->setBounds(top);
-    area.removeFromTop(8);
-    const int oscW = (top.getWidth() - 16) / 3;
+    // Lower bays share the oscillator row's vertical seams.
+    const int oscW = top.getWidth() / 3;
     for (int i = 0; i < 3; ++i) {
         sources_[static_cast<std::size_t>(i)]->setBounds(i < 2 ? top.removeFromLeft(oscW) : top);
-        top.removeFromLeft(8);
     }
-    sources_[3]->setBounds(area.removeFromLeft(270));
-    area.removeFromLeft(8);
-    sources_[4]->setBounds(area.removeFromLeft(330));
-    area.removeFromLeft(8);
-    stage_->setBounds(area);
-    // Filters and the voice on the right.
-    for (auto& f : filters_) {
-        f->setBounds(right.removeFromTop(136));
-        right.removeFromTop(8);
-    }
-    voice_->setBounds(right);
+    sources_[3]->setBounds(area.removeFromLeft(oscW));
+    sources_[4]->setBounds(area.removeFromLeft(oscW));
+    voice_->setBounds(area);
+    // Both cutoff controls and their shared transfer display occupy one instrument strip.
+    for (auto& f : filters_)
+        f->setBounds(right.removeFromTop(146));
+    stage_->setBounds(right);
 }
 
 void SynthPage::expandSource(int source) { focusSource(source); }

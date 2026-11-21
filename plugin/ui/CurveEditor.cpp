@@ -520,22 +520,29 @@ void CurveEditor::draw(juce::Graphics& g) {
     const auto plot = plotArea();
     drawWell(g, plot);
     const auto inner = plot.reduced(4.0f);
-    // Grid.
-    g.setColour(t.displayGrid);
+    // Each subdivision is an actual snap division. Keep half and quarter lines visible
+    // when a fine grid is selected, with a short graduation for every step.
     for (int i = 1; i < gridX; ++i) {
         const float x = inner.getX() + inner.getWidth() * static_cast<float>(i) / static_cast<float>(gridX);
-        g.fillRect(x, inner.getY(), 1.0f, inner.getHeight());
+        const bool major = (4 * i) % gridX == 0;
+        g.setColour(t.displayGrid.withAlpha(major ? 1.0f : 0.45f));
+        g.fillRect(x, inner.getY(), major ? 1.0f : 0.75f, inner.getHeight());
+        g.setColour(t.lineStrong.withAlpha(0.7f));
+        g.fillRect(x, inner.getBottom() - (major ? 4.0f : 2.0f), 1.0f, major ? 4.0f : 2.0f);
     }
     const int rows = config_.bipolar ? gridY * 2 : gridY;
     for (int i = 1; i < rows; ++i) {
         const float y = inner.getY() + inner.getHeight() * static_cast<float>(i) / static_cast<float>(rows);
-        g.fillRect(inner.getX(), y, inner.getWidth(), 1.0f);
+        g.setColour(t.displayGrid.withAlpha(0.62f));
+        g.fillRect(inner.getX(), y, inner.getWidth(), 0.75f);
+        g.setColour(t.lineStrong.withAlpha(0.7f));
+        g.fillRect(inner.getX(), y, 4.0f, 1.0f);
     }
     if (config_.bipolar) {
-        g.setColour(t.lineStrong);
+        g.setColour(t.lineStrong.withAlpha(0.8f));
         g.fillRect(inner.getX(), toScreen(0.0, 0.0).y, inner.getWidth(), 1.0f);
     }
-    const juce::Colour accent = t.accent(family);
+    const juce::Colour accent = ink.value_or(t.displayLine);
     // Envelope loop region and sustain point; LFO loop start.
     const int n = static_cast<int>(shape_.points.size());
     if (config_.envelopeMarkers && loopStart >= 0 && loopEnd > loopStart && loopEnd < n) {
@@ -566,7 +573,7 @@ void CurveEditor::draw(juce::Graphics& g) {
     if (n > 0) {
         juce::Path curve, fill;
         const int samples = juce::jmax(64, static_cast<int>(inner.getWidth()));
-        const float base = toScreen(0.0, config_.bipolar ? 0.0 : 0.0).y;
+        const float base = toScreen(0.0, 0.0).y;
         for (int i = 0; i <= samples; ++i) {
             const double x = static_cast<double>(i) / samples;
             const auto p = toScreen(x, zed::shapeValue(shape_, x));
@@ -581,9 +588,13 @@ void CurveEditor::draw(juce::Graphics& g) {
         }
         fill.lineTo(inner.getRight(), base);
         fill.closeSubPath();
-        g.setColour(accent.withAlpha(0.12f));
+        juce::ColourGradient wash(accent.withAlpha(0.25f), inner.getTopLeft(),
+                                  accent.withAlpha(config_.bipolar ? 0.25f : 0.025f), inner.getBottomLeft(), false);
+        if (config_.bipolar)
+            wash.addColour(0.5, accent.withAlpha(0.035f));
+        g.setGradientFill(wash);
         g.fillPath(fill);
-        strokeGlow(g, curve, accent, 1.6f);
+        strokeGlow(g, curve, accent.interpolatedWith(t.displayLine, 0.12f), 1.8f);
         // Handles and points.
         for (int i = 0; i + 1 < n; ++i) {
             const auto& a = shape_.points[static_cast<std::size_t>(i)];
@@ -595,18 +606,22 @@ void CurveEditor::draw(juce::Graphics& g) {
             juce::Path diamond;
             const float s = i == hoverHandle_ || i == dragHandle_ ? 4.5f : 3.0f;
             diamond.addQuadrilateral(c.x, c.y - s, c.x + s, c.y, c.x, c.y + s, c.x - s, c.y);
-            g.setColour(i == hoverHandle_ || i == dragHandle_ ? accent : t.textFaint);
+            const bool pointed = i == hoverHandle_ || i == dragHandle_;
+            g.setColour(pointed ? accent : t.display);
             g.fillPath(diamond);
+            g.setColour(pointed ? t.displayLine : accent.withAlpha(0.8f));
+            g.strokePath(diamond, juce::PathStrokeType(1.0f));
         }
         for (int i = 0; i < n; ++i) {
             const auto& q = shape_.points[static_cast<std::size_t>(i)];
             const auto c = toScreen(q.x, q.y);
             const bool sel = std::find(selected_.begin(), selected_.end(), i) != selected_.end();
-            const float r = sel || i == hoverPoint_ ? 4.5f : 3.5f;
+            const float r = sel || i == hoverPoint_ ? 4.5f : 3.0f;
+            const auto handle = juce::Rectangle<float>(r * 2.0f, r * 2.0f).withCentre(c);
             g.setColour(sel ? t.focus : t.display);
-            g.fillEllipse(juce::Rectangle<float>(r * 2.0f, r * 2.0f).withCentre(c));
-            g.setColour(sel ? t.focus : accent);
-            g.drawEllipse(juce::Rectangle<float>(r * 2.0f, r * 2.0f).withCentre(c), 1.4f);
+            g.fillRoundedRectangle(handle, 1.0f);
+            g.setColour(sel ? t.displayLine : accent);
+            g.drawRoundedRectangle(handle, 1.0f, 1.4f);
         }
     }
     if (playhead_ >= 0.0f && playhead_ <= 1.0f && n > 0) {

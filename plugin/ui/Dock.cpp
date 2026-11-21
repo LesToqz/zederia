@@ -52,12 +52,12 @@ class MacroCard final : public Card {
 public:
     explicit MacroCard(Context& ctx) : Card("Macros", Family::Modulators), ctx_(ctx) {
         moduleId = "macro";
+        walnut = true;
         screws = false;
         headerHeight = 24;
         for (int m = 0; m < zed::kNumMacros; ++m) {
             auto& knob = parts_.add<Knob>(*this, ctx, reg().macroValue(m), "");
             knob.small = true;
-            knob.showValue = false;
             knob.showLabel = false;
             knob.labelledBy = "Macro " + juce::String(m + 1);
             knob.family = Family::Modulators;
@@ -82,6 +82,7 @@ public:
             const juce::String n = str(list[static_cast<std::size_t>(m)]);
             const juce::String shown = n.isEmpty() ? "Macro " + juce::String(m + 1) : n;
             knobs_[static_cast<std::size_t>(m)]->setTitle(shown);
+            knobs_[static_cast<std::size_t>(m)]->labelledBy = shown;
             chips_[static_cast<std::size_t>(m)]->text = shown;
             chips_[static_cast<std::size_t>(m)]->setTitle(shown + " modulation source");
             chips_[static_cast<std::size_t>(m)]->repaint();
@@ -93,10 +94,11 @@ public:
         const int h = (body.getHeight() - gap) / 2;
         for (int m = 0; m < zed::kNumMacros; ++m) {
             auto cell = juce::Rectangle<int>(body.getX() + (m % cols) * (w + gap), body.getY() + (m / cols) * (h + gap), w, h);
-            chips_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(18));
+            chips_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromTop(20));
             cell.removeFromTop(2);
-            polarity_[static_cast<std::size_t>(m)]->setBounds(cell.removeFromRight(26).withSizeKeepingCentre(26, 16));
-            knobs_[static_cast<std::size_t>(m)]->setBounds(cell.withSizeKeepingCentre(juce::jmin(cell.getWidth(), 40), cell.getHeight()));
+            const auto polarity = cell.removeFromRight(26).withTrimmedBottom(14);
+            polarity_[static_cast<std::size_t>(m)]->setBounds(polarity.withSizeKeepingCentre(26, 18));
+            knobs_[static_cast<std::size_t>(m)]->setBounds(cell);
         }
     }
 
@@ -132,6 +134,7 @@ class ModulatorCard final : public Card {
 public:
     explicit ModulatorCard(Context& ctx)
         : Card("Modulators", Family::Modulators), ctx_(ctx), env_(ctx, 0), scope_(ctx), lfo_(ctx, "LFO shape"), multi_(ctx, "Envelope shape") {
+        walnut = true;
         screws = false;
         headerHeight = 24;
         juce::StringArray sources;
@@ -210,6 +213,9 @@ public:
     }
 
     const juce::String& selected() const { return selected_; }
+    // Opens a modulator's graph and controls. Which one is open is the chip seated as a tab and the
+    // card's title ("LFO 2"); it does not change with the routing selection (a second click on a
+    // chip, a drop onto a control), which the chips show as a ring in the source's colour.
     void select(const juce::String& source) {
         selected_ = source;
         if (source.startsWith("env")) {
@@ -220,7 +226,13 @@ public:
         } else {
             scope_.source = source;
         }
+        const juce::Colour ink = ctx_.sourceColour(source);
+        lfo_.ink = ink;
+        multi_.ink = ink;
+        setTitleText(Context::sourceName(source));
         reloadShapes();
+        for (auto* c : chips_)
+            c->setOpen(c->source() == source);
         for (auto* c : chips_)
             c->repaint();
         updateButtons();
@@ -270,43 +282,69 @@ public:
     }
 
     void layoutBody(juce::Rectangle<int> body) override {
-        auto chipRow = body.removeFromTop(20);
+        auto chipRow = body.removeFromTop(23);
         const int n = static_cast<int>(chips_.size());
-        const int w = (chipRow.getWidth() - (n - 1) * 4) / n;
-        for (auto* c : chips_) {
-            c->setBounds(chipRow.removeFromLeft(w));
-            chipRow.removeFromLeft(4);
+        // Keep the four envelopes, eight LFOs and two Flux generators recognisable as banks.
+        const int usable = juce::jmax(0, chipRow.getWidth() - (n - 1) - 12);
+        for (int i = 0; i < n; ++i) {
+            chips_[static_cast<std::size_t>(i)]->setBounds(chipRow.removeFromLeft(usable * (i + 1) / n - usable * i / n));
+            chipRow.removeFromLeft(i + 1 == zed::kNumEnvs || i + 1 == zed::kNumEnvs + zed::kNumLfos ? 7 : 1);
         }
-        body.removeFromTop(4);
-        const auto display = body.removeFromLeft(juce::jmin(330, body.getWidth() / 3));
-        body.removeFromLeft(10);
+        body.removeFromTop(5);
         const bool env = selected_.startsWith("env"), lfo = selected_.startsWith("lfo");
         const bool multi = env && isMulti();
+        const bool simple = ctx_.simpleView();
+        const int controlsWidth = multi ? 156 : lfo ? 612 : !env ? 304 : simple ? 350 : 570;
+        const auto display = body.removeFromLeft(juce::jmax(0, body.getWidth() - controlsWidth - 12));
+        body.removeFromLeft(12);
         env_.setVisible(env && !multi);
         multi_.setVisible(multi);
         lfo_.setVisible(lfo);
         scope_.setVisible(!env && !lfo);
         for (juce::Component* c : std::initializer_list<juce::Component*>{&env_, &multi_, &lfo_, &scope_})
             c->setBounds(display);
-        const bool simple = ctx_.simpleView();
         for (auto& [source, items] : controls_)
             for (auto& item : items)
                 if (auto* widget = dynamic_cast<Widget*>(item.c))
-                    widget->setVisible(source == selected_ && shownInView(*widget, simple) && visibleNow(*widget));
-        if (const auto it = controls_.find(selected_); it != controls_.end())
-            flow(body, it->second, kKnobH, 4);
-    }
-
-    void draw(juce::Graphics& g) override {
-        Card::draw(g);
-        for (auto* c : chips_)
-            if (c->source() == selected_) { // the chip on show, underlined
-                g.setColour(ctx_.sourceColour(selected_));
-                g.fillRect(c->getBounds().getX() + 8, c->getBottom() + 1, c->getWidth() - 16, 2);
-            }
+                    widget->setVisible(source == selected_ && shownInView(*widget, simple) && visibleNow(*widget)
+                                       && (!multi || dynamic_cast<Segmented*>(widget) != nullptr));
+        if (const auto it = controls_.find(selected_); it != controls_.end()) {
+            if (env)
+                layoutEnvelope(body, it->second, simple, multi);
+            else
+                flow(body, it->second, kKnobH, 4);
+        }
     }
 
 private:
+    void layoutEnvelope(juce::Rectangle<int> body, const std::vector<FlowItem>& items, bool simple, bool multi) {
+        if (items.size() > 9) {
+            auto row = multi ? body.removeFromTop(kChoiceH) : body.removeFromBottom(kChoiceH);
+            items.back().c->setBounds(row.removeFromLeft(150));
+        }
+        if (multi)
+            return;
+        if (!simple) {
+            auto curves = body.removeFromRight(158);
+            curves = curves.withSizeKeepingCentre(curves.getWidth(), juce::jmin(curves.getHeight(), 96));
+            const int h = curves.getHeight() / 3;
+            for (std::size_t i = 6; i < 9; ++i)
+                items[i].c->setBounds(curves.removeFromTop(h).reduced(0, 1));
+            body.removeFromRight(12);
+        }
+        const int mainWidth = (body.getWidth() - (simple ? 0 : 100)) / 4;
+        const int mainHeight = juce::jmin(body.getHeight(), 91);
+        auto row = body.withSizeKeepingCentre(body.getWidth(), mainHeight);
+        for (std::size_t i = 0; i < 6; ++i) {
+            if (!items[i].c->isVisible())
+                continue;
+            const bool trim = i == 0 || i == 2; // Delay and Hold flank Attack.
+            auto cell = row.removeFromLeft(trim ? 50 : mainWidth);
+            if (trim)
+                cell = cell.removeFromBottom(juce::jmin(mainHeight, kKnobH));
+            items[i].c->setBounds(cell);
+        }
+    }
     bool isMulti() const { return envIndex_ > 0 && ctx_.processor.plainValue(idx("env" + juce::String(envIndex_ + 1) + ".mode")) >= 0.5; }
     CurveEditor* editor() {
         if (selected_.startsWith("lfo"))
@@ -405,10 +443,21 @@ private:
                 k.setHelp(k.getTitle(), k.helpText + " Type a note length (1/8, 1/4T, 3/16) to follow the tempo.");
                 return k;
             };
-            items = {{&timeKnob(0, "Delay", true), kKnobW}, {&timeKnob(1, "Attack", false), kKnobW}, {&timeKnob(2, "Hold", true), kKnobW},
-                     {&timeKnob(3, "Decay", false), kKnobW}, {&knob("sustain", "Sustain"), kKnobW}, {&timeKnob(4, "Release", false), kKnobW},
-                     {&knob("attack_curve", "A curve", true), kKnobW}, {&knob("decay_curve", "D curve", true), kKnobW},
-                     {&knob("release_curve", "R curve", true), kKnobW}};
+            auto& attack = timeKnob(1, "Attack", false);
+            auto& decay = timeKnob(3, "Decay", false);
+            auto& sustain = knob("sustain", "Sustain");
+            auto& release = timeKnob(4, "Release", false);
+            for (auto* stage : {&attack, &decay, &sustain, &release})
+                stage->valueSize = kPrimaryValueText;
+            items = {{&timeKnob(0, "Delay", true)}, {&attack}, {&timeKnob(2, "Hold", true)}, {&decay}, {&sustain}, {&release}};
+            for (const auto& [suffix, label] : {std::pair{"attack_curve", "Attack curve"}, std::pair{"decay_curve", "Decay curve"},
+                                                std::pair{"release_curve", "Release curve"}}) {
+                auto& curve = parts_.add<Fader>(*this, ctx_, (s + "." + suffix).toRawUTF8(), label);
+                curve.labelLeft = false;
+                curve.advanced = true;
+                curve.family = Family::Modulators;
+                items.push_back({&curve});
+            }
             if (env > 0) {
                 auto& mode = parts_.add<Segmented>(*this, ctx_, (s + ".mode").toRawUTF8(), "Mode");
                 mode.names = {"Standard", "Multi"};
@@ -481,9 +530,8 @@ ModDock::ModDock(Context& ctx) {
 ModDock::~ModDock() = default;
 
 void ModDock::resized() {
-    auto area = getLocalBounds().reduced(8, 4);
-    macros_->setBounds(area.removeFromLeft(292));
-    area.removeFromLeft(8);
+    auto area = getLocalBounds();
+    macros_->setBounds(area.removeFromLeft(juce::jlimit(296, 334, (area.getWidth() - 360) / 3)));
     modulators_->setBounds(area);
 }
 
@@ -493,6 +541,7 @@ void ModDock::select(const juce::String& source) {
 }
 
 const juce::String& ModDock::selected() const { return modulators_->selected(); }
+juce::String ModDock::shownTitle() const { return modulators_->titleText(); }
 void ModDock::refreshNames() { macros_->refreshNames(); }
 void ModDock::reloadShapes() { modulators_->reloadShapes(); }
 bool ModDock::tickDock() { return modulators_->tickCard(); }
@@ -576,7 +625,7 @@ juce::StringArray PianoKeys::lettersFor(int semitone) {
 
 PianoKeys::PianoKeys(Context& ctx) : ctx_(ctx) {
     setTitle("Keyboard");
-    setHelp("Keyboard", juce::String("Click or drag to play. With Keys on, the computer keyboard plays too: ") + kKeysHelp);
+    setHelp("Keyboard", juce::String("Click or drag to play. The computer keyboard plays too (Computer keys in the preferences): ") + kKeysHelp);
     setWantsKeyboardFocus(false); // clicks leave the keyboard with the editor, so the computer keys keep playing
     family = Family::Play;
     keyIsDown = computerKeyIsDown;
@@ -767,14 +816,32 @@ void PianoKeys::checkHeld() {
         release(std::exchange(mouseNote_, -1));
 }
 
+// The mechanics of a key as drawn (base pixels at 100 %): a white key's lit front lip and how far
+// its face comes towards the player when it goes down; a black key's front bevel and the shadow
+// it casts forward onto the white keys.
+namespace {
+constexpr float kWhiteLip = 4.0f, kWhiteLipDown = 1.0f;
+constexpr float kBlackNose = 5.0f, kBlackNoseDown = 3.0f, kBlackDrop = 2.0f;
+constexpr float kBlackShadow = 5.0f, kBlackShadowDown = 2.0f;
+} // namespace
+
+juce::Rectangle<int> PianoKeys::paintArea(int note) const {
+    // A key's own bounds, the seams beside it, and for a black key the longest shadow it casts.
+    auto r = keyBounds(note).getSmallestIntegerContainer().expanded(isBlack(note) ? 2 : 1, 0);
+    if (isBlack(note))
+        r = r.withBottom(r.getBottom() + static_cast<int>(std::ceil(kBlackShadow)) + 1);
+    return r.getIntersection(getLocalBounds());
+}
+
 bool PianoKeys::tick() {
     checkHeld();
     dirty_.clear();
+    // The mouse, the computer keys and incoming MIDI all end up here: the same travel for each.
     for (int n = lowest; n <= highest; ++n) {
         const bool down = holds_[static_cast<std::size_t>(n)] > 0 || ctx_.processor.noteDown(n);
         if (down != shown_[static_cast<std::size_t>(n)]) {
             shown_[static_cast<std::size_t>(n)] = down;
-            dirty_.add(keyBounds(n).getSmallestIntegerContainer().expanded(1, 0));
+            dirty_.add(paintArea(n));
         }
     }
     return !dirty_.isEmpty();
@@ -783,50 +850,83 @@ bool PianoKeys::tick() {
 void PianoKeys::draw(juce::Graphics& g) {
     const Theme& t = theme();
     const auto area = getLocalBounds().toFloat();
-    const juce::Colour lit = t.accent(Family::Play);
     const int base = (octave() + 1) * 12;
     // Which computer key plays each note (the preferences can hide this).
     const bool labels = ctx_.prefs.computerKeys && ctx_.prefs.keyLabels;
     const auto lettersOf = [&](int note) { return labels ? lettersFor(note - base) : juce::StringArray(); };
-    // White keys: ivory with a soft fall-off towards the player, a groove between each.
+    // A held key reads by its travel, not by a colour: its face comes towards the player, its lit
+    // edge narrows, it shades to a neutral grey and the keys beside it show their side walls.
     const juce::Colour ivory = t.dark ? juce::Colour(0xffe9e6df) : juce::Colour(0xfffbfaf7);
+    const juce::Colour legend(0xff474c54); // 6.9:1 on the ivory, 5.2:1 on a held key's face
     for (int n = lowest; n <= highest; ++n) {
         if (isBlack(n))
             continue;
         const auto k = keyBounds(n).reduced(0.5f, 0.0f);
         const bool down = shown_[static_cast<std::size_t>(n)];
-        const juce::Colour top = down ? ivory.interpolatedWith(lit, 0.55f) : ivory;
-        g.setGradientFill(juce::ColourGradient(top.darker(0.18f), k.getX(), k.getY(), top, k.getX(), k.getY() + k.getHeight() * 0.25f, false));
-        g.fillRoundedRectangle(k.withTrimmedTop(-3.0f), 2.5f);
-        g.setColour(juce::Colours::black.withAlpha(down ? 0.06f : 0.14f));
-        g.fillRect(k.withTop(k.getBottom() - (down ? 2.0f : 4.0f)));
+        const float lip = down ? kWhiteLipDown : kWhiteLip;
+        const auto face = k.withTrimmedBottom(lip);
+        const juce::Colour top = down ? ivory.darker(0.15f) : ivory;
+        // The face pivots at the rear (under the fallboard), so its top edge stays where it was.
+        juce::ColourGradient shade(top.darker(0.18f), k.getX(), k.getY(), top, k.getX(), k.getY() + k.getHeight() * 0.25f, false);
+        if (down)
+            shade.addColour(1.0, top.darker(0.03f)); // tilted away from the light towards the front
+        g.setGradientFill(shade);
+        g.fillRoundedRectangle(face.withTrimmedTop(-3.0f), 2.0f);
+        // The front lip: a lit edge, about 4 px at rest and 1 px held, with the keybed's shadow under it.
+        const auto front = k.withTop(face.getBottom());
+        g.setColour(ivory.brighter(0.1f));
+        g.fillRect(front);
+        g.setColour(juce::Colours::black.withAlpha(down ? 0.18f : 0.10f));
+        g.fillRect(front.withHeight(1.0f)); // the crease between face and lip
+        g.setColour(juce::Colours::black.withAlpha(0.3f));
+        g.fillRect(k.withTop(k.getBottom() - 0.8f));
+        if (down) { // the walls of the higher keys either side
+            for (const bool left : {true, false}) {
+                const float x = left ? k.getX() : k.getRight() - 2.5f;
+                g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.22f), left ? k.getX() : k.getRight(), 0.0f, juce::Colours::transparentBlack,
+                                                       left ? k.getX() + 2.5f : k.getRight() - 2.5f, 0.0f, false));
+                g.fillRect(juce::Rectangle<float>(x, k.getY(), 2.5f, face.getHeight()));
+            }
+        }
         g.setColour(juce::Colours::black.withAlpha(0.35f));
         g.fillRect(k.getRight(), k.getY(), 0.8f, k.getHeight());
-        // From the bottom up: the octave's name on each C, then the computer keys (two where the rows overlap).
-        auto label = k.withTop(k.getBottom() - 15.0f);
+        // From the bottom of the face up: the octave's name on each C, then the computer keys (two
+        // where the rows overlap). They are printed on the face, so they travel with it.
+        auto label = face.withTop(face.getBottom() - 14.0f);
         if (n % 12 == 0) {
-            drawText(g, "C" + juce::String(n / 12 - 1), label, kTextSmall, juce::Colour(0xff6f737a), juce::Justification::centred);
+            drawText(g, "C" + juce::String(n / 12 - 1), label, kTextSmall, legend, juce::Justification::centred);
             label = label.translated(0.0f, -13.0f);
         }
         for (const auto& l : lettersOf(n)) {
-            drawText(g, l, label, kTextSmall, juce::Colour(0xff8a8f97), juce::Justification::centred);
+            drawText(g, l, label, kTextSmall, legend, juce::Justification::centred);
             label = label.translated(0.0f, -13.0f);
         }
     }
-    // Black keys: lacquer with a lit edge.
+    // Black keys: an ebony cap over a short front bevel, casting a narrow shadow forward. Held, the
+    // cap goes down: its bevel shows less, its shadow shortens; the material stays ebony.
     for (int n = lowest; n <= highest; ++n) {
         if (!isBlack(n))
             continue;
         const auto k = keyBounds(n);
         const bool down = shown_[static_cast<std::size_t>(n)];
-        g.setColour(juce::Colours::black.withAlpha(0.4f));
-        g.fillRoundedRectangle(k.translated(1.0f, 1.5f), 2.0f);
-        const juce::Colour body = down ? lit.darker(0.35f) : juce::Colour(0xff1d1f23);
-        g.setGradientFill(juce::ColourGradient(body.brighter(0.25f), k.getX(), k.getY(), body.darker(0.4f), k.getX(), k.getBottom(), false));
+        const float shadow = down ? kBlackShadowDown : kBlackShadow;
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.42f), 0.0f, k.getBottom(), juce::Colours::transparentBlack, 0.0f,
+                                               k.getBottom() + shadow, false));
+        g.fillRect(juce::Rectangle<float>(k.getX() + 1.0f, k.getBottom(), k.getWidth() - 1.0f, shadow));
+        g.setColour(juce::Colours::black.withAlpha(0.35f)); // the cap's shadow on the keys beside it
+        g.fillRect(juce::Rectangle<float>(k.getRight(), k.getY(), 1.2f, k.getHeight()));
+        const juce::Colour ebony = juce::Colour(0xff1d1f23).darker(down ? 0.12f : 0.0f);
+        const float nose = down ? kBlackNoseDown : kBlackNose;
+        const auto cap = k.withTrimmedBottom(nose);
+        g.setGradientFill(juce::ColourGradient(ebony.brighter(0.25f), k.getX(), k.getY(), ebony.darker(0.4f), k.getX(), cap.getBottom(), false));
         g.fillRoundedRectangle(k, 2.0f);
-        g.setColour(juce::Colours::white.withAlpha(down ? 0.1f : 0.16f));
-        g.fillRoundedRectangle(k.reduced(2.5f, 0.0f).withTrimmedBottom(k.getHeight() * 0.2f).withTrimmedTop(1.0f).withWidth(1.5f), 0.75f);
-        auto label = k.withTop(k.getBottom() - 14.0f);
+        // The bevel at the front catches the light from above.
+        const auto bevel = k.withTop(cap.getBottom());
+        g.setGradientFill(juce::ColourGradient(ebony.brighter(down ? 0.9f : 1.3f), 0.0f, bevel.getY(), ebony.brighter(0.2f), 0.0f, bevel.getBottom(), false));
+        g.fillRoundedRectangle(bevel, 1.5f);
+        g.setColour(juce::Colours::white.withAlpha(0.14f));
+        g.fillRoundedRectangle(cap.reduced(2.5f, 0.0f).withTrimmedBottom(cap.getHeight() * (down ? 0.3f : 0.18f)).withTrimmedTop(1.0f).withWidth(1.5f), 0.75f);
+        auto label = cap.withTop(cap.getBottom() - 13.0f).translated(0.0f, down ? kBlackDrop - 1.0f : 0.0f);
         for (const auto& l : lettersOf(n)) {
             drawText(g, l, label, kTextSmall, juce::Colour(0xffaeb3ba), juce::Justification::centred);
             label = label.translated(0.0f, -12.0f);
@@ -836,7 +936,7 @@ void PianoKeys::draw(juce::Graphics& g) {
     if (labels && base + kSpan - 1 >= lowest && base <= highest) {
         const float x0 = keyBounds(juce::jlimit(lowest, highest, base)).getX();
         const float x1 = keyBounds(juce::jlimit(lowest, highest, base + kSpan - 1)).getRight();
-        g.setColour(lit.withAlpha(0.8f));
+        g.setColour(t.control.withAlpha(0.6f));
         g.fillRect(x0 + 1.0f, area.getY(), x1 - x0 - 2.0f, 2.0f);
     }
     // The fallboard's shadow over the keys.
@@ -884,7 +984,7 @@ void Wheel::draw(juce::Graphics& g) {
         g.fillRect(drum.getX() + 1.0f, y, drum.getWidth() - 2.0f, 1.0f);
     }
     const float y = drum.getBottom() - drum.getHeight() * norm;
-    g.setColour(t.accent(Family::Play));
+    g.setColour(t.control);
     g.fillRoundedRectangle(juce::Rectangle<float>(drum.getX(), y - 2.0f, drum.getWidth(), 4.0f), 1.5f);
     drawFocus(g, getLocalBounds().toFloat());
 }
@@ -942,7 +1042,7 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
     pitch_ = std::make_unique<Wheel>(ctx, true);
     mod_ = std::make_unique<Wheel>(ctx, false);
     for (juce::Component* c : std::initializer_list<juce::Component*>{&piano_, pitch_.get(), mod_.get(), &octDown_, &octUp_, &velDown_, &velUp_,
-                                                                       &octave_, &velocity_, &keysButton_, &panic_})
+                                                                       &octave_, &velocity_})
         addAndMakeVisible(c);
     octave_.justification = velocity_.justification = juce::Justification::centred;
     octDown_.setTitle("Octave down");
@@ -961,27 +1061,17 @@ KeyboardLayer::KeyboardLayer(Context& ctx) : ctx_(ctx), piano_(ctx) {
     octUp_.onClick = [this] { piano_.setOctave(piano_.octave() + 1); };
     velDown_.onClick = [this] { piano_.setVelocity(piano_.velocity() - 10); };
     velUp_.onClick = [this] { piano_.setVelocity(piano_.velocity() + 10); };
-    keysButton_.toggleRole = true;
-    keysButton_.textSize = kTextSmall + 0.5f;
-    keysButton_.setHelp("Computer keys", juce::String("Lets the computer keyboard play: ") + kKeysHelp);
-    keysButton_.onClick = [this] {
-        piano_.releaseAll();
-        ctx_.prefs.computerKeys = !ctx_.prefs.computerKeys;
-        ctx_.prefs.save();
-        refresh();
-    };
-    panic_.textSize = kTextSmall + 0.5f;
-    panic_.setHelp("Panic", "Stops every note and every sound at once.");
-    panic_.onClick = [this] {
-        piano_.releaseAll();
-        ctx_.processor.keyboardState().allNotesOff(0);
-        ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 123, 0.0f));
-        ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 120, 0.0f));
-        if (ctx_.notify)
-            ctx_.notify("All notes off.");
-    };
     piano_.onSettings = [this] { refresh(); };
     refresh();
+}
+
+void KeyboardLayer::allNotesOff() {
+    piano_.releaseAll();
+    ctx_.processor.keyboardState().allNotesOff(0);
+    ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 123, 0.0f));
+    ctx_.processor.pushUiEvent(zed::MidiEvent::controller(0, 120, 0.0f));
+    if (ctx_.notify)
+        ctx_.notify("All notes off.");
 }
 
 void KeyboardLayer::refresh() {
@@ -989,13 +1079,11 @@ void KeyboardLayer::refresh() {
     velocity_.setText("Vel " + juce::String(piano_.velocity()));
     octave_.setTitle("Computer keys: Z plays C" + juce::String(piano_.octave()) + ", Q plays C" + juce::String(piano_.octave() + 1));
     velocity_.setTitle("Computer keys velocity " + juce::String(piano_.velocity()));
-    keysButton_.setToggled(ctx_.prefs.computerKeys);
     piano_.repaint();
 }
 
 void KeyboardLayer::resized() {
-    auto area = getLocalBounds().reduced(8, 4);
-    auto panel = area.reduced(8, 6);
+    auto panel = getLocalBounds().reduced(8, 6);
     pitch_->setBounds(panel.removeFromLeft(26));
     panel.removeFromLeft(4);
     mod_->setBounds(panel.removeFromLeft(26));
@@ -1010,27 +1098,17 @@ void KeyboardLayer::resized() {
     row(column.removeFromTop(h).withSizeKeepingCentre(96, 22), octDown_, octave_, octUp_);
     row(column.withSizeKeepingCentre(96, 22), velDown_, velocity_, velUp_);
     panel.removeFromLeft(8);
-    auto right = panel.removeFromRight(78);
-    keysButton_.setBounds(right.removeFromTop(right.getHeight() / 2).withSizeKeepingCentre(78, 24));
-    panic_.setBounds(right.withSizeKeepingCentre(78, 24));
-    panel.removeFromRight(8);
-    piano_.setBounds(panel);
+    piano_.setBounds(panel); // the keys run to the right edge
 }
 
 void KeyboardLayer::paint(juce::Graphics& g) {
     background_.draw(g, getLocalBounds(), static_cast<std::uint64_t>(piano_.getX()), true, [this](juce::Graphics& bg) {
         const Theme& t = theme();
-        drawChassis(bg, getLocalBounds().toFloat());
-        const auto area = getLocalBounds().reduced(8, 4).toFloat();
-        drawPanel(bg, area, t.panel);
-        drawScrew(bg, {area.getX() + 7.0f, area.getY() + 7.0f}, 2.8f, 0.2f);
-        drawScrew(bg, {area.getX() + 7.0f, area.getBottom() - 7.0f}, 2.8f, 0.7f);
-        drawScrew(bg, {area.getRight() - 7.0f, area.getY() + 7.0f}, 2.8f, 1.1f);
-        drawScrew(bg, {area.getRight() - 7.0f, area.getBottom() - 7.0f}, 2.8f, 0.4f);
-        // The keys sit in a recessed bed.
-        const auto bed = piano_.getBounds().toFloat().expanded(2.0f, 2.0f);
-        bg.setColour(juce::Colours::black.withAlpha(t.dark ? 0.6f : 0.3f));
-        bg.fillRoundedRectangle(bed, 3.0f);
+        drawPanel(bg, getLocalBounds().toFloat(), t.raised);
+        const auto bed = piano_.getBounds().toFloat().expanded(3.0f, 3.0f);
+        drawWell(bg, bed);
+        bg.setColour(t.lamp.withAlpha(0.5f));
+        bg.fillRect(bed.reduced(3.0f, 0.0f).withY(bed.getY() + 1.0f).withHeight(1.0f));
     });
 }
 

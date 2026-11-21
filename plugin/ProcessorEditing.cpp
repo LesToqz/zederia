@@ -226,10 +226,25 @@ std::vector<bool> ZederiaProcessor::lockMask() const {
 
 int ZederiaProcessor::readOutput(float* dest, int count) const {
     count = std::clamp(count, 0, kOutputRing);
-    const int write = outputWrite_.load(std::memory_order_acquire);
-    for (int i = 0; i < count; ++i)
-        dest[i] = outputRing_[static_cast<std::size_t>((write - count + i + kOutputRing) & (kOutputRing - 1))];
-    return count;
+    if (count == 0)
+        return 0;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const auto end = outputWrite_.load(std::memory_order_acquire);
+        const int available = static_cast<int>(std::min<std::uint64_t>(end, static_cast<std::uint64_t>(count)));
+        const int padding = count - available;
+        std::fill_n(dest, padding, 0.0f);
+        auto position = end - static_cast<std::uint64_t>(available);
+        for (int i = padding; i < count; ++i, ++position) {
+            const auto sample = outputRing_[static_cast<std::size_t>(position % kOutputRing)].load(std::memory_order_relaxed);
+            if (sample.lap != static_cast<std::uint32_t>(position / kOutputRing))
+                break; // The next lap replaced this slot after we sampled the published end.
+            dest[i] = sample.mono;
+        }
+        if (position == end)
+            return count;
+    }
+    std::fill_n(dest, count, 0.0f);
+    return 0;
 }
 
 void ZederiaProcessor::audition(const std::vector<zed::NoteSpec>& notes) { audition(notes, 1.0f); }

@@ -90,6 +90,7 @@ void Player::reset(std::uint64_t seed) {
     seqDirty_ = true;
     running_ = wasArp_ = false;
     cursor_ = laneStep_ = chordStep_ = 0;
+    playedStep_ = -1;
     walkDir_ = 1;
     nextStepAt_ = stepCounter_ = 0;
     lastGridIndex_ = -1.0;
@@ -309,6 +310,7 @@ void Player::arpAdd(int key, float velocity, std::int64_t at) noexcept {
             cursor_ = laneStep_ = chordStep_ = 0;
             walkDir_ = 1;
         }
+        playedStep_ = -1; // nothing has sounded in this phrase yet
         startNow_ = true;
         startAt_ = at;
     }
@@ -353,6 +355,7 @@ void Player::arpStep(std::int64_t at, std::int64_t stepLength) noexcept {
     if (seqCount_ == 0)
         return;
     const int laneLength = std::clamp(s_.steps, 1, kMaxArpSteps);
+    playedStep_ = laneStep_ % laneLength; // reported to the interface only
     const ArpStep step = data_->steps[std::clamp(s_.pattern, 0, kNumArpPatterns - 1)][laneStep_ % laneLength];
     laneStep_ = (laneStep_ + 1) % laneLength;
     const auto gateLength = [&](std::int64_t length) {

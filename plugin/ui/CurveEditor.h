@@ -40,6 +40,9 @@ public:
     int gridX = 8, gridY = 4;
     bool snap = true;
     bool stepMode = false;
+    // The curve's ink. A modulator's shape is drawn in its source's colour (its chip and its arcs);
+    // curves that shape a signal (warps, drive, route curves) in the display's bright line.
+    std::optional<juce::Colour> ink;
     std::vector<int> selection() const { return selected_; }
     void selectAll();
     void deleteSelected();

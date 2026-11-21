@@ -79,14 +79,16 @@ public:
                 continue;
             const bool selected = page_.selection().count(f) > 0;
             const bool current = f == page_.frame();
+            // The frame being drawn on: a light edge, its cycle in the bright line and its number in
+            // bold; the others amber on black (or on the selection's blue when selected).
             g.setColour(selected ? t.selection : t.display);
             g.fillRoundedRectangle(cell.toFloat(), 3.0f);
-            g.setColour(current ? t.sources : t.line);
-            g.drawRoundedRectangle(cell.toFloat().reduced(0.5f), 3.0f, current ? 1.6f : 1.0f);
-            g.setColour(t.sources.withAlpha(current ? 1.0f : 0.7f));
+            g.setColour(current ? t.control : t.line);
+            g.drawRoundedRectangle(cell.toFloat().reduced(current ? 1.0f : 0.5f), 3.0f, current ? 2.0f : 1.0f);
+            g.setColour(current ? t.displayLine : t.sources.withAlpha(0.75f));
             g.strokePath(framePath(table.frames[static_cast<std::size_t>(f)], cell.toFloat().reduced(4.0f, 12.0f).withTrimmedBottom(0.0f), 48),
-                         juce::PathStrokeType(1.0f));
-            drawText(g, juce::String(f + 1), cell.toFloat().removeFromBottom(13.0f), kTextSmall, t.textDim, juce::Justification::centred);
+                         juce::PathStrokeType(current ? 1.4f : 1.0f));
+            drawText(g, juce::String(f + 1), cell.toFloat().removeFromBottom(13.0f), kTextSmall, current ? t.text : t.textDim, juce::Justification::centred, current);
         }
         if (dropAt_ >= 0) {
             g.setColour(t.focus);
@@ -152,7 +154,7 @@ public:
     bool snap = true;
     double paintMs = 0.0; // the last paint's cost (the workshop's feedback, plan 5.8)
 
-    juce::Rectangle<float> plot() const { return getLocalBounds().toFloat().reduced(6.0f); }
+    juce::Rectangle<float> plot() const { return getLocalBounds().toFloat().reduced(10.0f, 0.0f).withTrimmedTop(25.0f).withTrimmedBottom(20.0f); }
     juce::Point<double> toWave(juce::Point<float> p) const {
         const auto a = plot();
         return {juce::jlimit(0.0, 1.0, static_cast<double>((p.x - a.getX()) / a.getWidth())),
@@ -166,9 +168,11 @@ public:
         const Theme& t = theme();
         const auto area = plot();
         drawWell(g, getLocalBounds().toFloat());
-        g.setColour(t.displayGrid);
-        for (int i = 1; i < gridX; ++i)
+        for (int i = 1; i < gridX; ++i) {
+            g.setColour(i * 4 % gridX == 0 ? t.lineStrong : t.displayGrid);
             g.fillRect(area.getX() + area.getWidth() * static_cast<float>(i) / static_cast<float>(gridX), area.getY(), 1.0f, area.getHeight());
+        }
+        g.setColour(t.displayGrid);
         for (int i = 1; i < gridY; ++i)
             g.fillRect(area.getX(), area.getCentreY() + (static_cast<float>(i) - static_cast<float>(gridY) / 2.0f) * area.getHeight() * 0.92f / static_cast<float>(gridY),
                        area.getWidth(), 1.0f);
@@ -179,18 +183,33 @@ public:
         const int points = juce::jmin(1024, juce::jmax(64, static_cast<int>(area.getWidth())));
         for (const int n : {f - 1, f + 1}) // onion skin
             if (n >= 0 && n < table.size()) {
-                g.setColour(t.sources.withAlpha(0.18f));
+                g.setColour(t.sources.withAlpha(0.35f));
                 g.strokePath(framePath(table.frames[static_cast<std::size_t>(n)], area, points), juce::PathStrokeType(1.0f));
             }
-        if (f >= 0 && f < table.size())
-            strokeGlow(g, framePath(table.frames[static_cast<std::size_t>(f)], area, points), t.sources, 1.8f);
+        if (f >= 0 && f < table.size()) {
+            const auto wave = framePath(table.frames[static_cast<std::size_t>(f)], area, points);
+            auto lobes = wave;
+            lobes.lineTo(area.getRight(), area.getCentreY());
+            lobes.lineTo(area.getX(), area.getCentreY());
+            lobes.closeSubPath();
+            g.setColour(t.displayLine.withAlpha(0.08f));
+            g.fillPath(lobes);
+            strokeGlow(g, wave, t.displayLine, 1.8f);
+        }
+        for (int q = 0; q <= 4; ++q) {
+            const float x = area.getX() + area.getWidth() * static_cast<float>(q) / 4.0f;
+            const auto label = juce::Rectangle<float>(juce::jlimit(area.getX(), area.getRight() - 40.0f, x - 20.0f), area.getBottom(), 40.0f, 16.0f);
+            const auto align = q == 0 ? juce::Justification::centredLeft : q == 4 ? juce::Justification::centredRight : juce::Justification::centred;
+            drawText(g, juce::String(q * 90) + juce::String::fromUTF8("\xc2\xb0"), label, kTextSmall, t.textDim, align);
+        }
         if (dragging_ && tool != Tool::Free && tool != Tool::Nudge && tool != Tool::Noise) {
             g.setColour(t.focus.withAlpha(0.5f));
             const auto a = toScreen(start_), b = toScreen(last_);
             g.drawLine(a.x, a.y, b.x, b.y, 1.0f);
         }
-        drawText(g, "Frame " + juce::String(f + 1) + " of " + juce::String(table.size()), getLocalBounds().toFloat().reduced(10.0f, 6.0f).removeFromTop(14.0f),
-                 kTextSmall, t.textDim, juce::Justification::centredRight);
+        // What a stroke will do and where: the frame, and the shape that draws.
+        drawText(g, "Frame " + juce::String(f + 1) + " of " + juce::String(table.size()) + "   " + page_.toolName() + (snap ? ", snap" : ""),
+                 getLocalBounds().toFloat().reduced(10.0f, 6.0f).removeFromTop(14.0f), kTextSmall, t.textDim, juce::Justification::centredRight);
         drawFocus(g, getLocalBounds().toFloat());
         paintMs = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - started) * 1000.0;
     }
@@ -200,12 +219,16 @@ public:
     }
     void mouseDown(const juce::MouseEvent& e) override {
         grabKeyboardFocus();
+        if (!plot().contains(e.position))
+            return;
         dragging_ = true;
         start_ = last_ = toWave(e.position);
         if (tool == Tool::Free)
             stroke(start_, start_);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
+        if (!dragging_)
+            return;
         const auto now = toWave(e.position);
         if (tool == Tool::Free) {
             stroke(last_, now);
@@ -294,11 +317,12 @@ public:
     }
     // Each half has a strip for its label above its bars, so no bar covers a label.
     struct Layout {
-        juce::Rectangle<float> levelLabel, level, phaseLabel, phase;
+        juce::Rectangle<float> levelLabel, level, phaseLabel, phase, ruler;
     };
     Layout layout() const {
         auto inner = getLocalBounds().toFloat().reduced(8.0f);
         Layout l;
+        l.ruler = inner.removeFromBottom(17.0f);
         l.level = inner.removeFromTop(inner.getHeight() * 0.62f);
         l.levelLabel = l.level.removeFromTop(16.0f);
         inner.removeFromTop(6.0f);
@@ -316,16 +340,46 @@ public:
         double peak = 1e-9;
         for (int k = 1; k <= count; ++k)
             peak = std::max(peak, h_.magnitude[static_cast<std::size_t>(k)]);
+        const int stride = count / 8;
+        g.setColour(t.displayGrid);
+        for (int n = stride; n < count; n += stride) {
+            const float x = top.getX() + w * n;
+            g.drawVerticalLine(juce::roundToInt(x), top.getY(), top.getBottom());
+            g.drawVerticalLine(juce::roundToInt(x), inner.getY(), inner.getBottom());
+        }
+        for (int n = 1; n <= count; ++n)
+            if (n == 1 || n % stride == 0) {
+                const float centre = top.getX() + w * (n - 0.5f);
+                const float x = juce::jlimit(top.getX(), top.getRight() - 32.0f, centre - 16.0f);
+                auto align = n == 1 ? juce::Justification::centredLeft : n == count ? juce::Justification::centredRight : juce::Justification::centred;
+                drawText(g, juce::String(n), l.ruler.withX(x).withWidth(32.0f), kTextSmall, t.textDim, align);
+            }
         for (int k = 1; k <= count; ++k) {
             const float m = static_cast<float>(h_.magnitude[static_cast<std::size_t>(k)] / peak);
-            const auto bar = juce::Rectangle<float>(top.getX() + w * static_cast<float>(k - 1) + 1.0f, top.getBottom() - top.getHeight() * m, w - 2.0f,
+            const float gap = std::min(2.0f, w * 0.25f);
+            const auto bar = juce::Rectangle<float>(top.getX() + w * static_cast<float>(k - 1) + gap * 0.5f, top.getBottom() - top.getHeight() * m, w - gap,
                                                     top.getHeight() * m);
-            g.setColour(t.sources.withAlpha(k % 2 == 1 ? 0.95f : 0.7f));
+            const bool editable = parity == 0 || (parity == 1) == (k % 2 == 1);
+            g.setColour(t.sources.withAlpha(!editable ? 0.22f : k % 2 == 1 ? 0.65f : 0.45f));
             g.fillRect(bar);
+            if (bar.getHeight() >= 1.0f) {
+                g.setColour(editable ? t.sources : t.lineStrong);
+                g.fillRect(bar.withHeight(1.0f));
+            }
             const float ph = static_cast<float>(h_.phase[static_cast<std::size_t>(k)] / zed::kPi);
             const float y = inner.getCentreY() - ph * inner.getHeight() * 0.5f;
-            g.setColour(t.modulators.withAlpha(m > 1e-4f ? 0.9f : 0.25f));
-            g.fillRect(juce::Rectangle<float>(inner.getX() + w * static_cast<float>(k - 1) + 1.0f, std::min(y, inner.getCentreY()), w - 2.0f, std::abs(y - inner.getCentreY()) + 1.0f));
+            g.setColour(t.control.withAlpha(m > 1e-4f ? 0.7f : 0.2f)); // phase: steel under the amber levels
+            g.fillRect(juce::Rectangle<float>(bar.getX(), std::min(y, inner.getCentreY()), bar.getWidth(), std::abs(y - inner.getCentreY()) + 1.0f));
+        }
+        if (hovered_ > 0 && hovered_ <= count) {
+            const auto k = static_cast<std::size_t>(hovered_);
+            const float x = top.getX() + (hovered_ - 1) * w;
+            g.setColour(t.displayLine.withAlpha(0.13f));
+            g.fillRect(juce::Rectangle<float>(x, top.getY(), w, top.getHeight()));
+            g.fillRect(juce::Rectangle<float>(x, inner.getY(), w, inner.getHeight()));
+            const auto readout = "H" + juce::String(hovered_) + "    " + juce::String(100.0 * h_.magnitude[k] / peak, 1)
+                               + "% of peak    " + juce::String(juce::roundToInt(180.0 * h_.phase[k] / zed::kPi)) + juce::String::fromUTF8("\xc2\xb0");
+            drawText(g, readout, l.phaseLabel.withTrimmedRight(80.0f), kTextSmall, t.text);
         }
         g.setColour(t.lineStrong);
         g.fillRect(inner.getX(), inner.getCentreY(), inner.getWidth(), 1.0f);
@@ -335,19 +389,30 @@ public:
                  l.levelLabel.withWidth(220.0f), kTextSmall, t.textDim);
         drawFocus(g, area);
     }
+    void mouseMove(const juce::MouseEvent& e) override {
+        const auto l = layout();
+        const int bin = l.level.contains(e.position) || l.phase.contains(e.position) ? harmonicAt(e.position.x, l.level) : 0;
+        if (hovered_ != bin) { hovered_ = bin; repaint(); }
+    }
+    void mouseExit(const juce::MouseEvent&) override { hovered_ = 0; repaint(); }
     void mouseDown(const juce::MouseEvent& e) override {
         grabKeyboardFocus();
         if (e.mods.isPopupMenu()) {
             showMenu();
             return;
         }
+        const auto l = layout();
+        editing_ = l.level.contains(e.position) || l.phase.contains(e.position);
+        if (!editing_) return;
+        dragPhase_ = l.phase.contains(e.position);
         mouseDrag(e);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
-        const auto area = getLocalBounds().toFloat().reduced(8.0f);
+        if (!editing_) return;
         const Layout l = layout();
         const auto top = l.level, bottom = l.phase;
-        const int k = juce::jlimit(1, count, static_cast<int>((e.position.x - area.getX()) / (area.getWidth() / static_cast<float>(count))) + 1);
+        const int k = harmonicAt(e.position.x, top);
+        hovered_ = k;
         if ((parity == 1 && k % 2 == 0) || (parity == 2 && k % 2 == 1))
             return;
         double peak = 1e-9;
@@ -355,12 +420,10 @@ public:
             peak = std::max(peak, h_.magnitude[static_cast<std::size_t>(i)]);
         if (peak < 1e-6)
             peak = 0.5;
-        if (e.position.y < l.phaseLabel.getY() || (!dragPhase_ && e.getMouseDownY() < static_cast<int>(l.phaseLabel.getY()))) {
-            dragPhase_ = false;
+        if (!dragPhase_) {
             const double level = juce::jlimit(0.0, 1.0, static_cast<double>((top.getBottom() - e.position.y) / top.getHeight()));
             h_.magnitude[static_cast<std::size_t>(k)] = level * peak;
         } else {
-            dragPhase_ = true;
             h_.phase[static_cast<std::size_t>(k)] = juce::jlimit(-zed::kPi, zed::kPi, static_cast<double>((bottom.getCentreY() - e.position.y) / (bottom.getHeight() * 0.5f)) * zed::kPi);
         }
         const auto harmonics = h_;
@@ -372,9 +435,9 @@ public:
         repaint();
     }
     void mouseUp(const juce::MouseEvent& e) override {
-        if (!e.mods.isPopupMenu())
+        if (editing_ && !e.mods.isPopupMenu())
             page_.finish(dragPhase_ ? "Draw phases" : "Draw harmonics");
-        dragPhase_ = false;
+        editing_ = false;
     }
     void showMenu() {
         juce::PopupMenu menu;
@@ -420,7 +483,11 @@ public:
 private:
     TablePage& page_;
     zed::Harmonics h_;
-    bool dragPhase_ = false;
+    int harmonicAt(float x, juce::Rectangle<float> plot) const {
+        return juce::jlimit(1, count, static_cast<int>((x - plot.getX()) / plot.getWidth() * count) + 1);
+    }
+    int hovered_ = 0;
+    bool editing_ = false, dragPhase_ = false;
 };
 
 // --- Spectral view -------------------------------------------------------------------------------------
@@ -920,35 +987,50 @@ TablePage::TablePage(Context& ctx) : Page(ctx) {
     addChildComponent(*harmonics_);
     addChildComponent(*spectral_);
 
-    static const std::pair<const char*, WaveEditor::Tool> tools[] = {
-        {"Free", WaveEditor::Tool::Free}, {"Flat", WaveEditor::Tool::Flat}, {"Ramp up", WaveEditor::Tool::RampUp}, {"Ramp dn", WaveEditor::Tool::RampDown},
-        {"Line", WaveEditor::Tool::Line}, {"Curve", WaveEditor::Tool::Curve}, {"Sine", WaveEditor::Tool::Sine}, {"Arch up", WaveEditor::Tool::HalfUp},
-        {"Arch dn", WaveEditor::Tool::HalfDown}, {"Qtr in", WaveEditor::Tool::QuarterIn}, {"Qtr out", WaveEditor::Tool::QuarterOut},
-        {"Nudge", WaveEditor::Tool::Nudge}, {"Noise", WaveEditor::Tool::Noise}};
-    for (const auto& [name, tool] : tools) {
-        auto& b = button(waveTools_, name, Glyph::None, "Drawing tool: " + juce::String(name) + ". Drag across the wave.", {});
+    // The drawing shapes beside the wave they draw on: the common ones as buttons that show the
+    // silhouette each draws (named for screen readers and the help strip), the rest in one
+    // labelled selector; then Snap, a latch, and the grid, which says its size.
+    frameCaption_ = &parts_.add<Caption>(*this, "FRAMES", kTextSmall, true);
+    frameCaption_->bold = true;
+    shapeCaption_ = &parts_.add<Caption>(*this, "DRAW", kTextSmall, true);
+    shapeCaption_->bold = true;
+    static const std::tuple<const char*, Glyph, WaveEditor::Tool> common[] = {
+        {"Free", Glyph::Pencil, WaveEditor::Tool::Free},         {"Line", Glyph::ShapeLine, WaveEditor::Tool::Line},
+        {"Flat", Glyph::ShapeFlat, WaveEditor::Tool::Flat},      {"Ramp up", Glyph::ShapeRampUp, WaveEditor::Tool::RampUp},
+        {"Ramp down", Glyph::ShapeRampDown, WaveEditor::Tool::RampDown}, {"Sine", Glyph::ShapeSine, WaveEditor::Tool::Sine},
+        {"Curve", Glyph::ShapeCurve, WaveEditor::Tool::Curve}};
+    for (const auto& [name, glyph, tool] : common) {
+        auto& b = button(waveTools_, "", glyph, "Drawing shape: " + juce::String(name) + ". Drag across the wave.", {});
+        b.setTitle(juce::String("Draw: ") + name);
+        b.setTooltip(name);
         b.toggleRole = true;
-        b.textSize = kTextSmall;
         const auto t = tool;
         b.onClick = [this, t] {
             wave_->tool = t;
-            for (auto* c : waveTools_)
-                if (auto* tb = dynamic_cast<Button*>(c); tb != nullptr && tb->toggleRole)
-                    tb->setToggled(false);
-            resized();
+            updateTools();
         };
+        shapeButtons_.push_back({&b, static_cast<int>(tool)});
     }
-    auto& snap = button(waveTools_, "Snap", Glyph::None, "Strokes follow the grid.", {});
+    auto& more = button(waveTools_, "More shapes", Glyph::ChevronDown, "Arches, quarter curves, Nudge and Noise.", [this] { showMoreShapes(); });
+    more.toggleRole = true;
+    more.textSize = kTextSmall;
+    moreShapes_ = &more;
+    auto& snap = button(waveTools_, "Snap", Glyph::None, "Strokes follow the grid. The lamp is lit while it is latched.", {});
     snap.toggleRole = true;
+    snap.latch = true;
+    snap.textSize = kTextSmall;
     snap.setToggled(true);
-    snap.onClick = [this, &snap] { wave_->snap = !wave_->snap; snap.setToggled(wave_->snap); };
-    auto& grid = button(waveTools_, "Grid 16", Glyph::None, "Grid lines across the cycle.", {});
-    grid.onClick = [this, &grid] {
+    snap.onClick = [this] { wave_->snap = !wave_->snap; updateTools(); };
+    snap_ = &snap;
+    auto& grid = button(waveTools_, "Grid 16", Glyph::ChevronDown, "Grid lines across the cycle: choose how many.", {});
+    grid.textSize = kTextSmall;
+    grid.onClick = [this] {
         juce::PopupMenu menu;
         for (const int n : {4, 8, 12, 16, 24, 32, 64})
-            menu.addItem(juce::String(n) + " across", [this, n, &grid] { wave_->gridX = n; grid.setText("Grid " + juce::String(n)); wave_->repaint(); });
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&grid));
+            menu.addItem(juce::String(n) + " across", true, wave_->gridX == n, [this, n] { wave_->gridX = n; updateTools(); wave_->repaint(); });
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(grid_));
     };
+    grid_ = &grid;
 
     auto& tabs = parts_.add<TabStrip>(*this, juce::StringArray{"HARMONICS", "SPECTRAL", "FORMULA"});
     tabs.family = Family::Sources;
@@ -1362,6 +1444,66 @@ void TablePage::saveTableAs() {
     }), false);
 }
 
+namespace {
+// The drawing shapes in the selector, by name.
+const std::pair<const char*, WaveEditor::Tool> kMoreShapes[] = {{"Arch up", WaveEditor::Tool::HalfUp},      {"Arch down", WaveEditor::Tool::HalfDown},
+                                                                {"Quarter in", WaveEditor::Tool::QuarterIn}, {"Quarter out", WaveEditor::Tool::QuarterOut},
+                                                                {"Nudge", WaveEditor::Tool::Nudge},          {"Noise", WaveEditor::Tool::Noise}};
+} // namespace
+
+void TablePage::updateTools() {
+    // The chosen shape is seated; a shape from the selector seats the selector and names it there.
+    juce::String moreName;
+    for (const auto& [name, tool] : kMoreShapes)
+        if (wave_->tool == tool)
+            moreName = name;
+    for (auto& [b, tool] : shapeButtons_)
+        b->setToggled(static_cast<int>(wave_->tool) == tool);
+    moreShapes_->setToggled(moreName.isNotEmpty());
+    moreShapes_->setText(moreName.isNotEmpty() ? moreName : juce::String("More shapes"));
+    moreShapes_->setTitle(moreName.isNotEmpty() ? "More shapes: " + moreName : juce::String("More shapes"));
+    snap_->setToggled(wave_->snap);
+    grid_->setText("Grid " + juce::String(wave_->gridX));
+    grid_->setTitle("Grid: " + juce::String(wave_->gridX) + " across");
+    wave_->repaint(); // its caption names the frame and the shape
+}
+
+void TablePage::showMoreShapes() {
+    juce::PopupMenu menu;
+    for (const auto& [name, tool] : kMoreShapes) {
+        const auto t = tool;
+        menu.addItem(name, true, wave_->tool == tool, [this, t] {
+            wave_->tool = t;
+            updateTools();
+        });
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(moreShapes_));
+}
+
+juce::String TablePage::toolName() const {
+    static const char* const names[] = {"Free", "Flat", "Ramp up", "Ramp down", "Line", "Sine", "Arch up", "Arch down", "Quarter in", "Quarter out", "Curve", "Nudge", "Noise"};
+    return names[static_cast<int>(wave_->tool)];
+}
+
+void TablePage::setTool(const juce::String& name) {
+    for (int i = 0; i < 13; ++i) {
+        wave_->tool = static_cast<WaveEditor::Tool>(i);
+        if (toolName() == name)
+            break;
+    }
+    updateTools();
+}
+
+std::vector<Button*> TablePage::toolButtons() const {
+    std::vector<Button*> out;
+    for (const auto& [b, tool] : shapeButtons_)
+        out.push_back(b);
+    out.push_back(moreShapes_);
+    out.push_back(snap_);
+    out.push_back(grid_);
+    return out;
+}
+
 void TablePage::layoutRightTab() {
     const int tab = rightTabs_->selected();
     harmonics_->setVisible(tab == 0);
@@ -1389,32 +1531,36 @@ void TablePage::resized() {
         items.push_back({c, c == name_ ? 330 : dynamic_cast<Button*>(c) != nullptr && dynamic_cast<Button*>(c)->text().startsWith("Osc") ? 56 : 92, 26});
     flow(toolbar, items, 26, 6);
     area.removeFromTop(8);
+    // The frames and the commands that act on them, side by side: the strip is as wide as its
+    // frames (it scrolls when they do not fit), the commands right after it.
     auto stripRow = area.removeFromTop(78);
-    auto buttons = stripRow.removeFromRight(196);
+    frameCaption_->setBounds(stripRow.removeFromLeft(54).removeFromTop(16));
+    constexpr int kButtonsW = 3 * 90 + 2 * 4;
+    const int stripW = juce::jmin(table_->size() * FrameStrip::kCell + 4, stripRow.getWidth() - kButtonsW - 8);
+    stripView_.setBounds(stripRow.removeFromLeft(stripW));
+    strip_->setSize(juce::jmax(stripW, table_->size() * FrameStrip::kCell + 4), stripRow.getHeight() - stripView_.getScrollBarThickness());
+    stripRow.removeFromLeft(8);
     std::vector<FlowItem> frameItems;
     for (auto* c : frameButtons_)
         frameItems.push_back({c, 90, 22});
-    flow(buttons.withTrimmedLeft(8), frameItems, 22, 4);
-    stripView_.setBounds(stripRow);
-    strip_->setSize(juce::jmax(stripRow.getWidth(), table_->size() * FrameStrip::kCell + 4), stripRow.getHeight() - stripView_.getScrollBarThickness());
+    flow(stripRow.withWidth(kButtonsW).withSizeKeepingCentre(kButtonsW, 48), frameItems, 22, 4);
     area.removeFromTop(8);
     auto left = area.removeFromLeft((area.getWidth() - 8) / 2);
     area.removeFromLeft(8);
-    auto tools = left.removeFromTop(52);
-    std::vector<FlowItem> toolItems;
-    for (auto* c : waveTools_)
-        toolItems.push_back({c, 60, 22});
-    flow(tools, toolItems, 22, 4);
-    for (auto* c : waveTools_)
-        if (auto* b = dynamic_cast<Button*>(c); b != nullptr && b->toggleRole && b->text() != "Snap") {
-            static const char* names[] = {"Free", "Flat", "Ramp up", "Ramp dn", "Line", "Curve", "Sine", "Arch up", "Arch dn", "Qtr in", "Qtr out", "Nudge", "Noise"};
-            static const WaveEditor::Tool order[] = {WaveEditor::Tool::Free, WaveEditor::Tool::Flat, WaveEditor::Tool::RampUp, WaveEditor::Tool::RampDown, WaveEditor::Tool::Line,
-                                                     WaveEditor::Tool::Curve, WaveEditor::Tool::Sine, WaveEditor::Tool::HalfUp, WaveEditor::Tool::HalfDown,
-                                                     WaveEditor::Tool::QuarterIn, WaveEditor::Tool::QuarterOut, WaveEditor::Tool::Nudge, WaveEditor::Tool::Noise};
-            for (int i = 0; i < 13; ++i)
-                if (b->text() == names[i])
-                    b->setToggled(wave_->tool == order[i]);
-        }
+    // The shapes over the wave they draw on, in one row.
+    auto tools = left.removeFromTop(24);
+    shapeCaption_->setBounds(tools.removeFromLeft(40));
+    for (auto& [b, tool] : shapeButtons_) {
+        b->setBounds(tools.removeFromLeft(30));
+        tools.removeFromLeft(3);
+    }
+    tools.removeFromLeft(3);
+    moreShapes_->setBounds(tools.removeFromLeft(118));
+    tools.removeFromLeft(14);
+    snap_->setBounds(tools.removeFromLeft(66));
+    tools.removeFromLeft(4);
+    grid_->setBounds(tools.removeFromLeft(82));
+    updateTools();
     left.removeFromTop(6);
     wave_->setBounds(left);
     rightTabs_->setBounds(area.removeFromTop(24));
@@ -1446,7 +1592,14 @@ void TablePage::resized() {
     wizard_->setBounds(getLocalBounds().reduced(60, 30));
 }
 
-void TablePage::paint(juce::Graphics&) {} // the chassis shows through
+void TablePage::paint(juce::Graphics& g) {
+    const auto area = getLocalBounds().toFloat();
+    drawPanel(g, area, theme().panel);
+    drawPlate(g, area.withBottom(static_cast<float>(stripView_.getY() - 2)));
+    drawPlate(g, area.withTop(static_cast<float>(stripView_.getY() - 2)).withBottom(static_cast<float>(rightTabs_->getY() - 4)));
+    g.setColour(theme().line);
+    g.fillRect(area.withLeft(static_cast<float>(rightTabs_->getX() - 4)).withWidth(1.0f).withTop(static_cast<float>(rightTabs_->getY() - 4)));
+}
 
 bool TablePage::reveal(const juce::String& module) {
     if (module.startsWith("table"))

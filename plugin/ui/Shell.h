@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Displays.h"
+#include "OutputMonitor.h"
 #include "Widgets.h"
 
 #include <nlohmann/json_fwd.hpp>
@@ -13,7 +14,8 @@ namespace zui {
 // the modulation dock and the keyboard; the help strip runs along the bottom edge.
 inline constexpr int kBaseWidth = 1320, kBaseHeight = 940;
 inline constexpr int kTopBarHeight = 40, kTabsHeight = 30, kMacroStripHeight = 50, kHelpStripHeight = 24;
-inline constexpr int kHeaderHeight = 76, kLogoWidth = 150;
+inline constexpr int kHeaderHeight = 76, kLogoWidth = 150, kOutputWidth = 256;
+inline constexpr int kChassisInset = 4;
 
 // A page of the editor. Pages are built when first shown and kept.
 class Page : public juce::Component {
@@ -50,14 +52,37 @@ public:
     Button abA{"A"}, abB{"B"}, abCopy{"A>B"};
     Caption cpuText{"CPU", kTextSmall, true};
     Caption agent{"Agent off", kTextSmall, true};
-    Meter meter;
     std::unique_ptr<ChoiceBox> quality;
     std::unique_ptr<Toggle> fxOff;
-    std::unique_ptr<Knob> master;
 
 private:
     Context& ctx_;
     double cpuShownAt_ = -1.0e9; // when the CPU readout last changed
+};
+
+// The output at the right end of the header, as tall as both header rows: the stereo meter and
+// the Master level beside it, a full-size cap with its name and its value in dB.
+class OutputPanel final : public juce::Component {
+public:
+    explicit OutputPanel(Context& ctx);
+    void resized() override;
+    OutputScope scope;
+    Meter meter;
+    std::unique_ptr<Knob> master;
+};
+
+// Engraved nameplate and the engine's current voice allocation.
+class Nameplate final : public Widget {
+public:
+    explicit Nameplate(Context& ctx);
+    void draw(juce::Graphics& g) override;
+    bool tick() override;
+    juce::RectangleList<int> dirtyArea() override { return getLocalBounds().removeFromBottom(28); }
+
+private:
+    Context& ctx_;
+    int polyParam_, modeParam_, active_ = 0, polyphony_ = 16;
+    CachedDrawing plate_;
 };
 
 // Eight macros, visible on every page (plan 3.7): knob, editable name, drag chip.
@@ -85,6 +110,8 @@ public:
     void message(const juce::String& text); // stays a few seconds
     bool tick();
     bool pinned = false;
+    bool messageOnly = false; // hidden in the preferences: shown only while a message lasts
+    bool showingMessage() const { return message_.isNotEmpty(); }
     juce::String title() const { return title_; }
     juce::String text() const { return text_; }
 
