@@ -55,6 +55,8 @@ public:
     // mouseDown): a plain control hands the keyboard back to the editor, a part with keys of its
     // own keeps it and hides its outline until a key is used.
     void clickedWhileFocused();
+    // Whether the focus outline shows while this part has the focus (for the tests).
+    bool focusCueShown() const { return focusCue_; }
 
 protected:
     // Clicks never light anything up, and a click on a control leaves the keyboard with the editor,
@@ -62,17 +64,27 @@ protected:
     // grid, a frame strip) sets this to keep the focus a click gives it.
     bool keepsClickFocus = false;
     void focusGained(FocusChangeType cause) override;
-    void focusLost(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType cause) override;
     bool keyStateChanged(bool isKeyDown) override; // an editing key shows where the keyboard is
     // The focus outline (and a part's own keyboard cursor) shows only when the keyboard brought the
-    // focus here, with Tab or the command palette, or an editing key was used since: never after a click.
+    // focus here, with Tab or the command palette, or an editing key was used since: never after a
+    // click, nor when code moves the focus after a click or the window comes back to the front.
     bool showsFocus() const { return focusCue_ && hasKeyboardFocus(false); }
     void drawFocus(juce::Graphics& g, juce::Rectangle<float> area, float radius = 4.0f) const;
 
 private:
     bool handFocusToEditor();
     bool focusCue_ = false;
+    bool focusAway_ = false; // the focus left with the window: it comes back as it was
 };
+
+// Where the keyboard focus came from, for the focus outline: Tab, or code that moved it while a key
+// that moves or presses things was held (Enter on a palette command, Escape closing a panel, an
+// arrow along tabs). A click does not count, nor code that moves the focus after a click.
+bool focusFromKeyboard(juce::Component::FocusChangeType cause);
+// The window went behind another one: the framework takes the focus away as by a click, leaving
+// nothing focused, and gives it back directly to the same part when the window returns.
+bool focusLeftWithWindow(juce::Component::FocusChangeType cause);
 
 // A text line that is not a control.
 class Caption final : public Widget {
@@ -397,10 +409,9 @@ public:
     int headerHeight = 28;
     bool screws = false; // screws in the bottom corners: only on the outer enclosure, not on work surfaces
     bool walnut = false;
-    bool offMark = true; // an OFF mark beside the title while the module is off (the oscillators show it in their display instead)
     void mouseDown(const juce::MouseEvent& e) override;
     virtual void layoutBody(juce::Rectangle<int>) {}
-    // The module is switched off: its title is drawn in neutral ink with an OFF mark after it.
+    // The module is switched off: its title is drawn in dimmer ink beside the hollow lamp.
     bool bypassed() const;
     bool tick() override; // the power switch changed (a click, undo, host automation)
     juce::RectangleList<int> dirtyArea() override { return header(); }
@@ -417,8 +428,6 @@ class DragChip final : public Widget {
 public:
     DragChip(Context& ctx, juce::String source);
     void draw(juce::Graphics& g) override;
-    bool tick() override; // the live value moved: only its bar along the bottom edge repaints
-    juce::RectangleList<int> dirtyArea() override { return getLocalBounds().removeFromBottom(5); }
     const juce::String& source() const { return source_; }
     juce::String text;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -435,7 +444,7 @@ public:
     std::function<void()> onSelect;
     std::function<void()> onDoubleClick; // macros: rename
     // The modulator whose graph the dock shows: drawn as a seated tab with a notch towards it.
-    // Selection for routing (Alt-drag depth) is separate: a ring in the source's colour.
+    // Selection for routing (Alt-drag depth) is separate: the dot in full colour and a coloured grip.
     void setOpen(bool open);
     bool isOpen() const { return open_; }
 
@@ -444,9 +453,7 @@ private:
     CachedDrawing body_;
     Context& ctx_;
     juce::String source_;
-    float value_ = 0.0f;
     bool dragging_ = false;
-    unsigned frames_ = 0;
 };
 
 // Peak meter, two channels side by side, with a slow fall and a held peak.

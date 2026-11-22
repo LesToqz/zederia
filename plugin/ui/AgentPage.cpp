@@ -62,17 +62,46 @@ public:
         // Shift-selection as well, including Page Down when larger text wraps a path.
         for (const int code : {juce::KeyPress::leftKey, juce::KeyPress::rightKey, juce::KeyPress::upKey, juce::KeyPress::downKey,
                                juce::KeyPress::homeKey, juce::KeyPress::endKey, juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey})
-            if (key.isKeyCode(code))
+            if (key.isKeyCode(code)) {
+                showCue(true); // moving through the text with keys shows where the keyboard is
                 return juce::TextEditorKeyMapper<juce::TextEditor>::invokeKeyFunction(*this, key);
+            }
         return juce::TextEditor::keyPressed(key);
+    }
+    // The outline follows the same rule as every other part: it shows when the keyboard brought the
+    // focus (Tab) or moved through the text, never after a click into it to select.
+    void focusGained(FocusChangeType cause) override {
+        juce::TextEditor::focusGained(cause);
+        if (!(cause == focusChangedDirectly && away_))
+            cue_ = focusFromKeyboard(cause);
+        away_ = false;
+        repaint();
+    }
+    void focusLost(FocusChangeType cause) override {
+        juce::TextEditor::focusLost(cause);
+        away_ = focusLeftWithWindow(cause);
+        repaint();
+    }
+    void mouseDown(const juce::MouseEvent& e) override {
+        showCue(false);
+        juce::TextEditor::mouseDown(e);
     }
     void paintOverChildren(juce::Graphics& g) override {
         juce::TextEditor::paintOverChildren(g);
-        if (hasKeyboardFocus(false)) {
+        if (cue_ && hasKeyboardFocus(false)) {
             g.setColour(theme().focus);
             g.drawRect(getLocalBounds());
         }
     }
+
+private:
+    void showCue(bool shown) {
+        if (cue_ != shown) {
+            cue_ = shown;
+            repaint();
+        }
+    }
+    bool cue_ = false, away_ = false;
 };
 
 } // namespace

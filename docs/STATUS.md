@@ -88,6 +88,12 @@
   - **Fix** (`core/src/engine/EngineRack.inl`). A sleeping effect completes a fade out at once (it passes silence either way), so a new layout takes over within a block. While a layout is offered or waiting, an effect that wakes or is cleared sets itself from its own last values (each instance keeps them, starting with its plan's), never from the store.
   - **Last line of defence.** A stretch of output holding a value that is not a finite number is muted, the voices end, and the effects and the output stage start clean, so the next note plays. `Engine::outputRecoveries()` counts these; nothing in the tests causes one except the test that feeds a NaN table on purpose.
 
+- Quieter marks and the new logo mark (2026-11-22), on branch `ui-quiet-marks` (interface only; no change to patches, parameters, gestures or sound):
+  - **Dock chips without coloured rings.** The routing selection (Env 2 after a drop, LFO 2 after a click, a chosen macro) no longer has an outline in the source's colour; it shows by its dot in full colour and its grip in that colour. The live bar along a chip's bottom edge (the line under a macro that is not at zero, under a moving LFO) is gone too. The open graph is still the seated tab with its notch, and selecting works as before.
+  - **No OFF mark in card headers.** Sub, Texture, Filter 1 and 2, the arpeggiator and the clip player follow the oscillators: a module that is off shows it by its hollow lamp, its dimmer title and its dimmed controls.
+  - **No amber outline after a click.** The focus outline showed whenever code moved the focus, and code does that after clicks: Client setup opens its panel on the Claude Code tab, Copy prompt and Copy config keep the focus, Client setup takes it back when the panel closes. The framework also gives the focus back that way when the window returns to the front, so a clicked piano roll lit up after switching windows. Now code that moves the focus shows the outline only while a key that moves or presses things is held (Tab, Enter, Space, Escape, the arrows), and a window coming back restores the part as it was. The `.mcp.json` preview, a text box with its own outline, follows the same rule. Tab, and keys used on a focused part, still show the outline.
+  - **The logo mark** is the cut Z (two slabs), drawn as a vector path in the lamp colour. It is fitted to the inked capitals of the wordmark: as tall as the E from its top edge to its baseline, as far from the E as the E is from the D, with the word centred on the plate.
+
 - Milestone 6 (the agent bridge), tagged `m6-done`:
   - **Protocol revisions supported: 2026-07-28** (the current revision: stateless, `server/discover`, per-request `_meta`, `resultType`, cache hints, the HTTP headers) **and 2025-11-25 and 2025-06-18** (the `initialize` handshake). Both generations are served by one process and on one HTTP endpoint at the same time.
   - **Clients verified:**
@@ -113,6 +119,18 @@
   - Tests: 336 (core, plug-in, server), all under the audio-thread guard. They include scripted sessions per revision and transport (in-process, the real program on pipes and on files, HTTP) and every tool against its schemas. They also cover error paths, sandbox escapes including a junction, token, origin and host checks, cancellation on stdio, in-process and over HTTP, the live link in-process while audio plays, and the live link against a running Standalone.
 
 ## Measurements
+### Quieter marks and the new logo mark (2026-11-22)
+Release build. Only the interface changed (`plugin/ui/`), with one new test and one extended; nothing under `core/`.
+
+| What | Result | Target |
+|---|---|---|
+| Tests | 358 of 358 pass in Release (`scripts/test.ps1`), the two timing tests included | all |
+| Dock (`[editor][dock]`) | LFO 2 open, Env 2 chosen for routing by a drop, macro 1 at 30 %: no pixel within 3 px of the edge of those three chips is in its source's colour | 0 |
+| Focus outline (`[editor][focus]`) | the focus callbacks as the framework sends them: moved by code with no key held, no outline; Tab, outline; the window away and back, as it was; a click, none, also after the window comes back | pass |
+| Snapshots (`zederia-cli ui-snapshot --audit`) | SYNTH, MOD, PLAY and AGENT at 100 and 200 %, SYNTH at 125, 150 and 300 %, MOD with `lead.zpreset` (macro 1 at 30 %): 0 findings. No OFF beside Sub, Texture, Filter 1 and 2, Arpeggiator or Clip player; no bar under "Bright" (the previous build's capture has one) | 0 findings |
+| Wordmark | inked edges measured in the captures from their antialiasing: the mark and the E share top and baseline within 0.01 px at 100, 125, 150, 200 and 300 %; mark to E against E to D: 3.59 / 3.59 px at 100 %, 4.45 / 4.44, 5.28 / 5.39, 6.94 / 7.04, 10.39 / 10.38 at 300 %. The previous Z stood 0.2 px (100 %) and 0.55 px (200 %) inside the capitals at top and bottom, 1.6 times as far from the E | equal |
+| By hand | not done: control of the Standalone was declined, so the outline after a click in a real window is covered by the unit test above only | - |
+
 ### Library preset switching fix (2026-11-22)
 Release build. Only the engine changed (`core/src/engine/`, and `Engine::outputRecoveries()` in its header), with its tests and these notes; nothing under `plugin/`, so the interface is as it was. The golden fingerprints of the reference patches are unchanged.
 
@@ -482,7 +500,7 @@ Milestone 5:
 Interface revision (2026-11-18):
 - **The base size grew to 1320 x 940** so the dock and the keyboard can stay under every page without squeezing the pages; the editor shrinks on first appearance to fit the display, so a 1080p screen at 125 % still shows the whole window.
 - **The finish is cached, not cheap**: grain, gradients and bevels cost several times a flat fill, so every static surface is drawn once into an image at the display's density (`CachedDrawing`: cards with their plates, titles and outlines; the header with the logo and the preset window; a knob's cap, and a modulated knob's whole face; modulation chips; the filter display's grid and still curve) and cards are opaque, so nothing behind them repaints. While the snapshot checks record, caches are bypassed so every text is still checked.
-- **Moving markers repaint only where they move, and secondary ones less often**: a modulated knob repaints its live dot's old and new places at the full rate; the output meter and the modulator chips' live bars update at half the frame rate, and the filter display's live curve at a third when only modulation moves it (a patch change redraws at once), as the small wave thumbnails already did.
+- **Moving markers repaint only where they move, and secondary ones less often**: a modulated knob repaints its live dot's old and new places at the full rate; the output meter updates at half the frame rate (the modulator chips no longer show a live bar), and the filter display's live curve at a third when only modulation moves it (a patch change redraws at once), as the small wave thumbnails already did.
 - **Computer keys are handled by the editor**, after its shortcuts and after any focused control or text field, so letters typed into a field never play; keys with Ctrl or Alt are never notes. The keyboard does not take focus when clicked, so typing keeps playing after a click on it.
 - **Two guards against hanging notes**: the keyboard checks the real mouse button and key state every frame (a release a host keeps from the window is caught within a frame), and the processor compares the notes the screen holds (an atomic mask set before a note-on is queued and cleared before its release is queued) with the notes it started from the screen, releasing any the screen let go.
 - **Effect strips list their controls by name** (`groupsFor` in `FxPage.cpp`); any parameter a table does not name joins a last "More" group, so a new effect parameter is never unreachable.
