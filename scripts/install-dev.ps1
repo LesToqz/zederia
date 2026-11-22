@@ -9,6 +9,8 @@
 #   scripts/install-dev.ps1               install the Release build
 #   scripts/install-dev.ps1 -Config Debug
 #   scripts/install-dev.ps1 -Uninstall    remove what this script installs
+# A program that is running (an agent session's zederia-mcp.exe) is renamed aside and replaced; the
+# old copy is deleted by a later run once nothing uses it. Close a host that has the plug-in loaded.
 param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Config = 'Release',
     [switch]$Uninstall
@@ -25,12 +27,26 @@ $installed = @(
     $factoryDir
 )
 
+# Programs moved aside by an earlier install because they were running (see below); each goes once
+# nothing runs it any more.
+function Remove-SetAside {
+    foreach ($dir in @($toolsDir, $clapDir)) {
+        if (-not (Test-Path $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -Filter '*.old-*' -File | ForEach-Object {
+            try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; "removed $($_.FullName)" }
+            catch { "still in use, left for a later run: $($_.FullName)" }
+        }
+    }
+}
+
 if ($Uninstall) {
     foreach ($item in $installed) {
         if (Test-Path $item) { Remove-Item -Recurse -Force $item; "removed $item" }
     }
+    Remove-SetAside
     return
 }
+Remove-SetAside
 
 $build = Join-Path $root "build\$($Config.ToLower())"
 $artefacts = Join-Path $build "plugin\Zederia_artefacts\$Config"
@@ -48,7 +64,19 @@ foreach ($s in $sources) {
     }
     New-Item -ItemType Directory -Force $s.To | Out-Null
     $target = Join-Path $s.To (Split-Path -Leaf $s.From)
-    if (Test-Path $target) { Remove-Item -Recurse -Force $target } # a VST3 can be a folder; replace it whole
+    if (Test-Path $target) { # a VST3 can be a folder; replace it whole
+        try {
+            Remove-Item -Recurse -Force $target -ErrorAction Stop
+        } catch {
+            # A running program (every agent session keeps its own zederia-mcp.exe open) cannot be
+            # deleted, but it can be renamed: it runs on from the old copy and the next start uses
+            # the new one. A plug-in folder a host has loaded has to be closed there first.
+            if (Test-Path $target -PathType Container) { throw "$target is in use: close the host that has Zederia loaded, then run this again" }
+            $aside = (Split-Path -Leaf $target) + '.old-' + (Get-Date -Format 'yyyyMMddHHmmss')
+            Rename-Item -LiteralPath $target -NewName $aside
+            "moved the running $(Split-Path -Leaf $target) aside as $aside (removed by a later install)"
+        }
+    }
     Copy-Item -Recurse -Force $s.From $s.To
     "installed $target"
 }

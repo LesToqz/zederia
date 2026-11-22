@@ -96,6 +96,9 @@ struct LaneSet {
     const float* aimedRatio = nullptr;
     std::uint32_t aimedEpoch = 0;
     int aimedRate = 0, aimedCount = 0;
+    // The warp modes the derived values were aimed for: another mode's values are on another
+    // scale (a quantize step count of 1024 against a curve amount of 0..1), so they jump.
+    osc::WarpMode aimedMode[2] = {osc::WarpMode::Off, osc::WarpMode::Off};
     bool settled = false;   // every ramp has arrived (set at the control tick)
     bool stepsZero = false; // and every step is zero
 };

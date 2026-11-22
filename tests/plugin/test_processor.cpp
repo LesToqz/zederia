@@ -162,6 +162,46 @@ TEST_CASE("plug-in: damaged state is ignored, never a crash", "[plugin][state][f
     CHECK(processor.patchJson() == before);
 }
 
+TEST_CASE("plug-in: random automation in small sub-blocks stays finite", "[plugin][fuzz][automation]") {
+    // What a strict validator's automation stage does: while a note plays, up to ten random host
+    // parameters jump to random values before each 32-sample sub-block. Warp modes switching while
+    // their values glided from another mode's scale once read far outside the wavetable and ended
+    // the host with an access violation now and then (2026-11-23).
+    Rng rng(20261123);
+    ZederiaProcessor processor;
+    auto& params = processor.getParameters();
+    REQUIRE(params.size() > 100);
+    for (const double rate : {44100.0, 48000.0, 96000.0}) {
+        for (const int block : {64, 128, 256, 512, 1024}) {
+            processor.releaseResources();
+            processor.setPlayConfigDetails(0, 2, rate, block);
+            processor.prepareToPlay(rate, block);
+            for (int round = 0; round < 6; ++round) {
+                juce::AudioBuffer<float> buffer(2, block);
+                buffer.clear();
+                const int note = static_cast<int>(rng.next() % 128);
+                juce::MidiBuffer midi;
+                midi.addEvent(juce::MidiMessage::noteOn(1, note, 0.8f), 0);
+                for (int done = 0; done < block; done += 32) {
+                    for (int i = 0; i < 10; ++i)
+                        params[static_cast<int>(rng.next() % static_cast<std::uint64_t>(params.size()))]->setValue(
+                            static_cast<float>(rng.next() % 100001) / 100000.0f);
+                    const int n = std::min(32, block - done);
+                    if (block - done <= 32)
+                        midi.addEvent(juce::MidiMessage::noteOff(1, note), 0);
+                    juce::AudioBuffer<float> sub(buffer.getArrayOfWritePointers(), 2, done, n);
+                    processor.processBlock(sub, midi);
+                    midi.clear();
+                }
+                for (int c = 0; c < 2; ++c)
+                    for (int s = 0; s < block; ++s)
+                        REQUIRE(std::isfinite(buffer.getSample(c, s)));
+            }
+        }
+    }
+    CHECK(processor.engine().outputRecoveries() == 0); // nothing went non-finite inside either
+}
+
 TEST_CASE("plug-in: the on-screen keyboard plays notes", "[plugin]") {
     Host host;
     host.run(2);
