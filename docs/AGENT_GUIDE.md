@@ -64,8 +64,9 @@ working material. `get_patch` returns it (`form: "diff"` gives only what differs
   the whole patch.
 - `set_params` takes registry ids (`filter1.cutoff`, `osc2.unison.detune`, `lfo3.rate`). Values can
   be text with units: `"1.8k"`, `"-6 dB"`, `"250 ms"`, `"+7 st"`, `"A3"` for a frequency, or `"1/8"`
-  for a time or rate that follows the tempo. Effect parameters can be named by the loaded
-  effect: `fx.a1.mix`, `fx.m1.decay`.
+  for a time or rate that follows the tempo: an envelope time stays linked to the tempo, and an
+  LFO or Flux rate switches that module's `sync` on at that division (the result says
+  `tempo_linked`). Effect parameters can be named by the loaded effect: `fx.a1.mix`, `fx.m1.decay`.
 
 ## 4. What the parameters do
 
@@ -159,8 +160,9 @@ working material. `get_patch` returns it (`form: "diff"` gives only what differs
 
 - `lfoN`: `mode` (`free`, `retrigger`, `one_shot`, `loop_point`), `rate_hz` or `sync` with
   `division`, `phase_deg`, `delay_ms`, `rise_ms`, `smooth`, `polarity`, `scope` (`voice` or
-  `global`), `keytrack`, and `audio_rate`. Shapes are drawn with `set_shape` (owner `lfo1`; x 0 to
-  1, y -1 to 1; an empty shape is a sine).
+  `global`), `keytrack`, and `audio_rate`. `set_params` with `lfo2.rate` `"1/8"` sets both: Sync on
+  and the division 1/8. Shapes are drawn with `set_shape` (owner `lfo1`; x 0 to 1, y -1 to 1; an
+  empty shape is a sine).
 - `fluxN`: random generators (`orbit`, `burst`, `stepped`, `smooth`) for slow, unrepeating
   movement.
 
@@ -202,7 +204,9 @@ played key starts and transposes it.
 
 These are starting points to adjust by ear, which here means by analysis.
 
-- **Warm detuned pluck.** Osc 1 on a saw-like table at position 0.2. Unison 5, `detune` 0.15,
+- **Warm detuned pluck.** Osc 1 on a saw-like table: the built-in table at position 0.2, or
+  `factory:Basics/Saw Morph` near position 1 (that table opens from a sine at 0 into a full saw at
+  1, so at 0.2 it is still almost a sine). Unison 5, `detune` 0.15,
   `width` 0.8. Filter 1 `ladder_lp24` at 1.5 to 2.5 kHz, `keytrack` 0.5, resonance 0.2. `env2`
   (attack 0, decay 250 ms, sustain 0) to `filter1.cutoff` with amount 0.3 to 0.4, `uni`. `env1`
   attack 1 ms, decay 450 ms, sustain 0, release 200 ms. `voice.drift` 0.15, `voice.warmth` 0.2.
@@ -272,6 +276,10 @@ Things to know about the measurements:
 
 - The centroid depends on the note: a C1 bass and a C5 lead with the same patch read very
   differently. Compare renders at the same notes.
+- On a phrase of several notes the envelope readings (`attack_ms`, `decay_shape`, and the
+  `plucky`, `sustained` and swelling judgements) describe the whole render, and the loudest peak
+  can come on a later note: a staccato pluck phrase can read an attack of 480 ms and `swelling`.
+  Judge the envelope on one note held about a second, and loudness on the phrase.
 - `spectrogram: true` returns a mel spectrogram image (time to the right, low frequencies at the
   bottom) for clients that can see images.
 - `compare_audio` returns `distance` = spectral difference + half the envelope difference + half
@@ -280,11 +288,24 @@ Things to know about the measurements:
 
 ## 7. Loudness, levels and safety margins
 
-- **One note** at velocity 100 (0.8): integrated loudness about **-14 LUFS** (±2). Chords and
-  pads: about -14 to -12 LUFS for the chord. Basses: about -13 LUFS on a held C1 to C2 note.
+- **Measure loudness on the phrase of the design loop** (section 2, step 4) at velocity 100 (0.8).
+  Sustained sounds (leads, keys, strings, brass): about **-14 LUFS** (±2). Chords and pads: about
+  -14 to -12 LUFS for the chord. Basses: about -13 LUFS on a held C1 to C2 note.
+- **Short, percussive phrases** (plucks, sequences, percussion) read about 13 dB below their peak,
+  and a single short note about 17 dB, so there the peak decides: bring it to -1 to -3 dBFS and
+  accept what that gives (often -15 to -17 LUFS for a pluck phrase). Judge one-shots by the peak.
 - **Peaks below -1 dBFS** and `clipped_samples` always 0. If a sound is too loud, lower
   `global.master_db` last. Fix the source and the effects first (unison adds level, drive adds
   level, resonance peaks).
+- **Gain staging.** Init plays one saw at about -16 dBFS peak (-19.5 LUFS on a held A3), with each
+  source at `level_db` -6 and `global.master_db` -6. A low-pass filter, a short amp envelope and
+  unison all take level away: the pluck of section 12 renders its phrase at about -38 LUFS and
+  -24 dBFS peak as written. Make the level up in this order, rendering after each step:
+  1. the sources' `level_db` (up to +6 dB);
+  2. `global.master_db` (up to +6 dB); with osc 1 at +6 and the master at +5, that pluck reads
+     -17.4 LUFS at -4.7 dBFS peak;
+  3. if both are at the top, a `utility` at the end of the master lane with `gain_db` (up to
+     +36 dB), then lower `global.master_db` if the peak passes -1 dBFS.
 - Macros should not change loudness by more than about 3 LU across their range. Render a phrase
   at both ends to check.
 - Keep the low end mono below about 120 Hz (Sub and bass sources without width). Use `utility`
@@ -371,9 +392,13 @@ Things to know about the measurements:
   - `{"op":"harmonic","name":"odd_only"}` (also `even_only`, `octave_up`, `octave_down`,
     `fade_highs`, `fill_saw`, `random_gaps`, ...);
   - `{"op":"formula","domain":"wave","expr":"in * 0.5 + sin(tau*t) * 0.5"}`;
-  - `{"op":"morph","mode":"spectral"}`, `{"op":"sort","by":"brightness"}` and
-    `{"op":"frames","count":64}`;
-  - `{"op":"duplicate"}`, `{"op":"reverse"}` and `{"op":"bake_morph","frames":64}`.
+  - `{"op":"morph","mode":"spectral"}` and `{"op":"sort","by":"brightness"}`;
+  - `{"op":"duplicate"}` and `{"op":"reverse"}`;
+  - `{"op":"bake_morph","frames":64}` writes out 64 real frames along the table's morph (the
+    in-between frames it plays) and switches the morph off. Use it to give a table more frames.
+  - `{"op":"frames","count":64}` only sets the number of key frames: frames added at the end are
+    **silent** and frames beyond the count are dropped. Follow it with a step that fills the new
+    frames (a `formula` limited with `"frames": [first, last]`), or use `bake_morph` instead.
 
 ## 11. Permissions and files
 
@@ -416,9 +441,9 @@ render_audio {"target": "session:3f9a1c2e", "tempo": 124, "notes": [
   {"note": "E4", "start": 2, "length": 0.5}, {"note": "G4", "start": 3, "length": 0.5}]}
 ```
 
-Say the analysis reads `attack_ms` 3, `plucky`, centroid 3400 Hz (`bright`) and width 0.08
-(narrow). The brief asks for warm and wider. Lower the cutoff to 1600 Hz, raise the unison width
-to 0.85, and add `voice.drift` 0.15 and `voice.warmth` 0.25:
+The phrase reads -38.1 LUFS, a peak of -24.0 dBFS, a centroid of 818 Hz and a width of 0.17. The
+brief asks for warm and wider. Lower the cutoff to 1600 Hz, raise the unison width to 0.85, and
+add `voice.drift` 0.15 and `voice.warmth` 0.25:
 
 ```json
 set_params {"target": "session:3f9a1c2e", "params": [
@@ -427,8 +452,20 @@ set_params {"target": "session:3f9a1c2e", "params": [
 render_audio ... (the same notes)
 ```
 
-When the centroid sits near 1.5 to 2 kHz, the width is 0.25 or more (`wide`), the sound is still
-`plucky` and the loudness is near -14 LUFS:
+The centroid falls to 735 Hz and the width rises to 0.46 (`wide`); the level is unchanged. Now
+the level (section 7, gain staging), then the same phrase and one A3 held for a second to judge
+the envelope:
+
+```json
+set_params {"target": "session:3f9a1c2e", "label": "Level", "params": [
+  {"id": "osc1.level", "value": "+6 dB"}, {"id": "global.master", "value": "+5 dB"}]}
+render_audio ... (the same notes)
+render_audio {"target": "session:3f9a1c2e", "units": "seconds", "notes": [{"note": "A3", "start": 0, "length": 1}]}
+```
+
+The phrase now reads -17.4 LUFS at a peak of -4.7 dBFS with 0 clipped samples, and the single
+note is `plucky` with a 7 ms attack. That is warm, wide and at a usable level for a pluck, so
+save it:
 
 ```json
 save_preset {"target": "session:3f9a1c2e", "name": "Warm House Pluck", "type": "pluck",

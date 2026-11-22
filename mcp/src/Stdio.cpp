@@ -18,6 +18,8 @@ namespace zmcp {
 
 namespace {
 
+constexpr int kMaxQueuedRequests = 64; // started and not yet answered
+
 struct StdioState {
     Server& server;
     std::FILE* out;
@@ -58,7 +60,9 @@ void runRequest(StdioState& s, J message, std::shared_ptr<std::atomic<bool>> can
     };
     J response;
     try {
-        response = s.server.handle(message, &s.legacy, info);
+        // A request cancelled while it waited for its turn never runs, so it changes nothing.
+        if (!cancelled->load())
+            response = s.server.handle(message, &s.legacy, info);
     } catch (const Cancelled&) {
         response = nullptr;
     } catch (const std::exception& e) {
@@ -89,7 +93,7 @@ void handleLine(StdioState& s, const std::string& line) {
     }
     if (m.contains("result") || m.contains("error"))
         return; // a response from the client: this server sends no requests, so there is nothing to match
-    const std::string method = m.value("method", "");
+    const std::string method = argString(m, "method"); // a method that is not text is refused by Server::handle
     const bool isRequest = m.contains("id") && !m["id"].is_null();
     if (!isRequest) {
         if (method == "notifications/cancelled") {
@@ -114,8 +118,8 @@ void handleLine(StdioState& s, const std::string& line) {
         return;
     }
     if (method == "subscriptions/listen" && Server::eraOf(m) == Server::Era::Modern) {
-        const J meta = m["params"]["_meta"];
-        if (meta.value("io.modelcontextprotocol/protocolVersion", "") == kModernVersion) {
+        const J meta = m["params"]["_meta"]; // an object: eraOf checked it
+        if (argString(meta, "io.modelcontextprotocol/protocolVersion") == kModernVersion) {
             // Nothing in this server's lists changes while it runs, so the stream acknowledges no
             // notification types and stays open until the client cancels it or the server ends.
             {
@@ -130,18 +134,36 @@ void handleLine(StdioState& s, const std::string& line) {
         }
     }
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
+    const std::string key = idKey(m["id"]);
     {
         std::unique_lock<std::mutex> lock(s.activeMutex);
-        const std::string key = idKey(m["id"]);
         if (s.active.count(key)) {
             lock.unlock();
             s.send(Server::error(m["id"], kInvalidRequest, "Invalid request: this id is already in use by a request in progress"));
             return;
         }
+        // Four run at once (runRequest); a burst beyond this many waiting is refused instead of
+        // holding a thread each.
+        if (s.queued >= kMaxQueuedRequests) {
+            lock.unlock();
+            s.send(Server::error(m["id"], kInvalidRequest, "Too many requests in progress: wait for answers before sending more"));
+            return;
+        }
         s.active[key] = cancelled;
         ++s.queued;
     }
-    std::thread(runRequest, std::ref(s), std::move(m), cancelled).detach();
+    const J id = m["id"];
+    try {
+        std::thread(runRequest, std::ref(s), std::move(m), cancelled).detach();
+    } catch (const std::exception&) {
+        {
+            std::lock_guard<std::mutex> lock(s.activeMutex);
+            s.active.erase(key);
+            --s.queued;
+            s.activeChanged.notify_all();
+        }
+        s.send(Server::error(id, kInternalError, "Internal error: the server could not start work on this request; try again"));
+    }
 }
 
 } // namespace
@@ -175,8 +197,15 @@ int runStdio(Server& server, std::FILE* in, std::FILE* out) {
                 tooLong = false;
                 continue;
             }
-            if (!line.empty())
+            if (line.empty())
+                continue;
+            // Nothing a client sends may end the server: a message the checks above let through
+            // and that still throws is answered as an invalid request.
+            try {
                 handleLine(s, line);
+            } catch (const std::exception& e) {
+                s.send(Server::error(J(), kInvalidRequest, std::string("Invalid request: ") + e.what()));
+            }
         }
         buffer.erase(0, start);
         if (buffer.size() > kMaxRequestBytes) {

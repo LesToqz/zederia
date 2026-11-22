@@ -8,10 +8,12 @@
 
 #include "zederia/link/Link.h"
 #include "zederia/rt/AudioThreadGuard.h"
+#include "zederia/util/Math.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <future>
 #include <thread>
 
@@ -211,6 +213,18 @@ TEST_CASE("live link: the pipe wants the instance's token", "[plugin][live][agen
     CHECK(r["error"]["message"].get<std::string>().find("changed meanwhile") != std::string::npos);
     r = ask({{"v", 1}, {"id", 7}, {"token", d.token}, {"method", "launch_missiles"}});
     CHECK(r["ok"] == false);
+    // Fields of the wrong type are refused like wrong values. {"v": "x"} used to throw on the pipe
+    // thread, which ended the whole host process (found by the pre-milestone-7 audit).
+    for (const J& bad : {J{{"v", "x"}, {"id", 8}}, J{{"v", 1.5}, {"id", 9}, {"token", d.token}}, J{{"v", 1}, {"id", 10}, {"token", 5}},
+                         J{{"v", 1}, {"id", 11}, {"token", J::array()}, {"method", "get_patch"}}, J{{"v", 1}, {"id", 12}, {"token", d.token}, {"method", 7}},
+                         J{{"v", 1}, {"id", 13}, {"token", d.token}, {"method", "audition"}, {"params", {{"notes", "loud"}}}}, J::array({1, 2})}) {
+        r = ask(bad);
+        INFO(bad.dump() << " -> " << r.dump());
+        CHECK_FALSE(r.contains("transport")); // the instance answered
+        CHECK(r["ok"] == false);
+    }
+    r = ask({{"v", 1}, {"id", 14}, {"token", d.token}, {"method", "get_patch"}});
+    CHECK(r["ok"] == true); // and still serves
     // The link state travels with the host project.
     juce::MemoryBlock state;
     p.getStateInformation(state);
@@ -219,4 +233,39 @@ TEST_CASE("live link: the pipe wants the instance's token", "[plugin][live][agen
     q.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     CHECK(q.agentLink().enabled());
     q.agentLink().setEnabled(false, error);
+}
+
+TEST_CASE("live link: a client cannot raise the audition cap the user set", "[plugin][live][agent][safety]") {
+    freshRoot("cap");
+    std::string error;
+    zed::link::Permissions perms;
+    perms.auditionCapDb = -40.0;
+    REQUIRE(zed::link::savePermissions(perms, error));
+    ZederiaProcessor p;
+    p.setPlayConfigDetails(0, 2, 48000.0, 256);
+    p.prepareToPlay(48000.0, 256);
+    REQUIRE(p.agentLink().setEnabled(true, error));
+    const auto d = p.agentLink().discovery();
+    const J request = {{"v", 1}, {"id", 1}, {"token", d.token}, {"method", "audition"},
+                       {"params", {{"notes", {{{"note", 60}, {"start", 0.0}, {"duration", 1.0}, {"velocity", 1.0}}}}, {"cap_db", 0.0}}}};
+    const J r = withMessageThread(p, [&] {
+        zed::link::PipeClient client;
+        std::string err, reply;
+        if (!client.connect(d.pipe, 2000, err) || !client.request(request.dump(), reply, 5000, err))
+            return J{{"ok", false}};
+        return J::parse(reply);
+    });
+    REQUIRE(r["ok"] == true);
+    juce::AudioBuffer<float> buffer(2, 256);
+    juce::MidiBuffer midi;
+    float peak = 0.0f;
+    for (int b = 0; b < 60; ++b) { // 0.32 s of the note
+        buffer.clear();
+        p.processBlock(buffer, midi);
+        if (b >= 2) // the cap's gain steps down within the first block (docs/STATUS.md, known issues)
+            peak = std::max({peak, buffer.getMagnitude(0, 0, 256), buffer.getMagnitude(1, 0, 256)});
+    }
+    CHECK(peak > 0.0f);                                              // it played
+    CHECK(peak <= static_cast<float>(zed::dbToGain(-40.0)) * 1.05f); // at the user's cap, not the client's 0 dB
+    p.agentLink().setEnabled(false, error);
 }

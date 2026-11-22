@@ -134,7 +134,14 @@ public:
 
 private:
     struct Session;
-    Session* findSession(const std::string& target, std::unique_lock<std::mutex>& lock);
+    // A session in use: it stays alive while the handle exists, even if close_session or the idle
+    // pruning removes it from the list meanwhile, and its lock is released before it can go.
+    struct SessionRef {
+        std::shared_ptr<Session> keep; // declared first: destroyed after the lock
+        std::unique_lock<std::mutex> lock;
+        Session* operator->() const { return keep.get(); }
+    };
+    SessionRef findSession(const std::string& target);
     void prune();
     J liveCall(const zed::link::Discovery& d, const std::string& method, const J& params, const Call& call, int timeoutMs);
     bool findLive(const std::string& target, zed::link::Discovery& out) const;
@@ -142,7 +149,7 @@ private:
     Config config_;
     zed::ContentLibrary library_;
     mutable std::mutex mutex_;
-    std::map<std::string, std::unique_ptr<Session>> sessions_;
+    std::map<std::string, std::shared_ptr<Session>> sessions_;
     std::mutex tableMutex_;
     std::map<std::string, std::shared_ptr<const zed::TableData>> tableCache_;
     std::map<std::string, std::shared_ptr<const zed::SampleData>> textureCache_;

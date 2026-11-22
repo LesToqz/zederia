@@ -225,6 +225,11 @@ void addMusicTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          }
                          if (!errors.empty())
                              throw ToolError{errors};
+                         // The target is checked before anything is written, so a refused call changes nothing.
+                         if (a.contains("slot") && !a.contains("target"))
+                             fail("/slot", "slot needs a target", "add the target whose clip player gets the clip");
+                         if (a.contains("target"))
+                             bridge.checkTarget(argString(a, "target"));
                          std::string id = argString(a, "clip_id", "");
                          if (!id.empty()) {
                              zed::Clip old;
@@ -239,7 +244,6 @@ void addMusicTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              out.structured["key"] = key.name();
                          if (a.contains("target")) {
                              const std::string t = argString(a, "target");
-                             bridge.checkTarget(t);
                              const int slot = argInt(a, "slot", 1);
                              const bool activate = argBool(a, "activate", false);
                              bridge.edit(t, call, "Clip " + std::to_string(slot) + ": " + clip.name, [&](Patch& p) {
@@ -250,14 +254,14 @@ void addMusicTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                                  }
                              });
                              out.structured["loaded_into"] = {{"target", t}, {"slot", slot}, {"active", activate}};
-                         } else if (a.contains("slot")) {
-                             fail("/slot", "slot needs a target", "add the target whose clip player gets the clip");
                          }
                          int warnings = 0;
                          for (const auto& is : issues)
                              warnings += is.error ? 0 : 1;
+                         char bars[32];
+                         std::snprintf(bars, sizeof bars, "%.4g", clip.bars);
                          out.summary = "Clip " + id + " \"" + clip.name + "\": " + std::to_string(clip.notes.size()) + " notes over " +
-                                       std::to_string(static_cast<int>(clip.bars)) + " bar(s)" + (warnings ? ", " + std::to_string(warnings) + " warning(s)" : "") +
+                                       std::string(bars) + " bar(s)" + (warnings ? ", " + std::to_string(warnings) + " warning(s)" : "") +
                                        (out.structured.contains("loaded_into") ? ", in clip slot " + std::to_string(argInt(a, "slot", 1)) : "") + ".";
                          return out;
                      }});

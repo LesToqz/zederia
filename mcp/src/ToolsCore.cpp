@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -30,7 +32,14 @@ double argNumber(const J& a, const char* key, double fallback) {
 }
 int argInt(const J& a, const char* key, int fallback) {
     auto it = a.find(key);
-    return it != a.end() && it->is_number() ? static_cast<int>(it->get<double>()) : fallback;
+    if (it == a.end() || !it->is_number())
+        return fallback;
+    // Clamped before the conversion: a number beyond int's range (an offset of 3e9) is undefined
+    // behaviour as a cast and turned into a negative index.
+    const double v = it->get<double>();
+    if (!std::isfinite(v))
+        return fallback;
+    return static_cast<int>(std::clamp(v, static_cast<double>(std::numeric_limits<int>::min()), static_cast<double>(std::numeric_limits<int>::max())));
 }
 bool argBool(const J& a, const char* key, bool fallback) {
     auto it = a.find(key);
@@ -258,6 +267,23 @@ J setParam(Patch& patch, const std::string& id, const J& value, const std::strin
         for (int k = 0; k < 5; ++k)
             if (field == zed::kEnvSyncKeys[k] && env >= 0 && env < zed::kNumEnvs)
                 patch.envSync[static_cast<std::size_t>(env)][static_cast<std::size_t>(k)].clear();
+    }
+    // A note length for a rate whose module has Sync and Division (the LFOs, Flux) switches that
+    // module to synced at that division, so the rate follows the tempo as the description promises.
+    // The Hz value is set too: it is what plays if Sync is switched off later.
+    if (!noteLength.empty() && def->unit == zed::Unit::Hz && id == def->module + ".rate") {
+        const auto& reg = Registry::get();
+        const int syncIndex = reg.indexOf(def->module + ".sync"), divisionIndex = reg.indexOf(def->module + ".division");
+        if (syncIndex >= 0 && divisionIndex >= 0) {
+            const auto& choices = reg.at(divisionIndex).choices;
+            const auto it = std::find(choices.begin(), choices.end(), noteLength);
+            if (it == choices.end())
+                fail(path + "/value", "\"" + noteLength + "\" is not one of the synced divisions of " + def->module,
+                     "use one of the tempo divisions from describe_synth (\"1/4\", \"1/8D\", \"1/16T\" ...)");
+            patch.set(syncIndex, 1.0);
+            patch.set(divisionIndex, static_cast<double>(it - choices.begin()));
+            synced = true;
+        }
     }
     const double stored = patch.set(index, plain);
     J out = {{"id", Registry::get().at(index).id}, {"requested", value}, {"value", stored}, {"display", zed::formatValueText(*def, stored)},
@@ -611,7 +637,8 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
     tools.push_back({"set_params", "Set parameters",
                      "Small edits by parameter id, as one undo step. Values are numbers in the parameter's unit (Hz, ms, dB, semitones; "
                      "fractions for %), booleans for switches, or text: \"1.8k\", \"-6 dB\", \"250 ms\", \"A3\" (as a frequency), \"1/8\" (a "
-                     "tempo-linked time or rate), or a choice name (\"ladder_lp24\"). Effect parameters can be named by the loaded effect: "
+                     "tempo-linked envelope time, or for an LFO or Flux rate: Sync on at that division), or a choice name "
+                     "(\"ladder_lp24\"). Effect parameters can be named by the loaded effect: "
                      "\"fx.a1.mix\", \"fx.m2.decay\". Returns each value after clamping.",
                      schema(R"json({"type":"object","additionalProperties":false,"required":["target","params"],"properties":{
                         "target":{"type":"string","description":"a target handle"},

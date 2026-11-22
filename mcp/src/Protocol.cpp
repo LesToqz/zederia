@@ -24,6 +24,11 @@ namespace {
 
 constexpr int kListTtlMs = 300000;
 
+// A problem or a fix as one sentence: its own full stop is kept, never doubled.
+std::string sentence(const std::string& s) {
+    return !s.empty() && (s.back() == '.' || s.back() == '?' || s.back() == '!') ? s : s + ".";
+}
+
 bool isLegacyVersion(const std::string& v) {
     const auto& l = legacyVersions();
     return std::find(l.begin(), l.end(), v) != l.end();
@@ -32,9 +37,9 @@ bool isLegacyVersion(const std::string& v) {
 std::string clientNameOf(const J& info) {
     if (!info.is_object())
         return "agent";
-    std::string n = info.value("title", "");
+    std::string n = argString(info, "title");
     if (n.empty())
-        n = info.value("name", "");
+        n = argString(info, "name");
     // Shown in undo labels and the activity log: keep it short and printable.
     std::string clean;
     for (const char c : n)
@@ -137,7 +142,7 @@ J Server::error(const J& id, int code, const std::string& message, J data) {
 Server::Era Server::eraOf(const J& m) {
     if (!m.is_object())
         return Era::Unknown;
-    if (m.value("method", "") == "initialize")
+    if (argString(m, "method") == "initialize") // type-safe: a client's message may hold anything
         return Era::Legacy;
     const auto params = m.find("params");
     if (params != m.end() && params->is_object()) {
@@ -193,7 +198,7 @@ J Server::callTool(const std::string& name, const J& arguments, RequestInfo& inf
         J details = problemsToJson(problems);
         std::string text = "Invalid arguments for " + name + ":";
         for (const auto& p : problems)
-            text += "\n- at " + (p.path.empty() ? std::string("(the arguments)") : p.path) + ": " + p.problem + ". Fix: " + p.fix + ".";
+            text += "\n- at " + (p.path.empty() ? std::string("(the arguments)") : p.path) + ": " + sentence(p.problem) + " Fix: " + sentence(p.fix);
         return {{"content", J::array({{{"type", "text"}, {"text", text}}, {{"type", "text"}, {"text", J{{"errors", details}}.dump()}}})}, {"isError", true}};
     }
     Call call;
@@ -235,7 +240,7 @@ J Server::callTool(const std::string& name, const J& arguments, RequestInfo& inf
     } catch (const ToolError& e) {
         std::string text = name + " could not do that:";
         for (const auto& p : e.problems)
-            text += "\n- " + (p.path.empty() ? std::string() : "at " + p.path + ": ") + p.problem + ". Fix: " + p.fix + ".";
+            text += "\n- " + (p.path.empty() ? std::string() : "at " + p.path + ": ") + sentence(p.problem) + " Fix: " + sentence(p.fix);
         return {{"content", J::array({{{"type", "text"}, {"text", text}}, {{"type", "text"}, {"text", J{{"errors", problemsToJson(e.problems)}}.dump()}}})},
                 {"isError", true}};
     } catch (const Cancelled&) {
@@ -358,7 +363,7 @@ J Server::promptsList() const {
 }
 
 J Server::getPrompt(const J& params, const J& id, int& status) {
-    const std::string name = params.value("name", "");
+    const std::string name = argString(params, "name");
     const J args = params.value("arguments", J::object());
     const auto get = [&](const char* k, const char* def) { return args.contains(k) && args[k].is_string() ? args[k].get<std::string>() : std::string(def); };
     std::string text;
@@ -427,7 +432,7 @@ J Server::dispatch(const std::string& method, const J& params, RequestInfo& info
         return r;
     }
     if (method == "tools/call") {
-        const std::string name = params.value("name", "");
+        const std::string name = argString(params, "name");
         if (!findTool(name)) {
             status = 400;
             std::vector<std::string> names;
@@ -447,7 +452,7 @@ J Server::dispatch(const std::string& method, const J& params, RequestInfo& info
         return r;
     }
     if (method == "resources/read") {
-        const std::string uri = params.value("uri", "");
+        const std::string uri = argString(params, "uri");
         J r = readResource(uri, id, status);
         if (r.contains("error"))
             return r;
@@ -479,7 +484,7 @@ J Server::handle(const J& m, LegacyChannel* legacy, RequestInfo& info, int* http
             *httpStatus = status;
         return r;
     };
-    if (!m.is_object() || m.value("jsonrpc", "") != "2.0" || !m.contains("method") || !m["method"].is_string()) {
+    if (!m.is_object() || argString(m, "jsonrpc") != "2.0" || !m.contains("method") || !m["method"].is_string()) {
         status = 400;
         return finish(error(m.is_object() && m.contains("id") ? m["id"] : J(), kInvalidRequest, "Invalid request: expected a JSON-RPC 2.0 request or notification"));
     }
@@ -506,7 +511,7 @@ J Server::handle(const J& m, LegacyChannel* legacy, RequestInfo& info, int* http
             status = 400;
             return finish(error(id, kInvalidRequest, "initialize is not available on this channel"));
         }
-        const std::string requested = params.value("protocolVersion", "");
+        const std::string requested = argString(params, "protocolVersion");
         const std::string chosen = isLegacyVersion(requested) ? requested : legacyVersions().front();
         {
             std::lock_guard<std::mutex> lock(legacy->mutex);

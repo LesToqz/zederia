@@ -6,6 +6,7 @@
 #include <cctype>
 #include <climits>
 #include <cmath>
+#include <cstdio>
 #include <set>
 
 namespace zed::music {
@@ -519,6 +520,15 @@ int quantize(int note, const Key& key, int direction) {
     return note;
 }
 
+namespace {
+// A beat or bar count as people write it: "7", "1.5", "0.125".
+std::string beatsText(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.4g", v);
+    return buf;
+}
+} // namespace
+
 std::vector<ClipIssue> validateClip(const Clip& clip, const Key& key) {
     std::vector<ClipIssue> issues;
     const auto add = [&](bool error, std::string code, std::string path, std::string message, std::string fix) {
@@ -526,8 +536,11 @@ std::vector<ClipIssue> validateClip(const Clip& clip, const Key& key) {
     };
     if (!(clip.bars > 0.0) || clip.bars > kMaxClipBars)
         add(true, "bars", "/bars", "the clip must be longer than 0 and at most 64 bars", "set \"bars\" to a whole number from 1 to 64");
+    else if (clip.lengthBeats() < kMinClipBeats)
+        add(true, "too_short", "/bars", "the clip lasts " + beatsText(clip.lengthBeats()) + " beats; the clip player needs at least 1/16 of a beat",
+            "set \"bars\" to a whole number from 1 to 64");
     else if (std::abs(clip.bars - std::round(clip.bars)) > 1e-9)
-        add(false, "partial_bar", "/bars", "the clip does not end on a bar line (" + std::to_string(clip.bars) + " bars), so it will not loop on the beat",
+        add(false, "partial_bar", "/bars", "the clip does not end on a bar line (" + beatsText(clip.bars) + " bars), so it will not loop on the beat",
             "use a whole number of bars");
     if (clip.beatsPerBar < 1 || clip.beatsPerBar > 16)
         add(true, "beats_per_bar", "/beats_per_bar", "beats per bar must be from 1 to 16", "use 4 for 4/4, 3 for 3/4");
@@ -555,11 +568,11 @@ std::vector<ClipIssue> validateClip(const Clip& clip, const Key& key) {
         if (!(n.velocity > 0.0 && n.velocity <= 1.0))
             add(true, "velocity", p + "/velocity", "velocity must be above 0 and at most 1 (or 1..127)", "use 0.8 for a normal note");
         if (n.start >= end - 1e-9)
-            add(true, "past_end", p + "/start", "the note starts at beat " + std::to_string(n.start) + ", after the clip ends at beat " + std::to_string(end),
+            add(true, "past_end", p + "/start", "the note starts at beat " + beatsText(n.start) + ", after the clip ends at beat " + beatsText(end),
                 "move it inside the clip or make the clip longer");
         else if (n.start + n.length > end + 1e-9)
             add(false, "past_end", p + "/length", "the note runs past the end of the clip; it is cut at the loop point",
-                "shorten it to end by beat " + std::to_string(end));
+                "shorten it to end by beat " + beatsText(end));
         if (key.valid() && n.key >= 0 && n.key <= 127 && !key.contains(n.key))
             outside.push_back(noteName(n.key) + " (#" + std::to_string(i) + ", nearest in key " + noteName(quantize(n.key, key)) + ")");
         for (std::size_t j = i + 1; j < clip.notes.size(); ++j) {

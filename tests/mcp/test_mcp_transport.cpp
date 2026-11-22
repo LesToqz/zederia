@@ -124,6 +124,32 @@ TEST_CASE("mcp: stdio carries both generations, rejects junk and honours cancell
     CHECK_FALSE(fs::exists(rig.root / "user" / "Renders" / "stdio_cancelled.wav"));
 }
 
+TEST_CASE("mcp: fields of the wrong type never end the server", "[mcp][transport][stdio][safety]") {
+    // Each of these used to throw out of the reader (a numeric method ended the real program with
+    // an abort; found by the pre-milestone-7 audit). Every line gets an answer and the last, valid
+    // request still works.
+    Rig rig("stdio_types");
+    const std::string m = metaText();
+    const std::vector<std::string> lines = {
+        R"({"jsonrpc":"2.0","id":1,"method":5})",
+        R"({"jsonrpc":2,"id":2,"method":"tools/list","params":{"_meta":)" + m + "}}",
+        R"({"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":7,"capabilities":{},"clientInfo":{"name":9,"title":[1]}}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"subscriptions/listen","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":5,"io.modelcontextprotocol/clientCapabilities":{}}}})",
+        R"({"jsonrpc":"2.0","method":"notifications/cancelled","params":"everything"})",
+        R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_presets","arguments":{"offset":3000000000},"_meta":)" + m + "}}",
+        R"({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":5,"_meta":)" + m + "}}",
+        R"({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"theory","arguments":{"action":"scale","key":"D dorian"},"_meta":)" + m + "}}",
+    };
+    const auto out = runStdioScript(rig.server, rig.root, lines);
+    CHECK(byId(out, 1)["error"]["code"] == -32600);
+    CHECK(byId(out, 2)["error"]["code"] == -32600);
+    CHECK(byId(out, 3)["result"]["protocolVersion"] == "2025-11-25"); // an unreadable version: the newest it speaks
+    CHECK(byId(out, 4)["error"]["code"] == -32022);
+    CHECK(byId(out, 5)["result"]["structuredContent"]["presets"].empty()); // an offset past the end, not a crash
+    CHECK(byId(out, 6).contains("error"));
+    CHECK(byId(out, 7)["result"]["structuredContent"]["scale"]["name"] == "D dorian");
+}
+
 namespace {
 
 struct HttpRig {
@@ -213,6 +239,15 @@ TEST_CASE("mcp: HTTP refuses requests without the token, from other origins or h
     // GET offers no stream.
     CHECK(c.Get("/mcp", headers)->status == 405);
     CHECK(c.Get("/mcp", noToken)->status == 401);
+    // Fields of the wrong type are a bad request (400 with a JSON-RPC error), never a server fault.
+    for (const std::string& bad : {std::string(R"({"jsonrpc":"2.0","id":1,"method":5,"params":{"_meta":)") + Rig::meta().dump() + "}}",
+                                   std::string(R"({"jsonrpc":2,"id":1,"method":"tools/list","params":{"_meta":)") + Rig::meta().dump() + "}}"}) {
+        INFO(bad);
+        r = c.Post("/mcp", headers, bad, "application/json");
+        REQUIRE(r);
+        CHECK(r->status == 400);
+        CHECK(J::parse(r->body, nullptr, false).contains("error"));
+    }
     // The endpoint will not bind anywhere but loopback, and wants a real token.
     zmcp::HttpOptions o;
     o.host = "0.0.0.0";

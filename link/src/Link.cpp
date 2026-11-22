@@ -458,7 +458,13 @@ void PipeServer::run() {
                     line.pop_back();
                 if (line.empty())
                     continue;
-                std::string reply = handler_(line);
+                // An exception must never leave this thread: it would end the whole host.
+                std::string reply;
+                try {
+                    reply = handler_(line);
+                } catch (...) {
+                    reply = R"({"ok":false,"error":{"message":"the request could not be read","fix":"use zederia-mcp from the same Zederia version","path":""}})";
+                }
                 reply.push_back('\n');
                 if (!writeAll(pipe, reply, impl_->stop)) {
                     alive = false;
@@ -466,7 +472,9 @@ void PipeServer::run() {
                 }
             }
         }
-        FlushFileBuffers(pipe);
+        // No FlushFileBuffers: it waits until the client has read everything, so a client that
+        // stops reading would hold this thread, and with it switching the link off or closing the
+        // plug-in. The loop ends only when the client left, misbehaved or the link is stopping.
         DisconnectNamedPipe(pipe);
         CloseHandle(pipe);
         if (impl_->listening == INVALID_HANDLE_VALUE)
