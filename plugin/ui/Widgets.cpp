@@ -83,10 +83,44 @@ bool Widget::handFocusToEditor() {
     return !hasKeyboardFocus(false);
 }
 
+namespace {
+// A key that moves through, edits or presses parts is held.
+bool editingKeyHeld() {
+    static const int editingKeys[] = {juce::KeyPress::leftKey,   juce::KeyPress::rightKey,    juce::KeyPress::upKey,      juce::KeyPress::downKey,
+                                      juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey, juce::KeyPress::homeKey,    juce::KeyPress::endKey,
+                                      juce::KeyPress::deleteKey, juce::KeyPress::backspaceKey, juce::KeyPress::returnKey, juce::KeyPress::spaceKey,
+                                      juce::KeyPress::tabKey};
+    for (const int key : editingKeys)
+        if (juce::KeyPress::isKeyCurrentlyDown(key))
+            return true;
+    return false;
+}
+} // namespace
+
+bool focusFromKeyboard(juce::Component::FocusChangeType cause) {
+    if (cause == juce::Component::focusChangedByTabKey)
+        return true;
+    // Code moved the focus: in answer to a key (Escape closes a panel and the focus goes back to its
+    // button), or to a click, whose button is up again by the time the click's action runs.
+    return cause == juce::Component::focusChangedDirectly && (editingKeyHeld() || juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::escapeKey));
+}
+
+bool focusLeftWithWindow(juce::Component::FocusChangeType cause) {
+    return cause == juce::Component::focusChangedByMouseClick && juce::Component::getCurrentlyFocusedComponent() == nullptr;
+}
+
 void Widget::focusGained(FocusChangeType cause) {
     if (cause == focusChangedByMouseClick && !keepsClickFocus && handFocusToEditor())
         return;
-    focusCue_ = cause != focusChangedByMouseClick;
+    // The window coming back to the front gives the focus back as it was, with or without its outline.
+    if (!(cause == focusChangedDirectly && focusAway_))
+        focusCue_ = focusFromKeyboard(cause);
+    focusAway_ = false;
+    repaint();
+}
+
+void Widget::focusLost(FocusChangeType cause) {
+    focusAway_ = focusLeftWithWindow(cause);
     repaint();
 }
 
@@ -100,17 +134,9 @@ void Widget::clickedWhileFocused() {
 }
 
 bool Widget::keyStateChanged(bool isKeyDown) {
-    if (isKeyDown && !focusCue_ && hasKeyboardFocus(false)) {
-        static const int editingKeys[] = {juce::KeyPress::leftKey,   juce::KeyPress::rightKey,   juce::KeyPress::upKey,     juce::KeyPress::downKey,
-                                              juce::KeyPress::pageUpKey, juce::KeyPress::pageDownKey, juce::KeyPress::homeKey,   juce::KeyPress::endKey,
-                                              juce::KeyPress::deleteKey, juce::KeyPress::backspaceKey, juce::KeyPress::returnKey, juce::KeyPress::spaceKey,
-                                              juce::KeyPress::tabKey};
-        for (const int key : editingKeys)
-            if (juce::KeyPress::isKeyCurrentlyDown(key)) {
-                focusCue_ = true;
-                repaint();
-                break;
-            }
+    if (isKeyDown && !focusCue_ && hasKeyboardFocus(false) && editingKeyHeld()) {
+        focusCue_ = true;
+        repaint();
     }
     return false;
 }
@@ -1581,12 +1607,9 @@ void Card::draw(juce::Graphics& g) {
         const juce::String title = title_.toUpperCase();
         h = h.withRight(std::min(right, h.getRight()));
         const float titleW = std::min(textWidth(title, kTextBody, true) + 2.0f, h.getWidth());
+        // A module that is off says so by its hollow lamp, this dimmer title and its dimmed controls:
+        // no mark beside the name.
         drawText(bg, title, h.removeFromLeft(titleW), kTextBody, bypassShown_ ? t.textDim : t.text, juce::Justification::centredLeft, true);
-        if (bypassShown_ && offMark && h.getWidth() > 40.0f) {
-            h.removeFromLeft(8.0f);
-            const auto badge = h.removeFromLeft(textWidth("OFF", kTextSmall, true) + 12.0f).withSizeKeepingCentre(textWidth("OFF", kTextSmall, true) + 12.0f, 16.0f);
-            drawText(bg, "OFF", badge, kTextSmall, t.textDim, juce::Justification::centred, true);
-        }
     });
     if (drawHeaderExtra && !headerExtraArea.isEmpty())
         drawHeaderExtra(g, headerExtraArea);
@@ -1615,18 +1638,6 @@ DragChip::DragChip(Context& ctx, juce::String source) : ctx_(ctx), source_(std::
     family = Family::Modulators;
 }
 
-bool DragChip::tick() {
-    if ((++frames_ & 1u) != 0) // the live bar moves at half the frame rate
-        return false;
-    const int index = Context::sourceIndex(source_);
-    const float v = index >= 0 ? ctx_.processor.engine().sourceValue(index) : 0.0f;
-    if (std::abs(v - value_) > 0.004f) {
-        value_ = v;
-        return true;
-    }
-    return false;
-}
-
 void DragChip::setOpen(bool open) {
     if (open != open_) {
         open_ = open;
@@ -1639,18 +1650,14 @@ void DragChip::draw(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat().reduced(0.5f);
     const juce::Colour c = ctx_.sourceColour(source_);
     const bool selected = ctx_.selectedSource == source_;
-    // The chip itself changes only with its states and its name: kept as an image, so the live
-    // value's bar repaints over a copy. Two states, two cues: the source chosen for routing has a
-    // ring in its own colour around its dot and grip (what is dragged and Alt-dragged); the one
-    // whose graph the dock shows is a seated tab, lighter and bold, with a notch towards the graph.
+    // The chip changes only with its states and its name: kept as an image. Two states, no outline
+    // or underline in the source's colour: the source chosen for routing (what is dragged and
+    // Alt-dragged) has its dot in full colour and its grip in its colour; the one whose graph the
+    // dock shows is a seated tab, lighter and bold, with a notch towards the graph.
     const std::uint64_t key = ((static_cast<std::uint64_t>(text.hashCode64()) ^ static_cast<std::uint64_t>(c.getARGB())) << 2) | (selected ? 1u : 0u) |
                               (open_ ? 2u : 0u);
     body_.draw(g, getLocalBounds(), key, false, [&](juce::Graphics& cg) {
         drawPanel(cg, area, open_ ? t.control : t.raised);
-        if (selected) {
-            cg.setColour(c);
-            cg.drawRect(area.reduced(0.8f), 1.3f);
-        }
         auto inner = area.reduced(5.0f, 0.0f);
         const auto socket = inner.removeFromLeft(6.0f).withSizeKeepingCentre(6.0f, 6.0f);
         cg.setColour(t.bg);
@@ -1670,13 +1677,6 @@ void DragChip::draw(juce::Graphics& g) {
             cg.fillPath(notch);
         }
     });
-    // The source's live value as a thin bar along the bottom edge.
-    const float v = juce::jlimit(-1.0f, 1.0f, value_);
-    const float mid = area.getCentreX(), half = area.getWidth() * 0.5f - 8.0f;
-    const float x0 = v >= 0 ? (source_.startsWith("lfo") || source_.startsWith("flux") ? mid : area.getX() + 8.0f) : mid + v * half;
-    const float x1 = v >= 0 ? (source_.startsWith("lfo") || source_.startsWith("flux") ? mid + v * half : area.getX() + 8.0f + v * (area.getWidth() - 16.0f)) : mid;
-    g.setColour(c);
-    g.fillRect(juce::Rectangle<float>(std::min(x0, x1), area.getBottom() - 2.5f, std::abs(x1 - x0), 1.5f));
     drawFocus(g, area, t.radius);
 }
 

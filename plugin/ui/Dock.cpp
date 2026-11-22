@@ -215,7 +215,7 @@ public:
     const juce::String& selected() const { return selected_; }
     // Opens a modulator's graph and controls. Which one is open is the chip seated as a tab and the
     // card's title ("LFO 2"); it does not change with the routing selection (a second click on a
-    // chip, a drop onto a control), which the chips show as a ring in the source's colour.
+    // chip, a drop onto a control), which the chips show by a full-colour dot and grip.
     void select(const juce::String& source) {
         selected_ = source;
         if (source.startsWith("env")) {

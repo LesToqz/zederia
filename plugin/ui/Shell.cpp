@@ -50,29 +50,49 @@ void Nameplate::draw(juce::Graphics& g) {
     const auto& t = theme();
     plate_.draw(g, bounds, 0, true, [&](juce::Graphics& pg) {
         drawPanel(pg, bounds.toFloat(), t.bg);
-        // Seven engraved letterforms share the same angled cuts as the shoulder of the Z.
-        juce::Path z, letters;
-        z.startNewSubPath(0, 0); z.lineTo(21, 0); z.lineTo(21, 3); z.lineTo(7, 15); z.lineTo(21, 15);
-        z.lineTo(18, 18); z.lineTo(0, 18); z.lineTo(0, 15); z.lineTo(14, 3); z.lineTo(0, 3); z.closeSubPath();
-        const auto e = [&](float x) {
-            letters.startNewSubPath(x + 11, 0); letters.lineTo(x, 0); letters.lineTo(x, 16); letters.lineTo(x + 11, 16);
-            letters.startNewSubPath(x, 8); letters.lineTo(x + 8, 8);
+        // The wordmark: the Z mark, two cut slabs, then six engraved letters drawn as strokes.
+        juce::Path firstE, d, rest;
+        const auto e = [](juce::Path& p, float x) {
+            p.startNewSubPath(x + 11, 0); p.lineTo(x, 0); p.lineTo(x, 16); p.lineTo(x + 11, 16);
+            p.startNewSubPath(x, 8); p.lineTo(x + 8, 8);
         };
-        e(28);
-        letters.startNewSubPath(45, 0); letters.lineTo(53, 0); letters.lineTo(58, 4); letters.lineTo(58, 12);
-        letters.lineTo(53, 16); letters.lineTo(45, 16); letters.closeSubPath();
-        e(64);
-        letters.startNewSubPath(81, 16); letters.lineTo(81, 0); letters.lineTo(91, 0); letters.lineTo(94, 3);
-        letters.lineTo(94, 6); letters.lineTo(91, 9); letters.lineTo(82, 9);
-        letters.startNewSubPath(88, 9); letters.lineTo(95, 16);
-        letters.startNewSubPath(101, 0); letters.lineTo(101, 16);
-        letters.startNewSubPath(107, 16); letters.lineTo(113, 0); letters.lineTo(116, 0); letters.lineTo(122, 16);
-        letters.startNewSubPath(110, 10); letters.lineTo(119, 10);
-        const auto place = juce::AffineTransform::translation(bounds.getCentreX() - 61.0f, 15.0f);
+        e(firstE, 28);
+        d.startNewSubPath(45, 0); d.lineTo(53, 0); d.lineTo(58, 4); d.lineTo(58, 12); d.lineTo(53, 16); d.lineTo(45, 16); d.closeSubPath();
+        e(rest, 64);
+        rest.startNewSubPath(81, 16); rest.lineTo(81, 0); rest.lineTo(91, 0); rest.lineTo(94, 3);
+        rest.lineTo(94, 6); rest.lineTo(91, 9); rest.lineTo(82, 9);
+        rest.startNewSubPath(88, 9); rest.lineTo(95, 16);
+        rest.startNewSubPath(101, 0); rest.lineTo(101, 16);
+        rest.startNewSubPath(107, 16); rest.lineTo(113, 0); rest.lineTo(116, 0); rest.lineTo(122, 16);
+        rest.startNewSubPath(110, 10); rest.lineTo(119, 10);
+        juce::Path letters(firstE);
+        letters.addPath(d);
+        letters.addPath(rest);
+        const juce::PathStrokeType stroke(2.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::square);
+        const auto inked = [&](const juce::Path& p) {
+            juce::Path outline;
+            stroke.createStrokedPath(outline, p);
+            return outline.getBounds();
+        };
+        // The mark, in the units of its drawing (a square of 110.4 from 9.8, 10.3).
+        juce::Path mark;
+        mark.startNewSubPath(17, 26); mark.lineTo(110, 26); mark.lineTo(110, 43); mark.lineTo(49, 86);
+        mark.lineTo(24, 86); mark.lineTo(24, 80); mark.lineTo(82, 39); mark.lineTo(17, 39); mark.closeSubPath();
+        mark.startNewSubPath(18, 94); mark.lineTo(81, 94); mark.lineTo(96, 82); mark.lineTo(113, 82);
+        mark.lineTo(113, 91); mark.lineTo(96, 105); mark.lineTo(18, 105); mark.closeSubPath();
+        mark.setUsingNonZeroWinding(false);
+        // Fitted to the inked capitals: as tall as the E from its top edge to its baseline, and as far
+        // from the E as the E is from the D. The whole word is centred on the plate.
+        const auto capital = inked(firstE), shape = mark.getBounds();
+        const float scale = capital.getHeight() / shape.getHeight();
+        const float markRight = capital.getX() - (inked(d).getX() - capital.getRight());
+        const float wordLeft = markRight - shape.getWidth() * scale, wordRight = inked(letters).getRight();
+        const auto fit = juce::AffineTransform::translation(-shape.getRight(), -shape.getY()).scaled(scale).translated(markRight, capital.getY());
+        const auto place = juce::AffineTransform::translation(bounds.getCentreX() - (wordLeft + wordRight) * 0.5f, 16.0f);
         pg.setColour(t.lamp);
-        pg.fillPath(z, place);
+        pg.fillPath(mark, fit.followedBy(place));
         pg.setColour(t.text);
-        pg.strokePath(letters, juce::PathStrokeType(2.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::square), place.translated(0.0f, 1.0f));
+        pg.strokePath(letters, stroke, place);
     });
     auto readout = bounds.toFloat().reduced(14.0f, 0.0f).removeFromBottom(27.0f).withHeight(17.0f);
     drawText(g, "VOICES", readout.removeFromLeft(42.0f), kTextSmall, t.textDim, juce::Justification::centredLeft, true);

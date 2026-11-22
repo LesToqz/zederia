@@ -400,6 +400,36 @@ TEST_CASE("editor: page tabs are announced as selected, move with the arrow keys
     CHECK(local->tab(local->selected()).createAccessibilityHandler()->getCurrentState().isChecked());
 }
 
+TEST_CASE("editor: the focus outline is for the keyboard, not for a click, code run by a click or the window coming back", "[editor][focus]") {
+    // The focus callbacks as the framework calls them (no window here, and no key held while this runs).
+    zui::Button button("Copy prompt");
+    juce::Component& part = button;
+    // Code moves the focus after a click (Copy prompt keeps it, the setup panel gives it to its first
+    // tab, Client setup takes it back when the panel closes): no outline.
+    part.focusGained(juce::Component::focusChangedDirectly);
+    CHECK_FALSE(button.focusCueShown());
+    // Tab brings it: the outline.
+    part.focusLost(juce::Component::focusChangedByTabKey);
+    part.focusGained(juce::Component::focusChangedByTabKey);
+    CHECK(button.focusCueShown());
+    // The window goes behind another one (taken away as by a click, nothing focused) and comes back:
+    // the outline is as it was.
+    part.focusLost(juce::Component::focusChangedByMouseClick);
+    part.focusGained(juce::Component::focusChangedDirectly);
+    CHECK(button.focusCueShown());
+    // A click: no outline, and still none when the window comes back afterwards (a clicked piano roll).
+    part.focusGained(juce::Component::focusChangedByMouseClick);
+    CHECK_FALSE(button.focusCueShown());
+    part.focusLost(juce::Component::focusChangedByMouseClick);
+    part.focusGained(juce::Component::focusChangedDirectly);
+    CHECK_FALSE(button.focusCueShown());
+    // Code that moves the focus to another part and later back (not the window): judged afresh.
+    part.focusGained(juce::Component::focusChangedByTabKey);
+    part.focusLost(juce::Component::focusChangedDirectly);
+    part.focusGained(juce::Component::focusChangedDirectly);
+    CHECK_FALSE(button.focusCueShown());
+}
+
 TEST_CASE("editor: the dock's open graph keeps its name and tab while the routing selection changes", "[editor][dock][modulation]") {
     Rig rig;
     rig.editor->showPage(ZederiaEditor::Synth);
@@ -432,6 +462,29 @@ TEST_CASE("editor: the dock's open graph keeps its name and tab while the routin
     CHECK_FALSE(chips["env2"]->isOpen());
     REQUIRE(cutoff->arcs().size() == 1);
     CHECK(cutoff->arcs()[0].selected);
+    // No chip draws in its source's colour along its edges: no ring around the routing selection
+    // (Env 2) or the open tab (LFO 2), no bar under a macro that is not at zero.
+    rig.processor.session().setValue(idx("macro1.value"), 0.3);
+    rig.frames(3);
+    REQUIRE(chips.count("macro1") == 1);
+    const auto image = zui::renderSnapshot(*rig.editor);
+    const auto edgeInk = [&](zui::DragChip& chip) {
+        const juce::Colour ink = rig.ctx().sourceColour(chip.source());
+        const auto box = rig.editor->getLocalArea(&chip, chip.getLocalBounds());
+        int count = 0;
+        for (int y = box.getY(); y < box.getBottom(); ++y)
+            for (int x = box.getX(); x < box.getRight(); ++x) {
+                if (box.reduced(3).contains(x, y))
+                    continue; // the dot and the grip inside may wear the colour
+                const auto p = image.getPixelAt(x, y);
+                if (std::abs(p.getRed() - ink.getRed()) + std::abs(p.getGreen() - ink.getGreen()) + std::abs(p.getBlue() - ink.getBlue()) < 90)
+                    ++count;
+            }
+        return count;
+    };
+    CHECK(edgeInk(*chips["env2"]) == 0);
+    CHECK(edgeInk(*chips["lfo2"]) == 0);
+    CHECK(edgeInk(*chips["macro1"]) == 0);
     rig.snapshot("dock_lfo2_open_env2_routing");
 }
 
