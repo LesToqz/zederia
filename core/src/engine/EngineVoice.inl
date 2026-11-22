@@ -24,7 +24,7 @@ void aimLanes(LaneSet& s, const OscShared& o, const TableData& table, const Lane
               double baseInc, bool snap) {
     if (!snap && s.settled && !s.levelFade && s.aimedBase == baseInc && s.aimedLanes == &t && s.aimedEpoch == t.epoch &&
         s.aimedTable == &table && s.aimedRatio == ratio && s.aimedRate == o.oversample && s.aimedCount == o.padded &&
-        s.lanes.count == o.count) {
+        s.lanes.count == o.count && s.aimedMode[0] == o.mode[0] && s.aimedMode[1] == o.mode[1]) {
         // The same targets again and every ramp has arrived: the lanes hold where they are.
         if (!s.stepsZero) {
             osc::Lanes& H = s.lanes;
@@ -42,6 +42,9 @@ void aimLanes(LaneSet& s, const OscShared& o, const TableData& table, const Lane
     s.aimedRatio = ratio;
     s.aimedRate = o.oversample;
     s.aimedCount = o.padded;
+    const bool jumpA = snap || s.aimedMode[0] != o.mode[0], jumpB = snap || s.aimedMode[1] != o.mode[1];
+    s.aimedMode[0] = o.mode[0];
+    s.aimedMode[1] = o.mode[1];
     osc::Lanes& L = s.lanes;
     L.count = o.count;
     const float maxFrame = static_cast<float>(table.frames() - 1);
@@ -65,6 +68,10 @@ void aimLanes(LaneSet& s, const OscShared& o, const TableData& table, const Lane
         } else {
             ramp(L.fpos[l], L.fposStep[l], s.fposT[l], frame);
         }
+        if (jumpA) // a new mode: its value starts where it belongs instead of gliding from the old scale
+            L.dA[l] = t.d[0][l];
+        if (jumpB)
+            L.dB[l] = t.d[1][l];
         ramp(L.dA[l], L.dAStep[l], s.dAT[l], t.d[0][l]);
         ramp(L.dB[l], L.dBStep[l], s.dBT[l], t.d[1][l]);
         ramp(L.gL[l], L.gLStep[l], s.gLT[l], t.gL[l]);

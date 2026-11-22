@@ -314,6 +314,13 @@ void renderImpl(zed::osc::Lanes& L, const zed::osc::Block& B) {
                 p = warpPhaseV(B.modeA, p, dA, mA, B.curveA, gain);
             if (B.modeB != WarpMode::Off)
                 p = warpPhaseV(B.modeB, p, dB, mB, B.curveB, gain);
+            // The read stays inside the table whatever the warps returned: a warp value still on
+            // its way from another mode's scale, or a modulator that is not a number, once sent the
+            // phase far outside 0..1 and the read through unmapped memory (an access violation
+            // under fast host automation). In range this changes nothing; NaN reads as 0 in every
+            // copy of the kernel (min and max return their second operand for NaN).
+            if (B.modeA != WarpMode::Off || B.modeB != WarpMode::Off)
+                p = S::min(S::max(p, k(0.0f)), k(1.0f));
 
             F y;
             if (B.classic) {

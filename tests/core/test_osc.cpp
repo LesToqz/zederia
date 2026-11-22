@@ -2,6 +2,7 @@
 // the wide kernels against the scalar reference, phase controls, warp modes and cross-modulation.
 #include "../support/Analysis.h"
 #include "../support/TestUtil.h"
+#include "zederia/dsp/Simd.h"
 #include "zederia/engine/OscKernel.h"
 #include "zederia/util/Math.h"
 
@@ -9,6 +10,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 
 using namespace zed;
 using Catch::Approx;
@@ -440,6 +445,78 @@ TEST_CASE("kernel: the reference read of a table matches what the oscillator pla
         const double expected = table->read(level, 0.6, (phase >> 8) / 16777216.0);
         CHECK(out[s] == Approx(expected).margin(2e-5));
         phase += static_cast<std::uint32_t>(inc * 4294967296.0f);
+    }
+}
+
+TEST_CASE("kernel: no warp value sends the read outside the table", "[osc][warp][safety]") {
+    // A warp mode that changed while its value was still on another mode's scale (quantize's 1024
+    // steps read as a curve amount), or a modulator that is not a number, used to put the phase far
+    // outside 0..1; the kernels then read beyond the table, which under fast host automation ended
+    // the host with an access violation (pluginval's Automation stage, 2026-11-23). The table sits
+    // here in the middle of memory filled with 1e30, so any read outside it shows in the output.
+    const auto table = TableData::build(TableData::builtinWavetable());
+    const int level = 0;
+    const auto& lv = table->level(level);
+    const std::size_t used = table->sizeInBytes() / sizeof(float);
+    const std::size_t margin = static_cast<std::size_t>(lv.size) * 1100; // beyond what d = 1024 reaches
+    std::vector<float> memory(margin + used + margin, 1.0e30f);
+    std::memcpy(memory.data() + margin, table->data(), table->sizeInBytes());
+    const float* inTable = memory.data() + margin;
+
+    struct Case {
+        const char* name;
+        osc::WarpMode mode;
+        float d;
+        float modulator;
+    };
+    const float notANumber = std::numeric_limits<float>::quiet_NaN();
+    const Case cases[] = {
+        {"curve with a quantize value", osc::WarpMode::CurveFull, 1024.0f, 0.0f},
+        {"curve quad with a sync value", osc::WarpMode::CurveQuad, 16.0f, 0.0f},
+        {"mirror with a quantize value", osc::WarpMode::Mirror, 1024.0f, 0.0f},
+        {"skew with a negative value", osc::WarpMode::SkewMinus, -3.0f, 0.0f},
+        {"quantize with no steps", osc::WarpMode::Quantize, 0.0f, 0.0f},
+        {"phase modulation by NaN", osc::WarpMode::Pm, 4.0f, notANumber},
+    };
+    std::vector<std::pair<const char*, osc::RenderFn>> kernels = {{"scalar", osc::renderScalar}, {"sse2", osc::renderSse2}};
+    if (dsp::cpuHasAvx2())
+        kernels.push_back({"avx2", osc::renderAvx2});
+    for (const auto& c : cases) {
+        for (const auto& [kernelName, render] : kernels) {
+            osc::Lanes lanes{};
+            lanes.count = 8;
+            float modulator[osc::kMaxRun];
+            std::fill(std::begin(modulator), std::end(modulator), c.modulator);
+            for (int l = 0; l < osc::kMaxLanes; ++l) {
+                lanes.phase[l] = static_cast<std::uint32_t>(l) * 0x1F3D5B79u;
+                lanes.inc[l] = 0.003f + 0.0007f * static_cast<float>(l);
+                lanes.fpos[l] = 0.5f;
+                lanes.dA[l] = c.d;
+                lanes.gL[l] = l < 8 ? 0.125f : 0.0f;
+                lanes.tabOff[l] = lanes.tabOff2[l] = static_cast<float>(lv.offset);
+                lanes.tabStride[l] = lanes.tabStride2[l] = static_cast<float>(lv.stride);
+                lanes.tabSize[l] = lanes.tabSize2[l] = static_cast<float>(lv.size);
+            }
+            float out[osc::kMaxRun];
+            osc::Block block;
+            block.samples = osc::kMaxRun;
+            block.table = inTable;
+            block.maxFrame = static_cast<float>(table->frames() - 1);
+            block.modeA = c.mode;
+            block.modA = c.modulator != 0.0f || c.modulator != c.modulator ? modulator : nullptr;
+            block.curveA = osc::defaultWarpCurve();
+            block.outL = out;
+            render(lanes, block);
+            float peak = 0.0f;
+            bool finite = true;
+            for (const float v : out) {
+                finite = finite && std::isfinite(v);
+                peak = std::max(peak, std::abs(v));
+            }
+            INFO(c.name << ", " << kernelName << " kernel");
+            CHECK(finite);
+            CHECK(peak <= 1.5f); // eight lanes at 1/8 reading a table that peaks near 1
+        }
     }
 }
 
