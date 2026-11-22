@@ -73,6 +73,7 @@ int quantize(int note, const Key& key, int direction = 0);
 
 inline constexpr int kMaxAgentClipNotes = 2048;
 inline constexpr double kMaxClipBars = 64.0;
+inline constexpr double kMinClipBeats = 1.0 / 16.0; // the clip player plays nothing shorter
 
 struct ClipIssue {
     bool error = false;  // errors make the clip unusable; warnings are notes for the agent

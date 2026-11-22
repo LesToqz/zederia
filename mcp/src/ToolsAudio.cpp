@@ -63,7 +63,9 @@ struct Job {
 };
 
 void trimSilence(std::vector<float>& l, std::vector<float>& r, double sr, std::size_t keepAtLeast) {
-    const float floor = 3.2e-5f; // -90 dBFS
+    // -100 dBFS: the floor the analysis measures a tail down to (tail_complete), so a render that
+    // ends here reports its tail as complete.
+    const float floor = 1.0e-5f;
     std::size_t end = std::min(l.size(), r.size());
     while (end > keepAtLeast && std::abs(l[end - 1]) < floor && std::abs(r[end - 1]) < floor)
         --end;
@@ -100,7 +102,9 @@ Rendered runRender(Bridge& bridge, const Job& job, Call& call, double from, doub
         out.right = std::move(result.right);
         return out;
     }
-    const auto loopLen = static_cast<std::size_t>(std::llround(job.loopSeconds * result.sampleRate));
+    // At least one sample: the fold below wraps by the loop's length (a clip file edited by hand
+    // can be shorter than write_clip allows).
+    const auto loopLen = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(job.loopSeconds * result.sampleRate)));
     result.left.resize(std::max(result.left.size(), loopLen));
     result.right.resize(std::max(result.right.size(), loopLen));
     out.left.assign(result.left.begin(), result.left.begin() + static_cast<std::ptrdiff_t>(loopLen));
@@ -306,12 +310,15 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              for (const auto& n : job.notes)
                                  end = std::max(end, n.start + n.duration);
                              checkLength(end, isClip ? "/clip" : "/notes");
+                             // The folder goes through the sandbox and the write permission before any work,
+                             // the default Renders folder included.
+                             const std::string folder = argString(a, "folder", "");
+                             const fs::path dir = bridge.resolveWrite((folder.empty() ? std::string() : folder + "/") + "x.wav", {".wav"},
+                                                                      folder.empty() ? "" : "/folder", bridge.userDir() / "Renders")
+                                                      .parent_path();
                              std::vector<std::string> problems;
                              call.progress(0.0, "rendering");
                              const Rendered r = runRender(bridge, job, call, 0.0, 0.95, problems);
-                             std::string folder = argString(a, "folder", "");
-                             const fs::path dir = folder.empty() ? bridge.userFolder("Renders")
-                                                                 : bridge.resolveWrite(folder + "/x.wav", {".wav"}, "/folder", bridge.userFolder("Renders")).parent_path();
                              std::string stem = argString(a, "name", "");
                              if (stem.empty()) {
                                  if (isClip) {
@@ -544,8 +551,11 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              fail("", "the pack would have " + std::to_string(total) + " files; at most " + std::to_string(kMaxPackFiles) + " per call",
                                   "export fewer presets, clips or keys per call");
                          double seconds = 0.0;
-                         for (const auto& c : clips)
-                             seconds += c.lengthBeats() * 60.0 / argNumber(a, "tempo", c.tempo) * std::max<std::size_t>(1, keys.size());
+                         for (std::size_t i = 0; i < clips.size(); ++i) {
+                             const double loop = clips[i].lengthBeats() * 60.0 / argNumber(a, "tempo", clips[i].tempo);
+                             checkLength(loop, "/clips/" + std::to_string(i)); // each file is one render
+                             seconds += loop * static_cast<double>(std::max<std::size_t>(1, keys.size()));
+                         }
                          seconds += argNumber(os, "length_s", 2.0) * static_cast<double>(osNotes.size()) +
                                     argNumber(ms, "length_s", 3.0) * static_cast<double>(msNotes.size() * velocities.size());
                          if (seconds * static_cast<double>(patches.size()) > kMaxPackSeconds)
@@ -559,7 +569,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              std::vector<std::string> problems;
                              const double from = static_cast<double>(done) / static_cast<double>(total);
                              const Rendered r = runRender(bridge, job, call, from, from + 1.0 / static_cast<double>(total), problems);
-                             Written w = writeRender(r, dir, stem, args, clip, sources[0], problems);
+                             Written w = writeRender(r, dir, stem, args, clip, extra.value("preset", sources[0]), problems);
                              extra["file"] = w.info["file"];
                              extra["kind"] = kind;
                              if (w.info.contains("midi_file"))

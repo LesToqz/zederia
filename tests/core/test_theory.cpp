@@ -133,6 +133,15 @@ TEST_CASE("theory: clip checks report range, overlaps, key and bar length", "[th
     c.notes = {{0.0, 1.0, 65, 0.8}};
     c.bars = 2.5;
     CHECK(validateClip(c, k).front().code == "partial_bar");
+    CHECK(validateClip(c, k).front().message.find("(2.5 bars)") != std::string::npos); // no "2.500000"
+    // Shorter than the clip player's 1/16 of a beat: refused here, so no loop of zero samples is
+    // ever rendered from it.
+    c.bars = 0.00001;
+    c.beatsPerBar = 1;
+    CHECK(validateClip(c, k).front().code == "too_short");
+    CHECK(validateClip(c, k).front().error);
+    c.bars = 1.0 / 16.0;
+    CHECK(validateClip(c, k).front().code != "too_short");
 }
 
 TEST_CASE("theory: transposing clips and naming files", "[theory]") {

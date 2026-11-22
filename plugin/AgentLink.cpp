@@ -79,13 +79,18 @@ bool AgentLink::setEnabled(bool on, std::string& error) {
     if (juce::PluginHostType::getPluginLoadedAs() == juce::AudioProcessor::wrapperType_Standalone)
         d.host = "Standalone";
     d.name = "Zederia in " + d.host;
-    if (!server_.start(d.pipe, [this](const std::string& line) { return handleLine(line); }, error))
-        return false;
-    if (!zed::link::writeDiscovery(d, error)) {
-        server_.stop();
+    // Set before the pipe opens: its thread reads the token from the first request on, and the
+    // pipe thread is stopped (joined) whenever this changes.
+    discovery_ = d;
+    if (!server_.start(d.pipe, [this](const std::string& line) { return handleLine(line); }, error)) {
+        discovery_ = {};
         return false;
     }
-    discovery_ = d;
+    if (!zed::link::writeDiscovery(d, error)) {
+        server_.stop();
+        discovery_ = {};
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lock(infoMutex_);
         activity_.push_back({juce::Time::getCurrentTime(), "", "Agent Link switched on"});
@@ -100,11 +105,13 @@ std::string AgentLink::handleLine(const std::string& line) {
     const J request = J::parse(line, nullptr, false);
     if (!request.is_object())
         return failure("the request is not JSON", "update zederia-mcp to this instance's version").dump();
-    J reply = failure("", "");
-    reply["id"] = request.value("id", J());
-    if (request.value("v", 0) != zed::link::kLinkProtocol)
+    // Checked by type: a field of the wrong type is refused like a wrong value, never thrown (this
+    // runs on the pipe thread, where an exception would end the host).
+    const auto v = request.find("v");
+    if (v == request.end() || !v->is_number_integer() || v->get<long long>() != zed::link::kLinkProtocol)
         return failure("the link protocol versions differ", "use zederia-mcp from the same Zederia version").dump();
-    if (!sameToken(request.value("token", ""), discovery_.token))
+    const auto token = request.find("token");
+    if (token == request.end() || !token->is_string() || !sameToken(token->get<std::string>(), discovery_.token))
         return failure("the token is wrong", "read the instance's current discovery file (list_targets)").dump();
     auto job = std::make_shared<Job>();
     job->requestText = line;
@@ -289,11 +296,13 @@ std::string AgentLink::run(const J& request) {
             return failure("auditioning is switched off", "the user can allow it on the AGENT page").dump();
         std::vector<zed::NoteSpec> notes;
         for (const auto& n : params.value("notes", J::array()))
-            notes.push_back({std::clamp(n.value("note", 60), 0, 127), std::max(0.0, n.value("start", 0.0)),
+            notes.push_back({std::clamp(n.value("note", 60), 0, 127), std::clamp(n.value("start", 0.0), 0.0, 30.0),
                              std::clamp(n.value("duration", 0.5), 0.01, 30.0), std::clamp(n.value("velocity", 0.8), 0.0, 1.0)});
         if (notes.empty() || notes.size() > 512)
             return failure("an audition needs 1 to 512 notes", "send fewer notes", "/notes").dump();
-        p_.audition(notes, static_cast<float>(zed::dbToGain(std::clamp(params.value("cap_db", perms.auditionCapDb), -60.0, 0.0))));
+        // A client may ask for a lower cap, never a higher one than the user set on the AGENT page.
+        const double cap = std::min(perms.auditionCapDb, params.value("cap_db", perms.auditionCapDb));
+        p_.audition(notes, static_cast<float>(zed::dbToGain(std::clamp(cap, -60.0, 0.0))));
         note(client, client + ": audition (" + std::to_string(notes.size()) + " notes)", false);
         return ok({{"played", notes.size()}});
     }

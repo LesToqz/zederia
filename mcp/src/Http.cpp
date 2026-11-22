@@ -149,7 +149,7 @@ struct HttpServer::Impl {
             jsonReply(res, 400, Server::error(J(), kInvalidRequest, m.is_array() ? "Invalid request: batches are not supported" : "Invalid request"));
             return;
         }
-        const std::string method = m.value("method", "");
+        const std::string method = argString(m, "method"); // not text: refused by Server::handle
         const bool isRequest = m.contains("id") && !m["id"].is_null();
         const J id = isRequest ? m["id"] : J();
         const Server::Era era = Server::eraOf(m);
@@ -164,7 +164,7 @@ struct HttpServer::Impl {
         std::string sessionId;
         if (era == Server::Era::Modern) {
             const J& params = m["params"];
-            const std::string version = params["_meta"].value("io.modelcontextprotocol/protocolVersion", "");
+            const std::string version = argString(params["_meta"], "io.modelcontextprotocol/protocolVersion");
             const auto mismatch = [&](const std::string& what) {
                 jsonReply(res, 400, Server::error(id, kHeaderMismatch, "Header mismatch: " + what));
             };
@@ -177,7 +177,7 @@ struct HttpServer::Impl {
             if (req.get_header_value("Mcp-Method") != method)
                 return mismatch("Mcp-Method header value '" + req.get_header_value("Mcp-Method") + "' does not match body value '" + method + "'");
             if (method == "tools/call" || method == "prompts/get" || method == "resources/read") {
-                const std::string body = method == "resources/read" ? params.value("uri", "") : params.value("name", "");
+                const std::string body = method == "resources/read" ? argString(params, "uri") : argString(params, "name");
                 std::string header;
                 if (!req.has_header("Mcp-Name"))
                     return mismatch("the Mcp-Name header is missing");
@@ -276,8 +276,15 @@ struct HttpServer::Impl {
                                   m["params"]["_meta"].is_object() && m["params"]["_meta"].contains("progressToken"));
         auto cancelled = std::make_shared<std::atomic<bool>>(false);
         if (!sessionId.empty()) {
+            // find, never operator[]: a DELETE since the lookup above must not bring the session
+            // back without its channel.
             std::lock_guard<std::mutex> lock(mutex);
-            sessions[sessionId].active[id.dump()] = cancelled;
+            auto it = sessions.find(sessionId);
+            if (it == sessions.end()) {
+                jsonReply(res, 404, Server::error(id, kInvalidRequest, "Session not found: start a new one with initialize"));
+                return;
+            }
+            it->second.active[id.dump()] = cancelled;
         }
         const auto forget = [this, sessionId, id] {
             if (sessionId.empty())
@@ -381,7 +388,14 @@ bool HttpServer::start(std::string& error) {
     http.set_read_timeout(30, 0);
     http.set_write_timeout(30, 0);
     http.set_keep_alive_max_count(100);
-    http.Post(o.path, [this](const httplib::Request& req, httplib::Response& res) { impl_->post(req, res); });
+    http.Post(o.path, [this](const httplib::Request& req, httplib::Response& res) {
+        // A message the checks let through and that still throws is the client's fault, not a 500.
+        try {
+            impl_->post(req, res);
+        } catch (const std::exception& e) {
+            jsonReply(res, 400, Server::error(J(), kInvalidRequest, std::string("Invalid request: ") + e.what()));
+        }
+    });
     http.Get(o.path, [this](const httplib::Request& req, httplib::Response& res) {
         if (!impl_->admit(req, res))
             return;

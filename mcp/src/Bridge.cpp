@@ -5,6 +5,7 @@
 #include "zederia/table/TableData.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cwctype>
 #include <fstream>
@@ -142,7 +143,8 @@ struct Bridge::Session {
     std::string name;
     Patch current, start;
     zed::History history;
-    std::chrono::steady_clock::time_point lastUsed = std::chrono::steady_clock::now();
+    // Read by the pruning under the list's lock, written under the session's own: atomic.
+    std::atomic<std::chrono::steady_clock::rep> lastUsed{std::chrono::steady_clock::now().time_since_epoch().count()};
     std::int64_t created = 0;
     std::string client;
 };
@@ -225,7 +227,8 @@ fs::path Bridge::resolveWrite(const std::string& input, const std::vector<std::s
 void Bridge::prune() {
     const auto now = std::chrono::steady_clock::now();
     for (auto it = sessions_.begin(); it != sessions_.end();) {
-        if (now - it->second->lastUsed > kSessionIdle)
+        const std::chrono::steady_clock::time_point used{std::chrono::steady_clock::duration{it->second->lastUsed.load()}};
+        if (now - used > kSessionIdle)
             it = sessions_.erase(it);
         else
             ++it;
@@ -241,7 +244,7 @@ std::string Bridge::openSession(const Patch& start, const std::string& name, con
     do
         id = "session:" + zed::link::randomHex(4);
     while (sessions_.count(id));
-    auto s = std::make_unique<Session>();
+    auto s = std::make_shared<Session>();
     s->name = name.empty() ? start.meta.name : name;
     s->current = start;
     s->start = start;
@@ -279,20 +282,20 @@ void Bridge::closeSession(const std::string& target) {
         fail("/target", "no session \"" + target + "\"", "call list_targets to see what is open");
 }
 
-Bridge::Session* Bridge::findSession(const std::string& target, std::unique_lock<std::mutex>& lock) {
-    Session* s = nullptr;
+Bridge::SessionRef Bridge::findSession(const std::string& target) {
+    SessionRef ref;
     {
         std::lock_guard<std::mutex> mapLock(mutex_);
         auto it = sessions_.find(target);
         if (it != sessions_.end())
-            s = it->second.get();
+            ref.keep = it->second;
     }
-    if (!s)
+    if (!ref.keep)
         fail("/target", "no session \"" + target + "\" (sessions end when the server restarts or after 2 hours unused)",
              "open a new one with open_session");
-    lock = std::unique_lock<std::mutex>(s->mutex);
-    s->lastUsed = std::chrono::steady_clock::now();
-    return s;
+    ref.lock = std::unique_lock<std::mutex>(ref.keep->mutex);
+    ref.keep->lastUsed = std::chrono::steady_clock::now().time_since_epoch().count();
+    return ref;
 }
 
 bool Bridge::findLive(const std::string& target, zed::link::Discovery& out) const {
@@ -378,8 +381,7 @@ J Bridge::listTargets() {
 
 Patch Bridge::patch(const std::string& target, const Call& call) {
     if (isSession(target)) {
-        std::unique_lock<std::mutex> lock;
-        Session* s = findSession(target, lock);
+        const auto s = findSession(target);
         return s->current;
     }
     if (isLive(target)) {
@@ -400,8 +402,7 @@ Bridge::EditResult Bridge::edit(const std::string& target, const Call& call, con
     EditResult r;
     const std::string stepLabel = call.client + ": " + label;
     if (isSession(target)) {
-        std::unique_lock<std::mutex> lock;
-        Session* s = findSession(target, lock);
+        const auto s = findSession(target);
         r.before = s->current;
         r.after = s->current;
         change(r.after);
@@ -447,8 +448,7 @@ J Bridge::history(const std::string& target, const Call& call, const std::string
             fail("/target", "editing the instance's patch is switched off", "the user can allow it on the AGENT page (Permissions)");
         return liveRequest(target, "history", {{"action", action}, {"step", step}}, call);
     }
-    std::unique_lock<std::mutex> lock;
-    Session* s = findSession(target, lock);
+    const auto s = findSession(target);
     auto& h = s->history;
     if (action == "undo") {
         if (const Patch* p = h.undo())
@@ -536,7 +536,9 @@ std::string Bridge::saveClip(const zed::Clip& clip, const std::string& id) {
     std::string use = id;
     if (use.empty())
         use = "clip:" + zed::link::randomHex(4);
-    const fs::path file = userFolder("Clips/Agent") / pathFromUtf8(use.substr(5) + ".json");
+    // Through the sandbox and the AGENT page's "write inside Zederia's folders" switch, like every
+    // other file the server writes.
+    const fs::path file = resolveWrite("Clips/Agent/" + use.substr(5) + ".json", {".json"}, id.empty() ? "" : "/clip_id", userDir());
     std::ofstream f(file, std::ios::binary);
     f << clipJson(clip).dump(1);
     if (!f)

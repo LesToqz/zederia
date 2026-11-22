@@ -7,7 +7,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <thread>
 
 #include <fstream>
 #include <regex>
@@ -408,6 +410,16 @@ TEST_CASE("mcp: the file sandbox", "[mcp][safety][sandbox]") {
     REQUIRE(zed::link::savePermissions(p, error));
     e = rig.error("save_preset", {{"target", t}, {"name", "Blocked"}});
     CHECK(anyText(e, "switched off"));
+    // Clips and renders too, the default Renders folder included: before the pre-milestone-7 audit
+    // both wrote their files while writing was off.
+    e = rig.error("write_clip", {{"name", "blocked"}, {"bars", 1}, {"tempo", 120}, {"notes", {{{"start", 0}, {"length", 1}, {"key", 60}}}}});
+    CHECK(anyText(e, "switched off"));
+    e = rig.error("render_audio", {{"target", t}, {"notes", {{{"note", 60}, {"start", 0}, {"length", 0.1}}}}});
+    CHECK(anyText(e, "switched off"));
+    for (const char* sub : {"Clips", "Renders"}) {
+        INFO(sub);
+        CHECK((!fs::exists(user / sub) || fs::is_empty(user / sub) || fs::is_empty(user / sub / "Agent")));
+    }
     // An allowed read folder opens the outside file.
     p = zed::link::Permissions{};
     p.readFolders = {(rig.root / "outside").string()};
@@ -464,4 +476,92 @@ TEST_CASE("mcp: long renders report progress and stop when cancelled", "[mcp][ca
         reply = nullptr;
     }
     CHECK(reply.is_null());
+}
+
+// Fixes from the audit before milestone 7 (2026-11-22, docs/STATUS.md).
+TEST_CASE("mcp: clips, rates, paging, tails and pack limits from the pre-release audit", "[mcp][tools][audit]") {
+    Rig rig("audit");
+    const fs::path clips = rig.root / "user" / "Clips" / "Agent";
+    const auto clipFiles = [&] {
+        std::size_t n = 0;
+        std::error_code ec;
+        if (fs::exists(clips, ec))
+            for (const auto& e : fs::directory_iterator(clips, ec))
+                n += e.is_regular_file() ? 1 : 0;
+        return n;
+    };
+    const J oneNote = J::array({{{"start", 0}, {"length", 1}, {"key", 60}}});
+    // A clip shorter than the clip player's 1/16 of a beat is refused (it rendered as a loop of no
+    // samples and divided by zero).
+    auto e = rig.error("write_clip", {{"name", "tiny"}, {"bars", 0.00001}, {"beats_per_bar", 1}, {"tempo", 400},
+                                      {"notes", {{{"start", 0}, {"length", 0.000001}, {"key", 60}}}}});
+    CHECK(anyText(e, "1/16"));
+    // A refused target or slot writes no clip.
+    e = rig.error("write_clip", {{"name", "lost"}, {"bars", 1}, {"tempo", 120}, {"notes", oneNote}, {"slot", 2}});
+    CHECK(anyPath(e, "/slot"));
+    e = rig.error("write_clip", {{"name", "lost"}, {"bars", 1}, {"tempo", 120}, {"notes", oneNote}, {"target", "session:00000000"}});
+    CHECK(anyPath(e, "/target"));
+    CHECK(clipFiles() == 0);
+    // Summaries say fractional bars as they are.
+    const J half = rig.call("write_clip", {{"name", "half"}, {"bars", 1.5}, {"tempo", 120}, {"notes", oneNote}});
+    CHECK(half["content"][0]["text"].get<std::string>().find("1.5 bar(s)") != std::string::npos);
+    CHECK(clipFiles() == 1);
+
+    // A note length for an LFO rate switches the LFO to synced at that division.
+    const std::string t = rig.ok("open_session", J::object())["target"];
+    const J set = rig.ok("set_params", {{"target", t}, {"params", {{{"id", "lfo2.rate"}, {"value", "1/8D"}}}}});
+    CHECK(set["params"][0]["tempo_linked"] == "1/8D");
+    const J lfo = rig.ok("get_patch", {{"target", t}, {"form", "full"}, {"sections", {"lfo2"}}})["patch"]["lfo2"];
+    CHECK(lfo["sync"] == true);
+    CHECK(lfo["division"] == "1/8D");
+    e = rig.error("set_params", {{"target", t}, {"params", {{{"id", "lfo2.rate"}, {"value", "1/7"}}}}});
+    CHECK(anyPath(e, "/params/0/value"));
+
+    // Error texts end each sentence once.
+    const J bad = rig.call("apply_patch", {{"target", t}, {"patch", {{"filter1", {{"cutoff_hz", "not a number"}}}}}});
+    REQUIRE(bad["isError"] == true);
+    CHECK(bad["content"][0]["text"].get<std::string>().find("..") == std::string::npos);
+
+    // An offset beyond int's range is past the end, not a negative index.
+    CHECK(rig.ok("list_presets", {{"offset", 3000000000LL}})["presets"].empty());
+
+    // A quiet render ends where the analysis measures its tail to, so the tail reads complete.
+    rig.ok("set_params", {{"target", t}, {"params", {{{"id", "global.master"}, {"value", "-40 dB"}}}}});
+    const J quiet = rig.ok("render_audio", {{"target", t}, {"units", "seconds"}, {"notes", {{{"note", 60}, {"start", 0}, {"length", 0.2}}}}});
+    CHECK(quiet["analysis"]["time"]["tail_complete"] == true);
+
+    // Each file of a pack is one render, held to the render limit (64 bars at 20 bpm is 768 s).
+    const std::string longClip = rig.ok("write_clip", {{"name", "long"}, {"bars", 64}, {"tempo", 20}, {"notes", oneNote}})["clip_id"];
+    e = rig.error("export_pack", {{"name", "Too Long"}, {"presets", {t}}, {"clips", {longClip}}});
+    CHECK(anyPath(e, "/clips/0"));
+}
+
+TEST_CASE("mcp: closing a session while other requests use it is safe", "[mcp][tools][audit][sessions]") {
+    // Requests that found the session keep it alive until they finish; later ones are told it is
+    // gone. Before the audit fix, close_session could free a session another request had locked.
+    Rig rig("close_race");
+    for (int round = 0; round < 8; ++round) {
+        const std::string t = rig.ok("open_session", J::object())["target"];
+        std::atomic<bool> stop{false};
+        std::atomic<int> answered{0};
+        std::vector<std::thread> workers;
+        for (int w = 0; w < 4; ++w)
+            workers.emplace_back([&, w] {
+                for (int i = 0; !stop.load() && i < 200; ++i) {
+                    const J req = {{"jsonrpc", "2.0"}, {"id", w * 1000 + i}, {"method", "tools/call"},
+                                   {"params", {{"name", "set_params"}, {"arguments", {{"target", t}, {"params", {{{"id", "filter1.cutoff"}, {"value", 500 + i}}}}}}, {"_meta", Rig::meta()}}}};
+                    zmcp::RequestInfo info;
+                    const J r = rig.server.handle(req, nullptr, info);
+                    if (r.contains("result"))
+                        ++answered;
+                }
+            });
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        rig.ok("close_session", {{"target", t}});
+        stop = true;
+        for (auto& w : workers)
+            w.join();
+        CHECK(answered.load() > 0);
+        CHECK(rig.call("get_patch", {{"target", t}})["isError"] == true);
+    }
 }
