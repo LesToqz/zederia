@@ -79,6 +79,10 @@ TEST_CASE("live link: a running Standalone takes agent edits and undoes them", "
     REQUIRE(status["live_targets"].size() == 1);
     CHECK(status["live_targets"][0]["status"].value("sample_rate", 0.0) > 0.0);
 
+    // The Standalone reopens the sound its last copy on this computer left (the framework keeps it in
+    // the user's own application data, which the settings folder does not move), so start from Init.
+    const J own = rig.ok("get_patch", {{"target", target}, {"form", "full"}})["patch"];
+    rig.ok("apply_patch", {{"target", target}, {"patch", J::object()}, {"mode", "replace"}});
     const double original = rig.ok("get_patch", {{"target", target}, {"form", "full"}})["patch"]["filter1"]["cutoff_hz"];
     rig.ok("set_params", {{"target", target}, {"params", {{{"id", "filter1.on"}, {"value", true}}, {{"id", "filter1.cutoff"}, {"value", 777}}}}});
     CHECK(rig.ok("get_patch", {{"target", target}, {"form", "full"}})["patch"]["filter1"]["cutoff_hz"].get<double>() == Catch::Approx(777.0));
@@ -92,8 +96,9 @@ TEST_CASE("live link: a running Standalone takes agent edits and undoes them", "
     const J render = rig.ok("render_audio", {{"target", target}, {"notes", {{{"note", 57}, {"start", 0}, {"length", 0.5}}}}});
     CHECK(render["analysis"]["pitch"]["note"] == "A3");
     rig.ok("audition", {{"target", target}, {"notes", {{{"note", 57}, {"start", 0}, {"length", 0.2}, {"velocity", 30}}}}});
+    // Reverting the agent's session brings back the instance's own sound, from before Init.
     rig.ok("history", {{"target", target}, {"action", "revert_agent_session"}});
-    CHECK(rig.ok("get_patch", {{"target", target}, {"form", "full"}})["patch"]["filter1"]["cutoff_hz"].get<double>() == Catch::Approx(original));
+    CHECK(rig.ok("get_patch", {{"target", target}, {"form", "full"}})["patch"] == own);
 }
 #endif
 
