@@ -482,7 +482,7 @@ Antigravity CLI (`agy`) — an `mcp_config.json` with the same `mcpServers` obje
 | Language | C++20 | |
 | Build | CMake ≥ 3.25 with presets, Ninja | |
 | Compiler | MSVC v143 or newer; clang-cl optional | |
-| Plug-in framework | JUCE, newest stable release pinned at setup | Dual-licensed (AGPLv3 or commercial tiers). The licence choice is the owner's decision and must be made before distribution |
+| Plug-in framework | JUCE, newest stable release pinned at setup | Dual-licensed (AGPLv3 or commercial tiers). Used under AGPLv3 (the owner's choice, 2026-11-24): Zederia is released under AGPLv3 |
 | VST3 | SDK bundled with the framework | MIT-licensed since SDK 3.8 |
 | CLAP | Native framework support if the pinned release has it, otherwise the community extensions | |
 | JSON | nlohmann/json | MIT |
@@ -558,8 +558,10 @@ Locations on Windows:
 | Factory content | `%PROGRAMDATA%\Zederia\Factory\` (per-user fallback when not writable) |
 | Settings | `%APPDATA%\Zederia\settings.json` |
 | Cache, logs, link discovery | `%LOCALAPPDATA%\Zederia\` |
-| Tools | `%LOCALAPPDATA%\Programs\Zederia\` |
-| Plug-ins (development installs, no admin rights) | `%LOCALAPPDATA%\Programs\Common\VST3\` and `%LOCALAPPDATA%\Programs\Common\CLAP\` |
+| Plug-ins (the installer, administrator rights) | `C:\Program Files\Common Files\VST3\` and `C:\Program Files\Common Files\CLAP\`, where hosts look without extra folders |
+| Standalone and tools (the installer) | `C:\Program Files\Zederia\` |
+| Tools (development installs) | `%LOCALAPPDATA%\Programs\Zederia\` |
+| Plug-ins (development installs, no admin rights) | `%LOCALAPPDATA%\Programs\Common\VST3\` and `%LOCALAPPDATA%\Programs\Common\CLAP\` (a host must be pointed at them) |
 
 ### 5.7 DSP requirements
 
@@ -654,7 +656,7 @@ Factory content targets for milestone 7: about 60 wavetables and 20 textures gen
 | Protocol revisions keep moving | Protocol confined to `zederia-mcp`; both generations supported; conformance tests per revision |
 | Agents make destructive edits | Transactions, undo labels, revert-session, permissions, sandbox |
 | Parameter list changes break saved projects | Append-only registry, stable hashed ids, migration tests |
-| Framework licence | Recorded at setup; owner decides before distribution |
+| Framework licence | Decided 2026-11-24: JUCE under AGPLv3, Zederia under AGPLv3 (`LICENSE`, `NOTICE`) |
 
 ---
 
