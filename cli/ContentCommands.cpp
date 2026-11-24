@@ -115,6 +115,7 @@ int cmdSoak(const Args& args) {
     options.movesPerSecond = moves;
     options.notesPerSecond = notes;
     options.switchWhileHeld = !args.has("release-before-switch");
+    options.tracePath = args.get("trace-file");
     for (std::string list = args.get("keep-still"); !list.empty();) {
         const std::size_t comma = std::min(list.find(','), list.size());
         if (comma > 0)

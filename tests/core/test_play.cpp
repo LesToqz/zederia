@@ -246,6 +246,45 @@ TEST_CASE("play: a key pressed while nothing shaped the notes ends even if shapi
     }
 }
 
+TEST_CASE("play: a key held when the clip player starts taking keys is released where it went down", "[play][clip][arp]") {
+    // Found by the soak render (milestone 7): a key went down while the arpeggiator took the keys,
+    // then the clip player came on in key-trigger mode; the key's release went to the clip player,
+    // the arpeggiator never heard it and played that key on for good.
+    Patch p = arpPatch("up");
+    p.set("arp.octaves", 3);
+    zedtest::EngineRig rig(p);
+    MidiEvent out[256];
+    int made = 0;
+    std::vector<std::pair<int, int>> starts; // block, key
+    for (int block = 0; block < 100; ++block) {
+        std::vector<MidiEvent> in;
+        if (block == 1)
+            in = {MidiEvent::noteOn(0, 72, 0.8f)};
+        if (block == 20)
+            rig.engine.params().set(zedtest::idx("clip.on"), 1.0); // key trigger: the clip takes the keys from now on
+        if (block == 40)
+            in = {MidiEvent::noteOff(0, 72)};
+        rig.left.resize(512);
+        rig.right.resize(512);
+        ProcessArgs args{rig.left.data(), rig.right.data(), 512, in, Transport{}};
+        args.midiOut = out;
+        args.midiOutCapacity = 256;
+        args.midiOutCount = &made;
+        rig.engine.process(args);
+        for (int i = 0; i < made; ++i)
+            if (out[i].type == MidiEvent::Type::NoteOn)
+                starts.emplace_back(block, out[i].number);
+    }
+    int before = 0, after = 0;
+    for (const auto& [block, key] : starts)
+        (block < 40 ? before : after) += block < 40 || block > 41 ? 1 : 0;
+    CHECK(before >= 3); // the arpeggio of the held key
+    CHECK(after == 0);  // stops when the key comes up
+    for (int b = 0; b < 40; ++b)
+        rig.run(512);
+    CHECK(rig.engine.activeVoices() == 0);
+}
+
 TEST_CASE("play: switching Latch off lets go of the keys released while it was on", "[play][arp]") {
     // Found by the soak render (milestone 7): with Latch on, a key let go stayed in the pattern;
     // when Latch went off while another key was still down, that key never left, so the pattern

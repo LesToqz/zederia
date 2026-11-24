@@ -181,6 +181,7 @@ private:
     bool clipRunning_ = false;
     std::int64_t clipStart_ = 0;
     int clipTranspose_ = 0, clipKey_ = -1, clipKeysDown_ = 0;
+    std::uint8_t clipKeys_[128] = {}; // the keys the clip took (key trigger); only their releases are the clip's
     double clipPos_ = 0.0; // beats into the clip at the start of the block (key trigger)
     bool transportWasPlaying_ = false;
 };

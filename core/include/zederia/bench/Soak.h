@@ -38,6 +38,7 @@ struct SoakOptions {
     bool realtimeQuality = true;  // the quality a host plays at (false: the offline quality)
     bool switchWhileHeld = true;  // half the presets arrive while keys are held (false: every key is let go first)
     std::vector<std::string> keepStill; // parameter id prefixes the moves leave alone ("arp.", "clip.")
+    std::string tracePath; // when set: a text log of the notes sent and made, play-feature moves and preset loads
     ContentLibrary library;
     // Called before every preset; returning false stops the soak early.
     std::function<bool(const SoakProgress&)> progress;

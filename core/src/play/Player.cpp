@@ -102,6 +102,7 @@ void Player::reset(std::uint64_t seed) {
     clipRunning_ = false;
     clipKey_ = -1;
     clipKeysDown_ = 0;
+    std::fill(std::begin(clipKeys_), std::end(clipKeys_), std::uint8_t{0});
     transportWasPlaying_ = false;
 }
 
@@ -193,6 +194,7 @@ void Player::allOff(std::int64_t at) noexcept {
     running_ = false;
     clipRunning_ = false;
     clipKeysDown_ = 0;
+    std::fill(std::begin(clipKeys_), std::end(clipKeys_), std::uint8_t{0});
 }
 
 // --- Chord stage ------------------------------------------------------------------------------------
@@ -602,6 +604,10 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
         if (!s_.clipOn || s_.clipFromKey != before.clipFromKey)
             clipRunning_ = false;
     }
+    if (clipKeysDown_ > 0 && !(s_.clipOn && s_.clipFromKey)) { // the clip no longer takes keys: its keys are let go
+        std::fill(std::begin(clipKeys_), std::end(clipKeys_), std::uint8_t{0});
+        clipKeysDown_ = 0;
+    }
     transportWasPlaying_ = transport.playing;
     if (s_.arpOn && transport.playing) { // the host jumped back (a loop): the grid starts over there
         const double gridNow = std::floor(transport.ppqPosition / std::max(s_.stepBeats, 1.0e-6));
@@ -697,7 +703,10 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
                 emit(off, at, kThrough);
                 through_[e.number & 127] = 0;
             }
-            if (s_.clipOn && s_.clipFromKey) { // the keys start and transpose the clip
+            // The keys start and transpose the clip. A key that went down before the clip took the
+            // keys belongs to the chord stage (or the arpeggiator), and its release goes there.
+            const bool clipsKey = on ? s_.clipOn && s_.clipFromKey : clipKeys_[e.number & 127] != 0;
+            if (clipsKey) {
                 const auto& clip = data_->clips[std::clamp(s_.clipSlot, 0, kNumClips - 1)];
                 if (on) {
                     stopSounding(kClip, at); // every key starts the clip over, transposed to it
@@ -705,10 +714,13 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
                     clipStart_ = at;
                     clipTranspose_ = e.number - clip.root;
                     clipKey_ = e.number;
-                    ++clipKeysDown_;
+                    if (clipKeys_[e.number & 127] == 0)
+                        ++clipKeysDown_;
+                    clipKeys_[e.number & 127] = 1;
                 } else {
+                    clipKeys_[e.number & 127] = 0;
                     clipKeysDown_ = std::max(clipKeysDown_ - 1, 0);
-                    if (clipKeysDown_ == 0 && !s_.clipLatch) {
+                    if (clipKeysDown_ == 0 && !s_.clipLatch && s_.clipOn && s_.clipFromKey) {
                         stopSounding(kClip, at);
                         clipRunning_ = false;
                     }

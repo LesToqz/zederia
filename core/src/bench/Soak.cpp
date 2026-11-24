@@ -69,6 +69,24 @@ SoakReport runSoak(const SoakOptions& o) {
     const auto total = static_cast<std::int64_t>(std::max(0.0, o.seconds) * sr);
 
     Engine engine;
+    // The optional trace (a diagnosis aid; see SoakOptions::tracePath).
+    std::FILE* trace = nullptr;
+#if defined(_MSC_VER)
+    if (!o.tracePath.empty() && fopen_s(&trace, o.tracePath.c_str(), "w") != 0)
+        trace = nullptr;
+#else
+    if (!o.tracePath.empty())
+        trace = std::fopen(o.tracePath.c_str(), "w");
+#endif
+    struct CloseTrace {
+        std::FILE*& f;
+        ~CloseTrace() {
+            if (f != nullptr)
+                std::fclose(f);
+        }
+    } closeTrace{trace};
+    std::vector<MidiEvent> madeNotes(2048);
+    const int midiOutIndex = reg.indexOf("global.midi_out");
     engine.setSeed(o.seed);
     engine.prepare(sr);
     engine.setOffline(!o.realtimeQuality);
@@ -93,7 +111,26 @@ SoakReport runSoak(const SoakOptions& o) {
         for (MidiEvent& e : midi)
             e.offset = std::clamp(e.offset, 0, frames - 1);
         std::stable_sort(midi.begin(), midi.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.offset < b.offset; });
-        engine.process({left.data(), right.data(), frames, midi, transport});
+        ProcessArgs args{left.data(), right.data(), frames, midi, transport};
+        int made = 0;
+        if (trace != nullptr) { // the notes the play features make, when the trace asks for them
+            engine.params().set(midiOutIndex, 1.0);
+            args.midiOut = madeNotes.data();
+            args.midiOutCapacity = static_cast<int>(madeNotes.size());
+            args.midiOutCount = &made;
+            for (const MidiEvent& e : midi)
+                if (e.type == MidiEvent::Type::NoteOn || e.type == MidiEvent::Type::NoteOff ||
+                    (e.type == MidiEvent::Type::Controller && e.number == 64))
+                    std::fprintf(trace, "%lld in %s %d %.2f\n", static_cast<long long>(position + e.offset),
+                                 e.type == MidiEvent::Type::NoteOn ? "on" : e.type == MidiEvent::Type::NoteOff ? "off" : "pedal", e.number, e.value);
+        }
+        engine.process(args);
+        for (int i = 0; trace != nullptr && i < made; ++i) {
+            const MidiEvent& e = madeNotes[static_cast<std::size_t>(i)];
+            if (e.type == MidiEvent::Type::NoteOn || e.type == MidiEvent::Type::NoteOff)
+                std::fprintf(trace, "%lld made %s %d\n", static_cast<long long>(position + e.offset),
+                             e.type == MidiEvent::Type::NoteOn ? "on" : "off", e.number);
+        }
         midi.clear();
         float peak = 0.0f;
         bool finite = true;
@@ -168,6 +205,8 @@ SoakReport runSoak(const SoakOptions& o) {
             held.clear();
         }
         engine.loadPatch(patch);
+        if (trace != nullptr)
+            std::fprintf(trace, "%lld load %s\n", static_cast<long long>(position), current.c_str());
         const auto problems = applyPatchAssets(engine, patch, o.library, fs::path(current).parent_path().string());
         if (!problems.empty()) {
             ++report.loadProblems;
@@ -214,6 +253,11 @@ SoakReport runSoak(const SoakOptions& o) {
                 if (t.stepped)
                     value = std::round(value);
                 engine.params().set(t.index, value);
+                if (trace != nullptr) {
+                    const std::string& id = reg.at(t.index).id;
+                    if (id.rfind("arp.", 0) == 0 || id.rfind("chord.", 0) == 0 || id.rfind("clip.", 0) == 0)
+                        std::fprintf(trace, "%lld set %s %g\n", static_cast<long long>(position), id.c_str(), value);
+                }
                 ++report.moves;
             }
             block(frames);
