@@ -244,14 +244,14 @@ TEST_CASE("mcp: every tool runs and its result matches its output schema", "[mcp
     CHECK(rig.ok("edit_wavetable", {{"target", t}, {"osc", 1}, {"operations", {{{"op", "harmonic"}, {"name", "odd_only"}}}}, {"save_as", "Odd Again"}})["table_id"] == "user:Agent/Odd Again");
     CHECK(rig.ok("list_wavetables", {{"search", "odd"}})["total"].get<int>() >= 2);
     const J saved = rig.ok("save_preset", {{"target", t}, {"name", "Glass Pluck"}, {"tags", {"bright", "short"}}, {"type", "pluck"}, {"pack", "Tests"}});
-    CHECK(saved["preset_id"] == "user:Tests/Glass Pluck");
+    CHECK(saved["preset_id"] == "user:Agent/Tests/Glass Pluck"); // agents save in Presets/Agent
     CHECK(fs::exists(fs::path(saved["path"].get<std::string>())));
     const J listed = rig.ok("list_presets", {{"search", "tag:bright"}});
     CHECK(listed["total"] == 1);
-    CHECK(rig.ok("tag_presets", {{"presets", {"user:Tests/Glass Pluck", "factory:Nope/Nothing"}}, {"add_tags", {"warm"}}, {"rating", 4}})["changed"] == 1);
+    CHECK(rig.ok("tag_presets", {{"presets", {"user:Agent/Tests/Glass Pluck", "factory:Nope/Nothing"}}, {"add_tags", {"warm"}}, {"rating", 4}})["changed"] == 1);
     CHECK(rig.ok("list_presets", {{"tags", {"warm"}}})["total"] == 1);
-    const std::string t2 = rig.ok("open_session", {{"from", "user:Tests/Glass Pluck"}})["target"];
-    CHECK(rig.ok("load_preset", {{"target", t2}, {"preset", "user:Tests/Glass Pluck"}})["summary"]["name"] == "Glass Pluck");
+    const std::string t2 = rig.ok("open_session", {{"from", "user:Agent/Tests/Glass Pluck"}})["target"];
+    CHECK(rig.ok("load_preset", {{"target", t2}, {"preset", "user:Agent/Tests/Glass Pluck"}})["summary"]["name"] == "Glass Pluck");
     const J render = rig.ok("render_audio", {{"target", t}, {"notes", {{{"note", "C3"}, {"start", 0}, {"length", 0.5}}, {{"note", 55}, {"start", 0.5}, {"length", 0.5}, {"velocity", 100}}}},
                                              {"tempo", 120}, {"spectrogram", true}, {"name", "pluck_test"}});
     CHECK(fs::exists(fs::path(render["file"].get<std::string>())));
@@ -277,7 +277,7 @@ TEST_CASE("mcp: every tool runs and its result matches its output schema", "[mcp
         CHECK(loop.contains("tail_file") == (std::string(tail) == "separate"));
         CHECK(fs::path(loop["file"].get<std::string>()).filename().string().rfind("ZED_chords_GlassPluck_Fmin_124bpm", 0) == 0);
     }
-    const J pack = rig.ok("export_pack", {{"name", "Test Pack"}, {"presets", {"user:Tests/Glass Pluck", t}}, {"clips", {clipId}}, {"keys", {"F minor", "G minor"}},
+    const J pack = rig.ok("export_pack", {{"name", "Test Pack"}, {"presets", {"user:Agent/Tests/Glass Pluck", t}}, {"clips", {clipId}}, {"keys", {"F minor", "G minor"}},
                                           {"one_shots", {{"notes", {"C2", "C3"}}, {"length_s", 0.5}}},
                                           {"multi_samples", {{"notes", {"C3"}}, {"velocities", {64, 127}}, {"length_s", 0.5}}}});
     CHECK(pack["count"] == 2 * (2 + 2 + 2));
@@ -564,4 +564,36 @@ TEST_CASE("mcp: closing a session while other requests use it is safe", "[mcp][t
         CHECK(answered.load() > 0);
         CHECK(rig.call("get_patch", {{"target", t}})["isError"] == true);
     }
+}
+
+TEST_CASE("mcp: agents save presets in Presets/Agent unless the user names another folder", "[mcp][tools][presets]") {
+    Rig rig("presets");
+    const std::string t = rig.ok("open_session", J::object())["target"];
+    const fs::path presets = rig.root / "user" / "Presets";
+    // By default, and with a pack: inside Presets/Agent, never beside the user's own folders (an
+    // agent asked for a kick used to save it in the user's own Presets/808 by passing pack "808").
+    J saved = rig.ok("save_preset", {{"target", t}, {"name", "Basement Kick"}, {"type", "percussion"}});
+    CHECK(saved["preset_id"] == "user:Agent/Basement Kick");
+    CHECK(saved["folder"] == "Agent");
+    CHECK(fs::exists(presets / "Agent" / "Basement Kick.zpreset"));
+    saved = rig.ok("save_preset", {{"target", t}, {"name", "Basement Kick"}, {"pack", "808"}});
+    CHECK(saved["preset_id"] == "user:Agent/808/Basement Kick");
+    CHECK(fs::exists(presets / "Agent" / "808" / "Basement Kick.zpreset"));
+    CHECK_FALSE(fs::exists(presets / "808"));
+    // An existing preset stays unless overwrite is given.
+    CHECK(anyText(rig.error("save_preset", {{"target", t}, {"name", "Basement Kick"}}), "already exists"));
+    CHECK(rig.ok("save_preset", {{"target", t}, {"name", "Basement Kick"}, {"overwrite", true}})["preset_id"] == "user:Agent/Basement Kick");
+    // Another folder only when it is named, which the tool keeps for when the user asked for it.
+    const auto* def = rig.server.findTool("save_preset");
+    REQUIRE(def != nullptr);
+    CHECK(def->description.find("only when the user asked") != std::string::npos);
+    CHECK(def->input["properties"]["folder"]["description"].get<std::string>().find("only when the user asked") != std::string::npos);
+    saved = rig.ok("save_preset", {{"target", t}, {"name", "Basement Kick"}, {"folder", "808\\Kicks"}});
+    CHECK(saved["preset_id"] == "user:808/Kicks/Basement Kick");
+    CHECK(fs::exists(presets / "808" / "Kicks" / "Basement Kick.zpreset"));
+    for (const char* bad : {"../Elsewhere", "C:/Users", "a/b/c/d/e", "", "x*y"}) {
+        INFO(bad);
+        CHECK(anyPath(rig.error("save_preset", {{"target", t}, {"name", "X"}, {"folder", bad}}), "/folder"));
+    }
+    CHECK_FALSE(fs::exists(rig.root / "user" / "Elsewhere"));
 }

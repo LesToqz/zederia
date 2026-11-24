@@ -29,6 +29,9 @@ public:
     void rescan();
     void setQuery(const juce::String& text);
     int resultCount() const { return static_cast<int>(results_.size()); }
+    // The next (1) or previous (-1) row of the list, selected and loaded as an arrow key in the list
+    // would (Up and Down inside a host, where the list does not hold the keyboard).
+    void stepSelection(int direction);
     const zed::PresetInfo& result(int row) const { return presets_[static_cast<std::size_t>(results_[static_cast<std::size_t>(row)])]; }
     void setSort(zed::PresetSort key, bool descending);
     // Selects from code (bulk edits, tests): nothing loads. A click on a row, or the arrow keys,

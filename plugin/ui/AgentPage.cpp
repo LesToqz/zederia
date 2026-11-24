@@ -431,9 +431,14 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
     });
     clients_ = std::make_unique<LinesCard>("Connected clients", [&link] {
         juce::StringArray lines;
-        for (const auto& c : link.clients())
-            lines.add(juce::String(c.name) + ": last request " + c.lastSeen.toString(false, true, true, true) + ", " + juce::String(c.requests) +
-                      " requests, " + juce::String(c.edits) + " edits");
+        for (const auto& c : link.clients()) {
+            juce::String line = juce::String(c.name) + ": last active " + c.lastSeen.toString(false, true, true, true);
+            if (c.requests > 0)
+                line += ", " + juce::String(c.requests) + " requests and " + juce::String(c.edits) + " edits here";
+            if (c.reported > 0)
+                line += ", " + juce::String(c.reported) + " actions elsewhere (headless sessions, files)";
+            lines.add(line);
+        }
         if (lines.isEmpty())
             lines.add(link.enabled() ? "No client has connected yet." : "None (Agent Link is off).");
         return lines;
@@ -452,8 +457,10 @@ AgentPage::AgentPage(Context& ctx) : Page(ctx) {
             const juce::String what = client.isEmpty() || action.startsWith(client + ":") ? action : client + " " + action;
             lines.add(it->time.toString(false, true, true, true) + "\t" + what);
         }
-        if (lines.isEmpty())
-            lines.add("Every action an agent takes is listed here, newest first. Undo (Ctrl+Z) or the history list takes it back.");
+        if (lines.isEmpty()) {
+            lines.add("Every action an agent takes is listed here, newest first, work in headless sessions and saved files included.");
+            lines.add("Undo (Ctrl+Z) or the history list takes back its edits to this instance.");
+        }
         return lines;
     });
     log_->journal = true;

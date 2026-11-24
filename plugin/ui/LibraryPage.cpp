@@ -1,6 +1,7 @@
 #include "LibraryPage.h"
 
 #include "Audit.h"
+#include "HostKeys.h"
 
 #include "zederia/patch/Modules.h"
 
@@ -196,7 +197,7 @@ LibraryPage::LibraryPage(Context& ctx) : Page(ctx) {
     clearScope_.textSize = kTextSmall + 0.5f;
     clearScope_.onClick = [this] {
         setFolder({});
-        if (isShowing())
+        if (isShowing() && !keysStayWithHost()) // inside a host Space stays with the host
             search_.grabKeyboardFocus();
     };
     auto& header = table_.getHeader();
@@ -706,6 +707,16 @@ void LibraryPage::selectedRowsChanged(int) {
     const auto mods = juce::ModifierKeys::getCurrentModifiers();
     if (rows.size() == 1 && !mods.isCommandDown() && !mods.isShiftDown() && !mods.isPopupMenu())
         loadRow(rows.front());
+}
+
+void LibraryPage::stepSelection(int direction) {
+    const int n = resultCount();
+    if (n == 0)
+        return;
+    const auto rows = selectedRows();
+    const int row = rows.empty() ? (direction > 0 ? 0 : n - 1) : juce::jlimit(0, n - 1, (direction > 0 ? rows.back() : rows.front()) + direction);
+    table_.selectRow(row); // not in code: selectedRowsChanged loads it
+    table_.scrollToEnsureRowIsOnscreen(row);
 }
 
 void LibraryPage::selectRow(int row, bool add) {

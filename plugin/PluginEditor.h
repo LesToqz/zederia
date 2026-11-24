@@ -8,6 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "ui/Dock.h"
+#include "ui/HostKeys.h"
 #include "ui/ModOverlay.h"
 #include "ui/Palette.h"
 #include "ui/Shell.h"
@@ -63,6 +64,10 @@ public:
                       juce::File* saved = nullptr);
     juce::String defaultSaveLocation() const; // the dialog's first location
     void closeOverlays();
+    // Up or Down while working in Zederia inside a host (ui/HostKeys.h): the next or previous row of
+    // the Library list on that page, elsewhere the next or previous preset by name (as the arrows
+    // beside the preset name).
+    void browsePreset(int direction);
 
     // --- Frame clock --------------------------------------------------------------------------------
     // One frame: refreshes what changed and repaints only that. Returns the areas it repainted
@@ -129,6 +134,7 @@ private:
     double hoverSince_ = 0.0, hoverLeft_ = 0.0;
     int seenGeneration_ = -1, seenSession_ = -1, seenRestores_ = 0;
     bool layingOut_ = false;
+    std::unique_ptr<zui::PresetKeys> presetKeys_; // inside a host only; last, so it goes first
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaEditor)
 };

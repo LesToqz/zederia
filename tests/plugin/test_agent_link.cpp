@@ -124,6 +124,7 @@ TEST_CASE("live link: agent edits reach a playing instance, are labelled undo st
     r = call("write_clip", {{"name", "riff"}, {"bars", 1}, {"tempo", 120}, {"key", "C minor"}, {"notes", {{{"start", 0}, {"length", 1}, {"key", 60}}, {{"start", 1}, {"length", 1}, {"key", 63}}}},
                             {"target", live}, {"slot", 2}, {"activate", true}});
     REQUIRE(r["isError"] == false);
+    const std::string clipId = r["structuredContent"]["clip_id"];
     CHECK(p.clip(1).notes.size() == 2); // the clip player has the agent's clip
     CHECK(p.plainValue(zed::Registry::get().indexOf("clip.on")) == 1.0);
 
@@ -145,10 +146,32 @@ TEST_CASE("live link: agent edits reach a playing instance, are labelled undo st
     REQUIRE(clients.size() == 1); // the agent that asked, and nothing else
     CHECK(clients.front().name == "Tests");
     CHECK(clients.front().edits >= 4);
-    bool logged = false;
-    for (const auto& e : p.agentLink().activity())
-        logged = logged || e.action == "Tests: Set parameters";
-    CHECK(logged);
+    const auto logged = [&](const std::string& action) {
+        for (const auto& e : p.agentLink().activity())
+            if (e.action == action)
+                return true;
+        return false;
+    };
+    CHECK(logged("Tests: Set parameters"));
+
+    // Work the instance does not see itself, in a headless session and in files: the server reports
+    // it, so the page lists it too. An agent that designed a sound in a headless session used to
+    // leave this page saying no client had connected.
+    const std::string headless = call("open_session", {{"name", "kick"}})["structuredContent"]["target"];
+    REQUIRE(call("set_params", {{"target", headless}, {"label", "Kick body"}, {"params", {{{"id", "filter1.cutoff"}, {"value", 300}}}}})["isError"] == false);
+    REQUIRE(call("history", {{"target", headless}, {"action", "undo"}})["isError"] == false);
+    REQUIRE(call("save_preset", {{"target", headless}, {"name", "Basement Kick"}})["isError"] == false);
+    CHECK(withMessageThread(p, [&] { return bridge.flushReports(10000); }));
+    CHECK(logged("Tests: opened headless " + headless + " (\"kick\")"));
+    CHECK(logged("Tests: Kick body (headless " + headless + ")"));
+    CHECK(logged("Tests: undo (headless " + headless + ")"));
+    CHECK(logged("Tests: saved the preset user:Agent/Basement Kick (headless " + headless + ")"));
+    CHECK(logged("Tests: wrote the clip \"riff\" (" + clipId + ")")); // the clip file; loading it was this instance's own edit
+    CHECK(p.session().history().label(p.session().history().current()) != "Tests: Kick body"); // headless edits stay headless
+    const auto after = p.agentLink().clients();
+    REQUIRE(after.size() == 1);
+    CHECK(after.front().reported >= 5);
+    CHECK(after.front().edits == clients.front().edits); // counted apart from edits to this instance
 
     // Revert agent session restores the sound from before the first agent edit.
     REQUIRE(p.agentLink().canRevert());
@@ -225,6 +248,26 @@ TEST_CASE("live link: the pipe wants the instance's token", "[plugin][live][agen
     }
     r = ask({{"v", 1}, {"id", 14}, {"token", d.token}, {"method", "get_patch"}});
     CHECK(r["ok"] == true); // and still serves
+    // Lines the server reports: they need the token, and every field is checked and bounded.
+    r = ask({{"v", 1}, {"id", 15}, {"token", "wrong"}, {"method", "note"}, {"params", {{"entries", {{{"action", "x"}}}}}}});
+    CHECK(r["ok"] == false);
+    for (const J& bad : {J{{"entries", "x"}}, J{{"entries", J::array()}}, J::array({1}), J{{"entries", std::vector<J>(201, J{{"action", "x"}})}}}) {
+        r = ask({{"v", 1}, {"id", 16}, {"token", d.token}, {"method", "note"}, {"params", bad}});
+        INFO(bad.dump().substr(0, 200) << " -> " << r.dump());
+        CHECK_FALSE(r.contains("transport"));
+        CHECK(r["ok"] == false);
+    }
+    r = ask({{"v", 1}, {"id", 17}, {"token", d.token}, {"method", "note"},
+             {"params", {{"entries", {{{"client", 5}, {"action", "\nsaved " + std::string(1000, 'a')}, {"target", "session:12345678"}, {"at", "soon"}},
+                                      7,
+                                      {{"client", "Tests"}, {"action", ""}}}}}}});
+    REQUIRE(r["ok"] == true);
+    CHECK(r["result"]["noted"] == 1);
+    const auto last = p.agentLink().activity().back();
+    CHECK(last.client == "agent");
+    CHECK(last.action.rfind("agent:  saved aaa", 0) == 0);
+    CHECK(last.action.size() < 320);
+    CHECK(last.action.find("... (headless session:12345678)") != std::string::npos);
     // The link state travels with the host project.
     juce::MemoryBlock state;
     p.getStateInformation(state);

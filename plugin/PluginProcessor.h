@@ -68,6 +68,11 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; } // notes from the arpeggiator, chords and clips; MIDI thru
     double getTailLengthSeconds() const override { return engine_.tailSeconds(); }
+
+    // Whether a host owns the computer keyboard: true in the plug-in formats, false in the
+    // Standalone and in tests (which can say otherwise before they make an editor).
+    bool insideHost() const { return insideHost_; }
+    void setInsideHost(bool on) { insideHost_ = on; }
     // Programs are the presets of the program list (setProgramList); a program change selects one.
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -343,6 +348,7 @@ private:
     std::unique_ptr<Session> session_;
     std::unique_ptr<AgentLink> agentLink_;
     bool forceAgentLink_ = false; // ZEDERIA_AGENT_LINK=1 (automated live-link tests)
+    bool insideHost_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZederiaProcessor)
 };

@@ -156,7 +156,15 @@ Bridge::Bridge(Config config) : config_(std::move(config)), library_(zed::Conten
         library_.setFactoryDir(config_.factoryDir);
 }
 
-Bridge::~Bridge() = default;
+Bridge::~Bridge() {
+    {
+        std::lock_guard<std::mutex> lock(reportMutex_);
+        reportStop_ = true; // what is queued is still sent once
+    }
+    reportWake_.notify_all();
+    if (reporter_.joinable())
+        reporter_.join();
+}
 
 fs::path Bridge::userDir() const { return pathFromUtf8(library_.userDir()); }
 
@@ -251,7 +259,9 @@ std::string Bridge::openSession(const Patch& start, const std::string& name, con
     s->client = call.client;
     s->created = static_cast<std::int64_t>(std::time(nullptr));
     s->history.reset(start, call.client + ": Open session");
+    const std::string shown = s->name.empty() ? std::string("Init") : s->name;
     sessions_[id] = std::move(s);
+    report(call, "opened headless " + id + " (\"" + shown + "\")");
     return id;
 }
 
@@ -410,6 +420,7 @@ Bridge::EditResult Bridge::edit(const std::string& target, const Call& call, con
             s->history.push(stepLabel, r.after, call.client);
             s->current = r.after;
             r.applied = true;
+            report(call, label, target); // a live instance lists its own edits
         }
         return r;
     }
@@ -471,6 +482,9 @@ J Bridge::history(const std::string& target, const Call& call, const std::string
     } else if (action != "list") {
         fail("/action", "unknown action \"" + action + "\"", "use list, undo, redo, jump or revert_agent_session");
     }
+    if (action != "list")
+        report(call, action == "jump" ? "jump to step " + std::to_string(step) : action == "revert_agent_session" ? "revert agent session" : action,
+               target);
     J steps = J::array();
     const int first = std::max(0, h.size() - 50);
     for (int i = first; i < h.size(); ++i)
@@ -603,6 +617,61 @@ std::string Bridge::presetId(const fs::path& file) const {
         return (factory ? "factory:" : "user:") + s;
     }
     return utf8(file);
+}
+
+// --- Activity -------------------------------------------------------------------------------------------
+
+void Bridge::report(const Call& call, const std::string& what, const std::string& target) {
+    if (!config_.live || what.empty())
+        return;
+    const auto at = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> lock(reportMutex_);
+    if (reportStop_)
+        return;
+    if (!reporter_.joinable())
+        reporter_ = std::thread([this] { reportLoop(); });
+    if (reports_.size() >= 200) // an instance that cannot keep up misses the oldest lines
+        reports_.pop_front();
+    reports_.push_back({{"client", call.client}, {"action", what}, {"target", target}, {"at", at}});
+    reportWake_.notify_one();
+}
+
+void Bridge::reportLoop() {
+    std::unique_lock<std::mutex> lock(reportMutex_);
+    for (;;) {
+        reportWake_.wait(lock, [this] { return reportStop_ || !reports_.empty(); });
+        if (reports_.empty())
+            return; // stopping, and everything was sent
+        J entries = J::array();
+        for (auto& e : reports_)
+            entries.push_back(std::move(e));
+        reports_.clear();
+        reportBusy_ = true;
+        lock.unlock();
+        try {
+            static std::atomic<int> counter{0};
+            for (const auto& d : zed::link::listDiscoveries()) {
+                zed::link::PipeClient client;
+                std::string error, reply;
+                if (!client.connect(d.pipe, 500, error))
+                    continue;
+                const J request = {{"v", zed::link::kLinkProtocol}, {"id", ++counter}, {"token", d.token}, {"client", "zederia-mcp"},
+                                   {"method", "note"}, {"params", {{"entries", entries}}}};
+                // An instance that does not answer in time misses these lines.
+                client.request(request.dump(-1, ' ', false, J::error_handler_t::replace), reply, 3000, error);
+            }
+        } catch (...) {
+            // Nothing here may end the server: these lines are lost.
+        }
+        lock.lock();
+        reportBusy_ = false;
+        reportIdle_.notify_all();
+    }
+}
+
+bool Bridge::flushReports(int timeoutMs) {
+    std::unique_lock<std::mutex> lock(reportMutex_);
+    return reportIdle_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return reports_.empty() && !reportBusy_; });
 }
 
 // --- Patch helpers --------------------------------------------------------------------------------------

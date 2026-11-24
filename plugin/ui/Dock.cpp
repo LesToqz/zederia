@@ -625,7 +625,10 @@ juce::StringArray PianoKeys::lettersFor(int semitone) {
 
 PianoKeys::PianoKeys(Context& ctx) : ctx_(ctx) {
     setTitle("Keyboard");
-    setHelp("Keyboard", juce::String("Click or drag to play. The computer keyboard plays too (Computer keys in the preferences): ") + kKeysHelp);
+    if (ctx.processor.insideHost()) // the host keeps the computer keyboard (ui/HostKeys.h)
+        setHelp("Keyboard", "Click or drag to play. Inside a host the computer keyboard stays with the host: play from its typing keyboard.");
+    else
+        setHelp("Keyboard", juce::String("Click or drag to play. The computer keyboard plays too (Computer keys in the preferences): ") + kKeysHelp);
     setWantsKeyboardFocus(false); // clicks leave the keyboard with the editor, so the computer keys keep playing
     family = Family::Play;
     keyIsDown = computerKeyIsDown;

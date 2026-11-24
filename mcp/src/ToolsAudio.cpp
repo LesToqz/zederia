@@ -346,6 +346,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                                      w.info["clip_issues"] = issues;
                              }
                              call.progress(1.0, "done");
+                             bridge.report(call, "rendered " + utf8(pathFromUtf8(w.info["file"].get<std::string>()).filename()), t);
                              ToolOutput out;
                              out.structured = w.info;
                              out.content = w.content;
@@ -631,6 +632,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                                  }
                              }
                          }
+                         bridge.report(call, "exported the pack \"" + name + "\" (" + std::to_string(files.size()) + " files)");
                          ToolOutput out;
                          out.structured = {{"folder", utf8(dir)}, {"files", files}, {"count", files.size()}};
                          out.summary = "Exported " + std::to_string(files.size()) + " file(s) to " + utf8(dir) + ".";

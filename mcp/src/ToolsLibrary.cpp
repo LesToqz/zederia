@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 
 namespace zmcp {
 
@@ -147,8 +148,10 @@ ToolOutput tableResult(Bridge& bridge, Call& call, const J& a, zed::Wavetable ta
     table.name = name;
     J s = {{"name", name}, {"frames", table.size()}, {"morph", std::string(zed::morphModeName(table.morph))}, {"stepped", table.stepped}};
     std::string ref = "embedded:" + name;
-    if (save)
+    if (save) {
         ref = saveTable(bridge, table, name, s);
+        bridge.report(call, "saved the wavetable " + ref);
+    }
     s["table_id"] = ref;
     s["stats"] = tableStats(table);
     auto shared = std::make_shared<const zed::Wavetable>(table);
@@ -474,19 +477,21 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
 
     // --- save_preset ---
     tools.push_back({"save_preset", "Save a preset",
-                     "Saves the target's patch as a preset in the user's Presets folder (in a sub-folder named by pack, \"Agent\" by "
-                     "default) with its name, tags, type, author and notes. Also sets this metadata in the target (one undo step).",
+                     "Saves the target's patch as a preset with its name, tags, type, author and notes, and sets this metadata in the "
+                     "target (one undo step). Agents' presets go to the user's Presets/Agent folder (Presets/Agent/<pack> with a pack). "
+                     "Save anywhere else in the user's presets (folder) only when the user asked for that folder.",
                      schema(R"json({"type":"object","additionalProperties":false,"required":["target","name"],"properties":{
                         "target":{"type":"string"},
                         "name":{"type":"string","minLength":1,"maxLength":80},
                         "tags":{"type":"array","maxItems":24,"items":{"type":"string","maxLength":40}},
                         "genres":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":40}},
                         "type":{"type":"string","maxLength":40,"description":"bass, lead, pluck, keys, pad, strings, brass, sequence, fx, percussion ..."},
-                        "pack":{"type":"string","maxLength":80},
+                        "pack":{"type":"string","maxLength":80,"description":"the pack the preset belongs to; it is saved in Presets/Agent/<pack>"},
+                        "folder":{"type":"string","maxLength":200,"description":"only when the user asked to save there: a folder inside the user's Presets folder to use instead of Agent, such as \"Bass\" or \"808/Kicks\". Leave it out otherwise."},
                         "author":{"type":"string","maxLength":80},
                         "notes":{"type":"string","maxLength":2000},
                         "overwrite":{"type":"boolean"}}})json"),
-                     schema(R"json({"type":"object","required":["preset_id","path","name"],"properties":{"preset_id":{"type":"string"},"path":{"type":"string"},"name":{"type":"string"}}})json"),
+                     schema(R"json({"type":"object","required":["preset_id","path","name"],"properties":{"preset_id":{"type":"string"},"path":{"type":"string"},"name":{"type":"string"},"folder":{"type":"string"}}})json"),
                      false, false, true, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target"), name = argString(a, "name");
                          bridge.checkTarget(t);
@@ -494,8 +499,29 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          const std::string pack = argString(a, "pack");
                          if (!pack.empty())
                              checkFileName(pack, "/pack");
-                         const fs::path file = bridge.resolveWrite((pack.empty() ? std::string("Agent") : pack) + "/" + name + ".zpreset", {".zpreset"}, "/name",
-                                                                   bridge.userFolder("Presets"));
+                         // Presets/Agent unless the user named another folder (the agent passes it as folder).
+                         std::string folder = "Agent" + (pack.empty() ? std::string() : "/" + pack);
+                         if (a.contains("folder")) {
+                             std::string given = argString(a, "folder");
+                             if (given.find(':') != std::string::npos)
+                                 fail("/folder", "the folder must be inside the user's Presets folder", "give it relative to Presets, such as \"Bass\" or \"808/Kicks\"");
+                             std::replace(given.begin(), given.end(), '\\', '/');
+                             std::string clean, part;
+                             std::stringstream parts(given);
+                             int depth = 0;
+                             while (std::getline(parts, part, '/')) {
+                                 if (part.empty())
+                                     continue;
+                                 checkFileName(part, "/folder");
+                                 if (++depth > 4)
+                                     fail("/folder", "the folder is nested more than four levels deep", "use a shorter path such as \"Bass/Phonk\"");
+                                 clean += (clean.empty() ? "" : "/") + part;
+                             }
+                             if (clean.empty())
+                                 fail("/folder", "the folder is empty", "leave folder out to save in Presets/Agent");
+                             folder = clean;
+                         }
+                         const fs::path file = bridge.resolveWrite(folder + "/" + name + ".zpreset", {".zpreset"}, "/name", bridge.userFolder("Presets"));
                          std::error_code ec;
                          if (fs::exists(file, ec) && !argBool(a, "overwrite", false))
                              fail("/name", "a preset called \"" + name + "\" already exists there", "pass overwrite: true, or choose another name");
@@ -513,8 +539,9 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          f << text;
                          if (!f)
                              fail("/name", "the preset could not be written to " + utf8(file), "check the folder is writable");
+                         bridge.report(call, "saved the preset " + bridge.presetId(file), t);
                          ToolOutput out;
-                         out.structured = {{"preset_id", bridge.presetId(file)}, {"path", utf8(file)}, {"name", name}};
+                         out.structured = {{"preset_id", bridge.presetId(file)}, {"path", utf8(file)}, {"name", name}, {"folder", folder}};
                          out.summary = "Saved \"" + name + "\" to " + utf8(file) + ".";
                          return out;
                      }});
@@ -533,7 +560,7 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                         "rating":{"type":"integer","minimum":0,"maximum":5}}})json"),
                      schema(R"json({"type":"object","required":["changed","skipped"],"properties":{"changed":{"type":"integer"},
                         "skipped":{"type":"array","items":{"type":"object","required":["preset","reason"]}}}})json"),
-                     false, true, true, [&bridge](const J& a, Call&) {
+                     false, true, true, [&bridge](const J& a, Call& call) {
                          int changed = 0;
                          J skipped = J::array();
                          for (const auto& idv : a["presets"]) {
@@ -579,6 +606,8 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              }
                              ++changed;
                          }
+                         if (changed > 0)
+                             bridge.report(call, "changed the details of " + std::to_string(changed) + (changed == 1 ? " preset" : " presets"));
                          ToolOutput out;
                          out.structured = {{"changed", changed}, {"skipped", skipped}};
                          out.summary = std::to_string(changed) + " preset(s) changed, " + std::to_string(skipped.size()) + " skipped.";

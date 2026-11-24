@@ -1,5 +1,7 @@
 #include "Widgets.h"
 
+#include "HostKeys.h"
+
 #include <cmath>
 
 namespace zui {
@@ -51,7 +53,10 @@ private:
 
 // --- Base --------------------------------------------------------------------------------------------
 
-Widget::Widget() { setRepaintsOnMouseActivity(false); }
+Widget::Widget() {
+    setRepaintsOnMouseActivity(false);
+    setMouseClickGrabsKeyboardFocus(!keysStayWithHost()); // inside a host a click leaves Space and the rest to it
+}
 
 void Widget::paint(juce::Graphics& g) {
     const juce::Component* previous = AuditRecorder::painting();
@@ -162,8 +167,7 @@ void Caption::draw(juce::Graphics& g) {
 // --- ParamWidget -------------------------------------------------------------------------------------
 
 ParamWidget::ParamWidget(Context& ctx, int param, juce::String label) : ctx_(ctx), label_(std::move(label)) {
-    setWantsKeyboardFocus(true);
-    setMouseClickGrabsKeyboardFocus(true);
+    setWantsKeyboardFocus(true); // a click takes it too, except inside a host (Widget)
     setParam(param);
 }
 

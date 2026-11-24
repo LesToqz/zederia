@@ -1,8 +1,11 @@
 #include "Context.h"
 
+#include "HostKeys.h"
+
 namespace zui {
 
-Context::Context(ZederiaProcessor& p) : processor(p), session(p.session()), prefs(Prefs::get()) {}
+// Made before every part of an editor, so each widget knows whether a click may take the keyboard.
+Context::Context(ZederiaProcessor& p) : processor(p), session(p.session()), prefs(Prefs::get()) { setKeysStayWithHost(p.insideHost()); }
 
 bool Context::refresh() {
     const int generation = processor.stateGeneration();

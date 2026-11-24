@@ -32,6 +32,7 @@ set(ZED_PLUGIN_SOURCES
     PluginEditor.cpp PluginEditor.h
     ui/Theme.cpp ui/Theme.h
     ui/Context.cpp ui/Context.h
+    ui/HostKeys.cpp ui/HostKeys.h
     ui/Widgets.cpp ui/Widgets.h
     ui/CurveEditor.cpp ui/CurveEditor.h
     ui/Displays.cpp ui/Displays.h
@@ -52,7 +53,7 @@ set(ZED_PLUGIN_SOURCES
     ${ZED_THEME_SOURCE})
 target_sources(Zederia PRIVATE ${ZED_PLUGIN_SOURCES})
 zed_strict_sources(PluginProcessor.cpp ProcessorEditing.cpp AgentLink.cpp Session.cpp Prefs.cpp PluginEditor.cpp
-    ui/Theme.cpp ui/Context.cpp ui/Widgets.cpp ui/CurveEditor.cpp ui/Displays.cpp ui/Audit.cpp ui/Shell.cpp ui/OutputMonitor.cpp
+    ui/Theme.cpp ui/Context.cpp ui/HostKeys.cpp ui/Widgets.cpp ui/CurveEditor.cpp ui/Displays.cpp ui/Audit.cpp ui/Shell.cpp ui/OutputMonitor.cpp
     ui/Dock.cpp ui/ModOverlay.cpp ui/Palette.cpp ui/SynthPage.cpp ui/FxPage.cpp ui/ModPage.cpp ui/TablePage.cpp ui/PlayPage.cpp
     ui/LibraryPage.cpp ui/AgentPage.cpp ui/KitPage.cpp)
 

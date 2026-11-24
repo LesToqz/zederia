@@ -1,8 +1,8 @@
 # Tests of the plug-in processor and the editor, without a host. They link the plug-in's shared
 # code, so the framework is not compiled a second time, and run under the same audio-thread guard
 # as the core tests. The editor tests write their snapshots to build/<preset>/snapshots.
-add_executable(zederia_plugin_tests ../support/TestMain.cpp test_processor.cpp test_editor.cpp test_editor_states.cpp test_agent_link.cpp)
-zed_strict_sources(../support/TestMain.cpp test_processor.cpp test_editor.cpp test_editor_states.cpp test_agent_link.cpp)
+add_executable(zederia_plugin_tests ../support/TestMain.cpp test_processor.cpp test_editor.cpp test_editor_states.cpp test_agent_link.cpp test_host_keys.cpp)
+zed_strict_sources(../support/TestMain.cpp test_processor.cpp test_editor.cpp test_editor_states.cpp test_agent_link.cpp test_host_keys.cpp)
 target_compile_definitions(zederia_plugin_tests PRIVATE
     ZED_TEST_WITH_GUI=1
     ZED_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
