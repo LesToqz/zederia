@@ -1,0 +1,68 @@
+Zederia
+Copyright (C) 2026 LesToqz
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 of the License, or (at your
+option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program (the file LICENSE). If not, see
+<https://www.gnu.org/licenses/>.
+
+This covers the source code, the build scripts, the documentation and the
+factory content (wavetable and texture recipes, presets, clips and shapes),
+all of which are original work.
+
+
+Third-party components
+======================
+
+Zederia is built with the following libraries. They are fetched at build
+time (cmake/Dependencies.cmake) and are not part of this repository. Each
+keeps its own licence, and every one of them may be combined with a program
+released under the GNU AGPL v3.
+
+JUCE 9.0.5
+  https://github.com/juce-framework/JUCE
+  Copyright (c) Raw Material Software Limited.
+  Used under the GNU Affero General Public License v3 (JUCE is also offered
+  under a commercial licence, which Zederia does not use). JUCE includes
+  third-party code under its own licences; see LICENSE.md in its source.
+
+VST3 SDK (included with JUCE)
+  Copyright (c) 2025, Steinberg Media Technologies GmbH.
+  MIT License.
+  VST is a registered trademark of Steinberg Media Technologies GmbH.
+
+CLAP and clap-helpers
+  https://github.com/free-audio/clap
+  https://github.com/free-audio/clap-helpers
+  Copyright (c) 2021 Alexandre BIQUE.
+  MIT License.
+
+clap-juce-extensions
+  https://github.com/free-audio/clap-juce-extensions
+  Copyright 2019-2020, Paul Walker.
+  MIT License.
+
+JSON for Modern C++ (nlohmann/json) 3.12.0
+  https://github.com/nlohmann/json
+  Copyright (c) 2013-2025 Niels Lohmann.
+  MIT License.
+
+cpp-httplib 0.65.0
+  https://github.com/yhirose/cpp-httplib
+  Copyright (c) 2017 yhirose.
+  MIT License.
+
+Catch2 3.16.1 (tests only; not part of the plug-in or the tools)
+  https://github.com/catchorg/Catch2
+  Boost Software License 1.0.
+
+The full text of each licence is in that component's source distribution.

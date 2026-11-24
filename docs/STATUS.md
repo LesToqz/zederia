@@ -477,6 +477,7 @@ Benchmarks at milestone 1 (Release, one core, 48 kHz, 512-sample blocks, best of
 Milestone 0: pluginval on the smoke VST3 at strictness 5: SUCCESS. Smoke configure 9 s, build 201 s.
 
 ## Decisions
+- **Zederia is released under the GNU AGPL v3, or any later version (2026-11-24, the owner's choice).** Anyone may use, change and share it; a product built on it must publish its source under the same licence, so it cannot become a closed-source product. It also matches JUCE, which is used under its AGPLv3 option. `LICENSE` is the licence text as the FSF publishes it; `NOTICE` names the copyright holder and lists every dependency and its licence (all MIT, Boost or AGPLv3).
 - **Gain staging stays as it is (2026-11-23, the owner's choice before milestone 7).** Sources and the master keep their -6 dB defaults and +6 dB tops. Factory presets that need more level after the sources' `level_db` and `global.master_db` put a `utility` with `gain_db` at the end of the master lane, as `docs/AGENT_GUIDE.md` (section 7, gain staging) describes; peaks stay below -1 dBFS.
 - MSVC from VS 2022 Build Tools (v143). Build with 3 jobs because of 7.9 GB RAM.
 - CLAP via clap-juce-extensions (pinned commit). It brings CLAP SDK 1.2.7 as a submodule, not the 1.2.10 guessed in milestone 0; `cmake/Versions.cmake` now records 1.2.7.
