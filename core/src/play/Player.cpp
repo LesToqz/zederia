@@ -25,7 +25,7 @@ constexpr std::uint16_t kScales[] = {
     0b111111111111, // chromatic
 };
 
-constexpr std::uint8_t kChordStage = 0, kArp = 1, kClip = 2;
+constexpr std::uint8_t kChordStage = 0, kArp = 1, kClip = 2, kThrough = 3; // kThrough: a note that went straight through
 
 bool isNote(const MidiEvent& e) { return e.type == MidiEvent::Type::NoteOn || e.type == MidiEvent::Type::NoteOff; }
 
@@ -85,6 +85,8 @@ void Player::reset(std::uint64_t seed) {
     strumUp_ = true;
     mappedKeys_ = 0;
     heldCount_ = physical_ = 0;
+    std::fill(std::begin(down_), std::end(down_), std::uint8_t{0});
+    std::fill(std::begin(through_), std::end(through_), std::uint8_t{0});
     order_ = 0;
     seqCount_ = 0;
     seqDirty_ = true;
@@ -119,7 +121,7 @@ void Player::emit(const MidiEvent& e, std::int64_t at, std::uint8_t origin) noex
     o.event = e;
     o.event.offset = static_cast<int>(std::max<std::int64_t>(at - now_, 0));
     o.seq = seq_++;
-    o.generated = isNote(e) && (shaping_ || origin != kChordStage);
+    o.generated = isNote(e) && origin != kThrough && (shaping_ || origin != kChordStage);
 }
 
 void Player::schedule(const MidiEvent& e, std::int64_t at, std::uint8_t origin, std::uint8_t inputKey) noexcept {
@@ -185,6 +187,8 @@ void Player::allOff(std::int64_t at) noexcept {
     mappedKeys_ = 0;
     std::fill(std::begin(direct_), std::end(direct_), std::uint8_t{0});
     heldCount_ = physical_ = 0;
+    std::fill(std::begin(down_), std::end(down_), std::uint8_t{0});
+    std::fill(std::begin(through_), std::end(through_), std::uint8_t{0});
     seqDirty_ = true;
     running_ = false;
     clipRunning_ = false;
@@ -297,6 +301,8 @@ void Player::chordNoteOff(int input, std::int64_t at) noexcept {
 void Player::arpAdd(int key, float velocity, std::int64_t at) noexcept {
     const bool newPhrase = physical_ == 0;
     ++physical_;
+    if (down_[key] < 255)
+        ++down_[key];
     if (newPhrase && s_.latch)
         heldCount_ = 0; // a new chord after all keys were let go replaces the latched one
     bool present = false;
@@ -319,6 +325,8 @@ void Player::arpAdd(int key, float velocity, std::int64_t at) noexcept {
 
 void Player::arpRemove(int key) noexcept {
     physical_ = std::max(physical_ - 1, 0);
+    if (down_[key] > 0)
+        --down_[key];
     if (s_.latch)
         return;
     int kept = 0;
@@ -563,6 +571,7 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
     if (wasArp_ && !s_.arpOn) { // the arpeggiator's notes end; keys still held stay silent
         stopSounding(kArp, now_);
         heldCount_ = physical_ = 0;
+        std::fill(std::begin(down_), std::end(down_), std::uint8_t{0});
         running_ = false;
     } else if (!wasArp_ && s_.arpOn) { // keys sounding directly hand over to the arpeggiator
         for (int key = 0; key < 128; ++key) {
@@ -574,9 +583,15 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
         }
     }
     wasArp_ = s_.arpOn;
-    if (s_.arpOn && !s_.latch && before.latch && physical_ == 0) {
-        heldCount_ = 0;
-        running_ = false;
+    if (s_.arpOn && !s_.latch && before.latch) {
+        // Latch off: the keys let go while it was on leave the pattern; keys still down stay.
+        int kept = 0;
+        for (int i = 0; i < heldCount_; ++i)
+            if (down_[held_[i].key] > 0)
+                held_[kept++] = held_[i];
+        heldCount_ = kept;
+        if (heldCount_ == 0)
+            running_ = false;
         seqDirty_ = true;
     }
     if (s_.arpMode != before.arpMode || s_.octaves != before.octaves)
@@ -600,6 +615,11 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
         for (; n < in.size() && n < static_cast<std::size_t>(kMaxEvents); ++n) {
             out[n] = in[n];
             out[n].offset = std::clamp(in[n].offset, 0, std::max(frames - 1, 0));
+            const int key = in[n].number & 127;
+            if (in[n].type == MidiEvent::Type::NoteOn && through_[key] < 255)
+                ++through_[key];
+            else if (in[n].type == MidiEvent::Type::NoteOff && through_[key] > 0)
+                --through_[key];
         }
         generatedCount = 0;
         now_ = blockEnd;
@@ -664,6 +684,19 @@ int Player::process(const Settings& settings, const PlayData& data, const Transp
                 continue;
             }
             const bool on = e.type == MidiEvent::Type::NoteOn;
+            if (!on && through_[e.number & 127] > 0) {
+                // Pressed while nothing was shaped, so it went straight through: it ends the same
+                // way, whatever was switched on since (otherwise the release was lost and the
+                // note hung).
+                --through_[e.number & 127];
+                emit(e, at, kThrough);
+                continue;
+            }
+            if (on && through_[e.number & 127] > 0) { // the same key again: the old note ends, the new one is shaped
+                MidiEvent off = MidiEvent::noteOff(0, e.number, 0.0f, e.channel);
+                emit(off, at, kThrough);
+                through_[e.number & 127] = 0;
+            }
             if (s_.clipOn && s_.clipFromKey) { // the keys start and transpose the clip
                 const auto& clip = data_->clips[std::clamp(s_.clipSlot, 0, kNumClips - 1)];
                 if (on) {

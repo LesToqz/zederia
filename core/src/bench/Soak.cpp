@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 
 namespace zed {
@@ -25,11 +26,13 @@ struct Target {
 // Every parameter a host could automate, in the units the store holds, except plain gain stages
 // (levels in dB): turned fully up those make a loud sound legitimately, which would hide a real
 // runaway behind them. Effect slots use their loaded effect's ranges.
-std::vector<Target> automationTargets(const Patch& patch) {
+std::vector<Target> automationTargets(const Patch& patch, const std::vector<std::string>& keepStill) {
     const auto& reg = Registry::get();
     std::vector<Target> out;
     for (const ParamDef& d : reg.params()) {
         if (!d.automatable)
+            continue;
+        if (std::any_of(keepStill.begin(), keepStill.end(), [&](const std::string& p) { return d.id.rfind(p, 0) == 0; }))
             continue;
         int lane = 0, slot = 0, k = 0;
         if (reg.fxSlotParamAt(d.index, lane, slot, k)) {
@@ -86,6 +89,10 @@ SoakReport runSoak(const SoakOptions& o) {
     // One block of `frames` samples with the events in `midi`; checks the output.
     const auto block = [&](int frames) {
         transport.ppqPosition = static_cast<double>(position) / sr * transport.bpm / 60.0;
+        // The engine takes a block's events in time order, as a host gives them.
+        for (MidiEvent& e : midi)
+            e.offset = std::clamp(e.offset, 0, frames - 1);
+        std::stable_sort(midi.begin(), midi.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.offset < b.offset; });
         engine.process({left.data(), right.data(), frames, midi, transport});
         midi.clear();
         float peak = 0.0f;
@@ -155,7 +162,7 @@ SoakReport runSoak(const SoakOptions& o) {
         }
         ++step;
         // Half the time the new preset arrives while keys are still held, as it can in a host.
-        if (rng.uniform() < 0.5) {
+        if (rng.uniform() < 0.5 || !o.switchWhileHeld) {
             for (const int key : held)
                 midi.push_back(MidiEvent::noteOff(0, key));
             held.clear();
@@ -167,7 +174,7 @@ SoakReport runSoak(const SoakOptions& o) {
             note(problems.front());
         }
         ++report.presetsLoaded;
-        const std::vector<Target> targets = automationTargets(patch);
+        const std::vector<Target> targets = automationTargets(patch, o.keepStill);
 
         // Play: random notes, controllers and parameter moves.
         const std::int64_t end = std::min(total, position + static_cast<std::int64_t>(std::max(0.5, o.presetSeconds) * sr));
@@ -222,7 +229,14 @@ SoakReport runSoak(const SoakOptions& o) {
         engine.params().set(reg.indexOf("clip.on"), 0.0);
         engine.params().set(reg.indexOf("clip.latch"), 0.0);
         ++report.releaseChecks;
-        const std::int64_t limit = position + static_cast<std::int64_t>(o.maxReleaseSeconds * sr);
+        // A release may last as long as the amplitude envelope's release time, which the moves can
+        // have set to its 30 s top (and modulation further), stretched up to twice by the per-note
+        // envelope variance: allow that, with a margin, before calling the voices stuck.
+        const int releaseIndex = reg.indexOf("env1.release"), varianceIndex = reg.indexOf("voice.variance.env");
+        const double releaseMs = std::max(engine.params().get(releaseIndex), engine.liveValue(releaseIndex));
+        const double variance = std::clamp(engine.params().get(varianceIndex), 0.0, 1.0);
+        const double allowed = std::max(o.maxReleaseSeconds, releaseMs * 0.001 * (1.0 + variance) * 1.1 + 2.0);
+        const std::int64_t limit = position + static_cast<std::int64_t>(allowed * sr);
         bool ended = false;
         while (position < limit) {
             block(randomFrames());
@@ -233,8 +247,31 @@ SoakReport runSoak(const SoakOptions& o) {
         }
         if (!ended) {
             ++report.stuckReleases;
-            note(std::to_string(engine.activeVoices()) + " voice(s) still sounding " + std::to_string(static_cast<int>(o.maxReleaseSeconds)) +
-                 " s after every key was let go");
+            // Does it end at all? Wait two more minutes and say when.
+            const bool arpRunning = engine.arpStep() >= 0;
+            const std::int64_t stuckAt = position;
+            double endedAfter = -1.0;
+            while (position < stuckAt + static_cast<std::int64_t>(120.0 * sr)) {
+                block(randomFrames());
+                if (engine.activeVoices() == 0) {
+                    endedAfter = static_cast<double>(position - stuckAt) / sr + allowed;
+                    break;
+                }
+            }
+            note(endedAfter < 0.0 ? std::string("the voices were still sounding two minutes later") +
+                                        (arpRunning ? " (the arpeggiator was still stepping)" : " (the arpeggiator was not stepping)")
+                                  : "the voices ended " + std::to_string(static_cast<int>(endedAfter)) + " s after the keys were let go" +
+                                        (arpRunning ? " (the arpeggiator was still stepping)" : ""));
+            const auto value = [&](const char* id) { return engine.params().get(reg.indexOf(id)); };
+            char detail[320];
+            std::snprintf(detail, sizeof(detail),
+                          " s after every key was let go (release %.0f ms, envelope variance %.0f %%; arpeggiator %s, rate %s, gate %.2f, "
+                          "%d steps; chord memory %s, scale lock %s, strum %.0f ms; MPE %s)",
+                          releaseMs, variance * 100.0, value("arp.on") >= 0.5 ? "on" : "off",
+                          reg.at(reg.indexOf("arp.rate")).format(value("arp.rate")).c_str(), value("arp.gate"),
+                          static_cast<int>(value("arp.steps")), value("chord.memory") >= 0.5 ? "on" : "off",
+                          value("chord.scale_lock") >= 0.5 ? "on" : "off", value("chord.strum"), value("global.mpe") >= 0.5 ? "on" : "off");
+            note(std::to_string(engine.activeVoices()) + " voice(s) still sounding " + std::to_string(static_cast<int>(allowed)) + detail);
         }
     }
     report.passes = order.empty() ? 0 : pass + 1;

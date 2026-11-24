@@ -36,6 +36,8 @@ struct SoakOptions {
     double runawayDbfs = 60.0;    // a block above this is a runaway (resonant filters may peak near +35 legitimately)
     double maxReleaseSeconds = 30.0; // voices still sounding this long after every key was let go are stuck
     bool realtimeQuality = true;  // the quality a host plays at (false: the offline quality)
+    bool switchWhileHeld = true;  // half the presets arrive while keys are held (false: every key is let go first)
+    std::vector<std::string> keepStill; // parameter id prefixes the moves leave alone ("arp.", "clip.")
     ContentLibrary library;
     // Called before every preset; returning false stops the soak early.
     std::function<bool(const SoakProgress&)> progress;

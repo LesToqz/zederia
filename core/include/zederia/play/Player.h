@@ -156,6 +156,10 @@ private:
     Held held_[128];
     int heldCount_ = 0;
     int physical_ = 0; // keys the chord stage holds down right now
+    // Keys that went straight through while nothing was shaped and are still down: if shaping
+    // starts meanwhile, their release still has to reach the engine as it is.
+    std::uint8_t through_[128] = {};
+    std::uint8_t down_[128] = {}; // the same, per key: a latched key that is no longer down leaves when Latch goes off
     std::uint32_t order_ = 0;
     int seq[512];
     float seqVelocity[512];

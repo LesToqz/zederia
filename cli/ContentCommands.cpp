@@ -114,6 +114,13 @@ int cmdSoak(const Args& args) {
     options.presetSeconds = presetSeconds;
     options.movesPerSecond = moves;
     options.notesPerSecond = notes;
+    options.switchWhileHeld = !args.has("release-before-switch");
+    for (std::string list = args.get("keep-still"); !list.empty();) {
+        const std::size_t comma = std::min(list.find(','), list.size());
+        if (comma > 0)
+            options.keepStill.push_back(list.substr(0, comma));
+        list = comma < list.size() ? list.substr(comma + 1) : std::string();
+    }
     if (args.has("presets")) {
         std::error_code ec;
         for (fs::recursive_directory_iterator it(fs::path(args.get("presets")), ec), end; !ec && it != end; it.increment(ec))

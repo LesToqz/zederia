@@ -211,6 +211,86 @@ TEST_CASE("play: arpeggiator timing, gate, swing, latch and restart", "[play][ar
     CHECK(ons[2] == 612 + 12000);
 }
 
+TEST_CASE("play: a key pressed while nothing shaped the notes ends even if shaping started meanwhile", "[play][chord][arp]") {
+    // Found by the soak render (milestone 7): with every play feature off, notes go straight
+    // through and nothing is recorded. When the arpeggiator, chord memory, scale lock, a strum or
+    // the clip player came on while such a key was down, its release went into the shaping stage,
+    // which knew nothing of it, and the note hung for good.
+    struct Case {
+        const char* id;
+        double value;
+    };
+    for (const Case c : {Case{"arp.on", 1.0}, Case{"chord.memory", 1.0}, Case{"chord.scale_lock", 1.0}, Case{"chord.strum", 30.0},
+                         Case{"clip.on", 1.0}}) {
+        INFO(c.id);
+        Patch p;
+        p.set("env1.release", 20.0);
+        zedtest::EngineRig rig(p);
+        rig.run(512, {MidiEvent::noteOn(0, 60, 0.8f)});
+        rig.run(512);
+        CHECK(rig.engine.activeVoices() == 1);
+        rig.engine.params().set(zedtest::idx(c.id), c.value); // switched on while the key is down
+        rig.run(512);
+        rig.run(512, {MidiEvent::noteOff(0, 60)});
+        for (int b = 0; b < 40; ++b)
+            rig.run(512);
+        CHECK(rig.engine.activeVoices() == 0);
+        // And a key pressed now is shaped as usual and ends too.
+        rig.run(512, {MidiEvent::noteOn(0, 62, 0.8f)});
+        for (int b = 0; b < 20; ++b)
+            rig.run(512);
+        rig.run(512, {MidiEvent::noteOff(0, 62)});
+        for (int b = 0; b < 60; ++b)
+            rig.run(512);
+        CHECK(rig.engine.activeVoices() == 0);
+    }
+}
+
+TEST_CASE("play: switching Latch off lets go of the keys released while it was on", "[play][arp]") {
+    // Found by the soak render (milestone 7): with Latch on, a key let go stayed in the pattern;
+    // when Latch went off while another key was still down, that key never left, so the pattern
+    // played on after the last key came up.
+    Patch p = arpPatch("up");
+    p.set("arp.latch", 1);
+    zedtest::EngineRig rig(p);
+    MidiEvent out[256];
+    int made = 0;
+    std::vector<std::pair<int, int>> starts; // block, key
+    for (int block = 0; block < 120; ++block) {
+        std::vector<MidiEvent> in;
+        if (block == 1)
+            in = {MidiEvent::noteOn(0, 60, 0.8f), MidiEvent::noteOn(0, 64, 0.8f)};
+        if (block == 10)
+            in = {MidiEvent::noteOff(0, 60)}; // latched: 60 stays in the pattern
+        if (block == 30)
+            rig.engine.params().set(zedtest::idx("arp.latch"), 0.0); // Latch off while 64 is still down
+        if (block == 60)
+            in = {MidiEvent::noteOff(0, 64)};
+        rig.left.resize(512);
+        rig.right.resize(512);
+        ProcessArgs args{rig.left.data(), rig.right.data(), 512, in, Transport{}};
+        args.midiOut = out;
+        args.midiOutCapacity = 256;
+        args.midiOutCount = &made;
+        rig.engine.process(args);
+        for (int i = 0; i < made; ++i)
+            if (out[i].type == MidiEvent::Type::NoteOn)
+                starts.emplace_back(block, out[i].number);
+    }
+    int sixties = 0, afterRelease = 0, onlySixtyFour = 0;
+    for (const auto& [block, key] : starts) {
+        if (block > 10 && block < 30)
+            sixties += key == 60 ? 1 : 0; // latched: 60 still plays
+        if (block > 31 && block < 60)
+            onlySixtyFour += key == 64 ? 0 : 1;
+        if (block > 61)
+            ++afterRelease;
+    }
+    CHECK(sixties >= 1);
+    CHECK(onlySixtyFour == 0); // with Latch off only the key still down plays
+    CHECK(afterRelease == 0);  // and when it comes up, the pattern stops
+}
+
 TEST_CASE("play: the step lane: rests, ties, transposition, velocity and ratchets", "[play][arp]") {
     Patch p = arpPatch("up");
     p.set("arp.steps", 4);
