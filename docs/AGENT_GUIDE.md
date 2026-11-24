@@ -23,6 +23,9 @@ Every tool that touches a sound takes a `target`:
 
 The server keeps no state for a connection: carry the handles forward yourself.
 
+Every open instance with Agent Link on lists what you do on its AGENT page: its own edits, and
+also your work in headless sessions and the files you save.
+
 ## 2. The design loop
 
 1. **Read the brief.** Decide the type (bass, lead, pluck, keys, pad, strings, brass, sequence,
@@ -40,7 +43,8 @@ The server keeps no state for a connection: carry the handles forward yourself.
    To match a reference sound, use `compare_audio` after each render and keep changes that
    lower the `distance`.
 7. **Finish.** Name the macros and give them useful ranges. Check loudness (section 7). Save
-   with `save_preset`, with a name, a type and tags that describe the result.
+   with `save_preset`, with a name, a type and tags that describe the result. It goes to the
+   user's `Presets/Agent/` folder (section 8).
 
 Every change you make is one undo step labelled with your client's name. `history` lists, undoes
 and redoes steps. `history` with `revert_agent_session` returns the sound to where it was before
@@ -324,7 +328,9 @@ Things to know about the measurements:
   (`warm`, `clean`, `analog`, `digital`, `glassy`, `airy`, `gritty`, `soft`, `aggressive`,
   `vintage`, `cinematic`) and use words (`chords`, `arp`, `drone`, `riser`). Use `tag_presets` to
   keep a pack consistent.
-- **Packs**: `save_preset` with `pack` puts presets in `Presets/<pack>/`.
+- **Where presets go**: `save_preset` saves in the user's `Presets/Agent/` folder, and with
+  `pack` in `Presets/Agent/<pack>/`. Save in any other folder of the user's presets (`folder`,
+  such as `"Bass"`) only when the user asked for that folder.
 - **Rendered files** follow one rule:
   - loops: `ZED_<kind>_<Preset>_<Key>_<bpm>bpm.wav`, for example
     `ZED_chords_GlassPluck_Fmin_124bpm.wav`, with the matching `.mid`;

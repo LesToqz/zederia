@@ -163,7 +163,8 @@ std::string Server::instructions() const {
            "live:... instance from list_targets (the user hears it). Read zederia://guide/agent first: it explains the parameters, "
            "the design loop (brief -> start preset or init -> edit -> render a short phrase -> read the analysis -> adjust -> save "
            "with tags), loudness and naming conventions. Use describe_synth for parameter ids and ranges. Every edit is one undo "
-           "step labelled with your name. Audio comes back as file paths plus measurements, never inline.";
+           "step labelled with your name. Audio comes back as file paths plus measurements, never inline. save_preset saves in the "
+           "user's Presets/Agent folder; pass its folder argument only when the user asked you to save in another folder.";
 }
 
 J Server::toolList() const {
@@ -381,7 +382,8 @@ J Server::getPrompt(const J& params, const J& id, int& status) {
                "4. render_audio a short phrase that suits the brief (for a pluck: four notes; for a pad: a held chord). Read the analysis: "
                "loudness, attack, decay, brightness (centroid), width, tags.\n5. Adjust and render again until the analysis matches the brief. "
                "Keep integrated loudness near -14 LUFS for one note and the peak below -1 dBFS.\n6. Give the macros useful names and ranges.\n"
-               "7. save_preset with a name, a type and tags that describe the result. Report what you made and the file paths.";
+               "7. save_preset with a name, a type and tags that describe the result. It saves in Presets/Agent; pass folder only if the "
+               "user asked for another folder. Report what you made and the file paths.";
     } else if (name == "match_reference") {
         const std::string path = get("path", "");
         if (path.empty()) {
@@ -409,7 +411,8 @@ J Server::getPrompt(const J& params, const J& id, int& status) {
     } else if (name == "build_pack") {
         text = "Build a pack of " + get("count", "10") + " presets: " + get("theme", "") +
                ".\n\nFor each: design with the loop in zederia://guide/agent (render, analyze, adjust), keep loudness consistent (about -14 LUFS "
-               "per note), name it, save_preset with pack, type and tags. Then tag_presets to make the tags consistent, and export_pack with "
+               "per note), name it, save_preset with pack, type and tags (the presets go to Presets/Agent/<pack>). Then tag_presets to make "
+               "the tags consistent, and export_pack with "
                "one_shots at three pitches. Report the folder and the files.";
     } else {
         status = 400;

@@ -434,9 +434,10 @@ void addCoreTools(std::vector<ToolDef>& tools, Bridge& bridge) {
     tools.push_back({"close_session", "Close a headless session", "Ends a headless session and frees it. Its undo history is lost.",
                      schema(R"json({"type":"object","additionalProperties":false,"required":["target"],"properties":{"target":{"type":"string","description":"a \"session:...\" handle"}}})json"),
                      schema(R"json({"type":"object","required":["target","closed"],"properties":{"target":{"type":"string"},"closed":{"type":"boolean"}}})json"),
-                     false, true, true, [&bridge](const J& a, Call&) {
+                     false, true, true, [&bridge](const J& a, Call& call) {
                          const std::string t = argString(a, "target");
                          bridge.closeSession(t);
+                         bridge.report(call, "closed headless " + t);
                          ToolOutput out;
                          out.structured = {{"target", t}, {"closed", true}};
                          out.summary = "Closed " + t + ".";

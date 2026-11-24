@@ -14,12 +14,15 @@
 #include "zederia/render/OfflineRenderer.h"
 
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace zmcp {
@@ -132,6 +135,15 @@ public:
     std::string presetId(const fs::path& file) const;
     fs::path presetsDir(bool factory) const;
 
+    // --- Activity -----------------------------------------------------------------------------------
+    // What an agent does that no instance sees itself (work in a headless session, files it saves) is
+    // sent to every instance with Agent Link on, so the AGENT page lists every agent action on this
+    // computer. Sent in the background: a busy or closed instance never delays a tool call. `what`
+    // follows the client's name in the list; `target` says where it happened.
+    void report(const Call& call, const std::string& what, const std::string& target = {});
+    // Waits until everything reported so far has been sent (tests); false after `timeoutMs`.
+    bool flushReports(int timeoutMs);
+
 private:
     struct Session;
     // A session in use: it stays alive while the handle exists, even if close_session or the idle
@@ -145,6 +157,7 @@ private:
     void prune();
     J liveCall(const zed::link::Discovery& d, const std::string& method, const J& params, const Call& call, int timeoutMs);
     bool findLive(const std::string& target, zed::link::Discovery& out) const;
+    void reportLoop();
 
     Config config_;
     zed::ContentLibrary library_;
@@ -153,6 +166,12 @@ private:
     std::mutex tableMutex_;
     std::map<std::string, std::shared_ptr<const zed::TableData>> tableCache_;
     std::map<std::string, std::shared_ptr<const zed::SampleData>> textureCache_;
+
+    std::mutex reportMutex_;
+    std::condition_variable reportWake_, reportIdle_;
+    std::deque<J> reports_;
+    bool reportStop_ = false, reportBusy_ = false;
+    std::thread reporter_; // started by the first report
 };
 
 // --- Patch helpers --------------------------------------------------------------------------------------

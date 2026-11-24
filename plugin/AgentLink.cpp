@@ -13,7 +13,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 using J = nlohmann::json;
 
@@ -36,6 +38,29 @@ std::string hashOf(const std::string& text) {
     char buf[20];
     std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(zed::fnv1a(text.data(), text.size())));
     return buf;
+}
+
+// A string field, or "" when it is missing or not a string (never throws).
+std::string textOf(const J& object, const char* key) {
+    const auto it = object.find(key);
+    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+// One line of text for the AGENT page: control characters become spaces, and a long text is cut at
+// a character boundary (the JSON parser has already checked that it is UTF-8).
+std::string plainText(const std::string& s, std::size_t maxBytes) {
+    std::string out = s;
+    for (auto& c : out)
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f)
+            c = ' ';
+    if (out.size() > maxBytes) {
+        std::size_t cut = maxBytes;
+        while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80)
+            --cut;
+        out.resize(cut);
+        out += "...";
+    }
+    return out;
 }
 
 } // namespace
@@ -164,22 +189,39 @@ void AgentLink::service() {
     }
 }
 
+AgentLink::Client& AgentLink::seen(const std::string& client, juce::Time when) {
+    auto it = std::find_if(clients_.begin(), clients_.end(), [&](const Client& c) { return c.name == client; });
+    if (it == clients_.end()) {
+        clients_.push_back({client, when, when});
+        activity_.push_back({when, client, "connected"});
+        return clients_.back();
+    }
+    if (when > it->lastSeen)
+        it->lastSeen = when;
+    return *it;
+}
+
 void AgentLink::note(const std::string& client, const std::string& action, bool edit) {
     {
         std::lock_guard<std::mutex> lock(infoMutex_);
         const auto now = juce::Time::getCurrentTime();
-        auto it = std::find_if(clients_.begin(), clients_.end(), [&](const Client& c) { return c.name == client; });
-        if (it == clients_.end()) {
-            clients_.push_back({client, now, now, 0, 0});
-            it = clients_.end() - 1;
-            activity_.push_back({now, client, "connected"});
-        }
-        it->lastSeen = now;
-        ++it->requests;
+        auto& c = seen(client, now);
+        ++c.requests;
         if (edit)
-            ++it->edits;
+            ++c.edits;
         if (!action.empty())
             activity_.push_back({now, client, action});
+        while (activity_.size() > 200)
+            activity_.pop_front();
+    }
+    touched();
+}
+
+void AgentLink::noteElsewhere(const std::string& client, const std::string& action, juce::Time when) {
+    {
+        std::lock_guard<std::mutex> lock(infoMutex_);
+        ++seen(client, when).reported;
+        activity_.push_back({when, client, action});
         while (activity_.size() > 200)
             activity_.pop_front();
     }
@@ -305,6 +347,41 @@ std::string AgentLink::run(const J& request) {
         p_.audition(notes, static_cast<float>(zed::dbToGain(std::clamp(cap, -60.0, 0.0))));
         note(client, client + ": audition (" + std::to_string(notes.size()) + " notes)", false);
         return ok({{"played", notes.size()}});
+    }
+    if (method == "note") {
+        // What agents did outside this instance (work in headless sessions, files they saved), reported
+        // by zederia-mcp so this page lists every agent action on the computer. It only adds lines.
+        const auto entries = params.is_object() ? params.find("entries") : params.end();
+        if (!params.is_object() || entries == params.end() || !entries->is_array() || entries->empty() || entries->size() > 200)
+            return failure("a note needs 1 to 200 entries", "use zederia-mcp from the same Zederia version", "/entries").dump();
+        const std::string self = "live:" + discovery_.instanceId;
+        int noted = 0;
+        for (const auto& e : *entries) {
+            if (!e.is_object())
+                continue;
+            std::string who = plainText(textOf(e, "client"), 64);
+            if (who.empty())
+                who = "agent";
+            const std::string what = plainText(textOf(e, "action"), 240);
+            if (what.empty())
+                continue;
+            const std::string where = textOf(e, "target");
+            std::string line = who + ": " + what;
+            if (where.rfind("session:", 0) == 0)
+                line += " (headless " + plainText(where, 40) + ")";
+            else if (where.rfind("live:", 0) == 0 && where != self)
+                line += " (another instance)";
+            auto when = juce::Time::getCurrentTime();
+            const auto at = e.find("at");
+            if (at != e.end() && at->is_number_integer()) {
+                const juce::Time t(at->get<juce::int64>());
+                if (std::abs((t - when).inSeconds()) < 120.0) // the server's clock, when it is plausible
+                    when = t;
+            }
+            noteElsewhere(who, line, when);
+            ++noted;
+        }
+        return ok({{"noted", noted}});
     }
     return failure("unknown request \"" + method + "\"", "use zederia-mcp from the same Zederia version").dump();
 }

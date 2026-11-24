@@ -9,6 +9,11 @@
 #include "zederia/rt/AudioThreadGuard.h"
 #include "zederia/rt/Denormals.h"
 
+#if __has_include(<clap-juce-extensions/clap-juce-extensions.h>)
+#include <clap-juce-extensions/clap-juce-extensions.h>
+#define ZED_HAS_CLAP_PROPERTIES 1
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -115,6 +120,11 @@ float ZederiaParameter::getValueForText(const juce::String& text) const {
 
 ZederiaProcessor::ZederiaProcessor()
     : juce::AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+    insideHost_ = wrapperType != wrapperType_Standalone && wrapperType != wrapperType_Undefined;
+#ifdef ZED_HAS_CLAP_PROPERTIES
+    if (clap_juce_extensions::clap_properties::building_clap) // the CLAP wrapper reports no wrapper type
+        insideHost_ = true;
+#endif
     const auto& reg = zed::Registry::get();
     for (auto& type : slotTypes_)
         type.store(-1, std::memory_order_relaxed);

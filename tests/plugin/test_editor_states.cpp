@@ -46,7 +46,8 @@ struct Rig {
     ZederiaEditor* editor = nullptr;
     juce::File userFolder;
 
-    explicit Rig(const char* patch = nullptr, bool withLibrary = false) {
+    explicit Rig(const char* patch = nullptr, bool withLibrary = false, bool insideHost = false) {
+        processor.setInsideHost(insideHost); // as a plug-in format would set it
         (void)kPrefsRedirected;
         processor.setPlayConfigDetails(0, 2, 48000.0, 512);
         processor.prepareToPlay(48000.0, 512);
@@ -398,6 +399,69 @@ TEST_CASE("editor: page tabs are announced as selected, move with the arrow keys
             local = t;
     REQUIRE(local != nullptr);
     CHECK(local->tab(local->selected()).createAccessibilityHandler()->getCurrentState().isChecked());
+}
+
+TEST_CASE("editor: inside a host no click takes the keyboard except in a text field", "[editor][focus][host]") {
+    // Inside FL Studio a click on a knob or a preset arrow used to take the keyboard, so Space no
+    // longer started the song until the user clicked the host.
+    {
+        Rig standalone; // the Standalone and the tests: a click takes the keyboard, as before
+        CHECK(standalone.editor->getMouseClickGrabsKeyboardFocus());
+        int taking = 0;
+        for (auto* w : all<zui::Widget>(*standalone.editor))
+            taking += w->getWantsKeyboardFocus() && w->getMouseClickGrabsKeyboardFocus() ? 1 : 0;
+        CHECK(taking > 0);
+    }
+    Rig rig(nullptr, true, true);
+    CHECK_FALSE(rig.editor->getMouseClickGrabsKeyboardFocus());
+    int widgets = 0, fields = 0;
+    for (int page = 0; page < ZederiaEditor::NumPages; ++page) {
+        rig.editor->showPage(page);
+        rig.frames(1);
+        for (auto* w : all<zui::Widget>(*rig.editor)) {
+            INFO("page " << page << ": " << w->getTitle());
+            CHECK_FALSE(w->getMouseClickGrabsKeyboardFocus());
+            ++widgets;
+        }
+        for (auto* t : all<juce::TextEditor>(*rig.editor)) {
+            INFO("page " << page << ": " << t->getTitle());
+            CHECK(t->getMouseClickGrabsKeyboardFocus()); // typing a name or a search still works
+            ++fields;
+        }
+    }
+    CHECK(widgets > 100);
+    CHECK(fields > 0);
+}
+
+TEST_CASE("editor: inside a host Up and Down step through the presets, in the Library list on that page", "[editor][host][library]") {
+    Rig rig(nullptr, true, true);
+    const auto current = [&] { return rig.processor.session().currentPreset().getFileNameWithoutExtension(); };
+    // Elsewhere: by name, as the arrows beside the preset name (bass, pad, pluck).
+    rig.editor->showPage(ZederiaEditor::Synth);
+    rig.editor->browsePreset(1);
+    CHECK(current() == "bass");
+    rig.editor->browsePreset(1);
+    CHECK(current() == "pad");
+    rig.editor->browsePreset(-1);
+    CHECK(current() == "bass");
+    // On the Library page: the list's next and previous rows, selected and loaded.
+    rig.editor->showPage(ZederiaEditor::Library);
+    rig.frames(1);
+    auto* library = dynamic_cast<zui::LibraryPage*>(&rig.editor->page(ZederiaEditor::Library));
+    REQUIRE(library != nullptr);
+    REQUIRE(library->resultCount() == 3);
+    library->table().deselectAllRows();
+    rig.editor->browsePreset(1);
+    const auto first = current();
+    CHECK(library->table().getSelectedRow() == 0);
+    rig.editor->browsePreset(1);
+    CHECK(library->table().getSelectedRow() == 1);
+    CHECK(current() != first);
+    rig.editor->browsePreset(-1);
+    CHECK(library->table().getSelectedRow() == 0);
+    CHECK(current() == first);
+    rig.editor->browsePreset(-1); // the first row stays
+    CHECK(library->table().getSelectedRow() == 0);
 }
 
 TEST_CASE("editor: the focus outline is for the keyboard, not for a click, code run by a click or the window coming back", "[editor][focus]") {

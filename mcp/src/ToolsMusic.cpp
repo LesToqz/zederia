@@ -237,6 +237,7 @@ void addMusicTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                                  fail("/clip_id", "no clip \"" + id + "\" to replace", "leave clip_id out to make a new clip");
                          }
                          id = bridge.saveClip(clip, id);
+                         bridge.report(call, "wrote the clip \"" + clip.name + "\" (" + id + ")");
                          ToolOutput out;
                          out.structured = {{"clip_id", id}, {"name", clip.name}, {"notes", clip.notes.size()}, {"length_beats", clip.lengthBeats()},
                                            {"issues", list}};

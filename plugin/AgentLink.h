@@ -38,7 +38,8 @@ public:
     struct Client {
         std::string name;
         juce::Time firstSeen, lastSeen;
-        int requests = 0, edits = 0;
+        int requests = 0, edits = 0; // to this instance
+        int reported = 0;            // actions elsewhere the server reported: headless sessions, saved files
     };
     struct Entry {
         juce::Time time;
@@ -62,6 +63,8 @@ private:
     };
     std::string run(const nlohmann::json& request);
     void note(const std::string& client, const std::string& action, bool edit);
+    void noteElsewhere(const std::string& client, const std::string& action, juce::Time when);
+    Client& seen(const std::string& client, juce::Time when); // with infoMutex_ held
     void touched();
 
     ZederiaProcessor& p_;

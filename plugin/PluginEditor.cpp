@@ -3,6 +3,7 @@
 #include "ui/AgentPage.h"
 #include "ui/Audit.h"
 #include "ui/FxPage.h"
+#include "ui/HostKeys.h"
 #include "ui/KitPage.h"
 #include "ui/LibraryPage.h"
 #include "ui/ModPage.h"
@@ -46,7 +47,12 @@ ZederiaEditor::ZederiaEditor(ZederiaProcessor& processor)
     lnf_.applyTheme();
     setLookAndFeel(&lnf_);
     setTitle("Zederia");
-    setWantsKeyboardFocus(true); // the computer keys and the shortcuts arrive here
+    setWantsKeyboardFocus(true); // the computer keys and the shortcuts arrive here (in the Standalone)
+    // Inside a host a click leaves the keyboard with the host, so Space still runs its song or pattern
+    // while presets and settings change here (ui/HostKeys.h).
+    setMouseClickGrabsKeyboardFocus(!processor.insideHost());
+    if (processor.insideHost()) // Up and Down still switch presets there
+        presetKeys_ = std::make_unique<zui::PresetKeys>(*this, [this](int direction) { browsePreset(direction); });
     root_ = std::make_unique<Root>(*this);
     addAndMakeVisible(*root_);
 
@@ -276,7 +282,8 @@ void ZederiaEditor::parentHierarchyChanged() {
 }
 
 // The standalone application plays from the computer keys as soon as it opens. Inside a host the
-// keyboard stays with the host until the editor is clicked, so the host's own shortcuts keep working.
+// keyboard stays with the host (only a text field being typed in takes it), so the host's own
+// shortcuts and its transport keep working.
 void ZederiaEditor::takeKeysOnFirstShow() {
     if (!focusPending_ || !isShowing() || processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
         return;
@@ -844,6 +851,15 @@ void ZederiaEditor::savePresetAs() {
     }), false);
 }
 
+void ZederiaEditor::browsePreset(int direction) {
+    if (current_ == Library)
+        if (auto* library = dynamic_cast<zui::LibraryPage*>(pages_[Library].get()); library != nullptr && library->isVisible()) {
+            library->stepSelection(direction);
+            return;
+        }
+    stepPreset(direction);
+}
+
 void ZederiaEditor::stepPreset(int direction) {
     const auto presets = zed::scanPresets(processor_.library().factoryDir(), ctx_.userFolder().getFullPathName().toStdString());
     if (presets.empty()) {
@@ -905,6 +921,16 @@ bool ZederiaEditor::keyStateChanged(bool isKeyDown) {
 // to edit with keys keeps it for a click on itself (without an outline); a click anywhere else
 // gives the keyboard back to the editor.
 void ZederiaEditor::mouseDown(const juce::MouseEvent& e) {
+    if (processor_.insideHost()) {
+        // Inside a host: a click in the text field being typed in keeps typing; any other click
+        // ends the typing and gives the keyboard back to the host.
+        auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        if (focused != nullptr && zui::typingIn(*this) &&
+            (e.eventComponent == focused || focused->isParentOf(e.eventComponent) || e.eventComponent->isParentOf(focused)))
+            return;
+        zui::giveKeysToHost(*this);
+        return;
+    }
     auto* focused = dynamic_cast<Widget*>(juce::Component::getCurrentlyFocusedComponent());
     if (focused == nullptr)
         return;
@@ -940,6 +966,10 @@ void ZederiaEditor::timerCallback() {
     const int interval = 1000 / juce::jmax(15, ctx_.prefs.frameCap);
     if (getTimerInterval() != interval)
         startTimer(interval);
+    // Inside a host, the keyboard comes back to it within a frame whenever a part took it in code
+    // (a page's first control, a closed overlay, a text field finished with Enter or Escape).
+    if (processor_.insideHost() && !zui::typingIn(*this))
+        zui::giveKeysToHost(*this);
     tickFrame();
 }
 
