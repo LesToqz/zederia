@@ -1,0 +1,1 @@
+{"format": "zederia.fx", "version": 1, "slot": {"type": "eq", "low_type": "high_pass", "low_freq_hz": 30, "mid2_freq_hz": 3500, "mid2_gain_db": -1, "high_type": "shelf", "high_freq_hz": 10000, "high_gain_db": 3}}

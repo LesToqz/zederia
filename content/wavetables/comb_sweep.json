@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Comb Sweep",
+  "category": "Motion",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "A sawtooth through a comb whose teeth draw closer together, as a flanger does.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(1/h) * (0.5 + 0.5*cos(tau*h*(0.03 + 0.22*y)))", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

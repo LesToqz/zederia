@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Hard Clip",
+  "category": "Digital",
+  "frames": 8,
+  "morph": "crossfade",
+  "about": "A sine pushed against hard limits until it is almost a square.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "clamp(sin(tau*t) * (1 + 15*y*y), -1, 1)" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Metal Ping",
+  "about": "A struck metal bar: partials at the ratios of a free bar, the higher ones dying first, after a tiny bright tick. Plays once.",
+  "seconds": 2.5,
+  "rate": 48000,
+  "loop": false,
+  "seed": 32,
+  "peak_db": -2,
+  "layers": [
+    { "type": "partials", "at": 0, "hz": 820, "ratios": [1, 2.76, 5.40, 8.93, 13.34], "decay_ms": 900, "decay_tilt": 0.6, "spread_cents": 4, "level": 1 },
+    { "type": "burst", "at": 0, "decay_ms": 2, "color": "white", "highpass": 5000, "level": 0.4 }
+  ]
+}

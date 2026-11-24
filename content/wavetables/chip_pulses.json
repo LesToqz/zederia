@@ -1,0 +1,19 @@
+{
+  "kind": "table",
+  "name": "Chip Pulses",
+  "category": "Digital",
+  "frames": 6,
+  "morph": "none",
+  "stepped": true,
+  "about": "Six small-computer waves, one per step: square, quarter and eighth pulses, a sixteen-step triangle, an eight-step sawtooth and a frame of held random steps.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "frames": [0, 0], "expr": "square(t)" },
+    { "op": "formula", "domain": "wave", "frames": [1, 1], "expr": "t < 0.25 ? 1 : -1" },
+    { "op": "formula", "domain": "wave", "frames": [2, 2], "expr": "t < 0.125 ? 1 : -1" },
+    { "op": "formula", "domain": "wave", "frames": [3, 3], "expr": "round(tri(t) * 7.5) / 7.5" },
+    { "op": "formula", "domain": "wave", "frames": [4, 4], "expr": "floor(saw(t) * 4) / 4" },
+    { "op": "formula", "domain": "wave", "frames": [5, 5], "expr": "noise(floor(t * 32))" , "seed": 8 },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

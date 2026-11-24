@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Hard Sync Rise",
+  "category": "Motion",
+  "frames": 24,
+  "morph": "crossfade",
+  "about": "A sawtooth restarted at every cycle of the note while its own speed rises to eight times: the classic hard-sync sweep.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "saw(t * (1 + 7*y))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

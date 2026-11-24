@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Cluster Bells",
+  "category": "Metallic",
+  "frames": 6,
+  "morph": "spectral",
+  "about": "Clusters of neighbouring harmonics that rub against each other above the fundamental; the higher clusters take over across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 1 - 0.5*y : (h >= 7 && h <= 8) ? 0.7*(1 - 0.5*y) : (h >= 13 && h <= 14) ? 0.55 : (h >= 21 && h <= 23) ? 0.3 + 0.3*y : (h >= 34 && h <= 35) ? 0.15 + 0.35*y : (h >= 55 && h <= 56) ? 0.4*y : 0", "phase": "rand * tau", "seed": 21 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

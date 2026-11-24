@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Nasal Reed",
+  "category": "Formant",
+  "frames": 6,
+  "morph": "spectral",
+  "about": "Odd harmonics with a nasal resonance and a notch below it, like a reed through a narrow bore; the even harmonics and the resonance rise across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "pow(h, -0.8) * ((h % 2) == 1 ? 1 : 0.35 + 0.5*y) * (0.1 + exp(-((h - (9 + 3*y))/1.6)^2)) * (1 - 0.8*exp(-((h - 5)/1.0)^2))" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

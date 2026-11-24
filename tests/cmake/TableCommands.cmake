@@ -25,10 +25,10 @@ function(refuse pattern)
     endif()
 endfunction()
 
-# The starter content, built from its recipes.
+# The factory content, built from the content folder.
 run(content build --in ${CONTENT} --out ${OUT}/factory)
-if(NOT "${last_output}" MATCHES "built 12 wavetable.s. and 6 texture.s.")
-    message(FATAL_ERROR "content build did not build the starter set:\n${last_output}")
+if(NOT "${last_output}" MATCHES "built [6-9][0-9] wavetable.s., [2-9][0-9] texture.s. and 16 clip.s.; copied [0-9]+ preset.s., 24 shape.s. and [0-9]+ rack preset.s.")
+    message(FATAL_ERROR "content build did not build the factory set:\n${last_output}")
 endif()
 
 # Formula, in both domains, and the frame tools.

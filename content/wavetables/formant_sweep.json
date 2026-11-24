@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Formant Sweep",
+  "category": "Formant",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "One resonance swept from the second harmonic to the fortieth over a soft sawtooth, widening as it rises: a slow wah.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(0.08 + exp(-((h - (2 + 38*y^1.5))/(1.2 + 2*y))^2)) / h", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

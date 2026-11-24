@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Shimmer Steps",
+  "category": "Motion",
+  "frames": 12,
+  "morph": "spectral",
+  "about": "Groups of loud and quiet harmonics that travel upward through the series as the position rises.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(1/sqrt(h)) * (frac(h/4 - y) < 0.5 ? 1 : 0.1) * (h <= 200)" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

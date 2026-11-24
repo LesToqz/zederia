@@ -1,0 +1,11 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [
+    {"type": "drive", "mix": 0.7, "mode": "bit_crush", "amount": 0.35},
+    {"type": "drive", "mix": 0.6, "mode": "downsample", "amount": 0.15},
+    {"type": "filter", "filter_type": "svf_lp12", "cutoff_hz": 6000, "resonance": 0.1}
+  ],
+  "b": [],
+  "master": [
+    {"type": "compressor", "threshold_db": -20, "ratio": 3, "attack_ms": 10, "release_ms": 120, "makeup_db": 2},
+    {"type": "limiter", "ceiling_db": -1}
+  ]}}

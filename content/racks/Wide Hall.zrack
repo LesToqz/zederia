@@ -1,0 +1,10 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [
+    {"type": "chorus", "mix": 0.3, "voices": 4, "rate_hz": 0.5, "depth": 0.5}
+  ],
+  "b": [],
+  "master": [
+    {"type": "delay", "mix": 0.16, "mode": "ping_pong", "sync": true, "division_l": "1/8D", "division_r": "1/8D", "feedback": 0.35, "band_center_hz": 2000, "band_width": 0.6},
+    {"type": "reverb", "mix": 0.3, "mode": "hall", "size": 0.75, "decay_ms": 4500, "predelay_ms": 30, "low_cut_hz": 180, "high_cut_hz": 7000, "damping": 0.45},
+    {"type": "utility", "mono_below_hz": 120}
+  ]}}

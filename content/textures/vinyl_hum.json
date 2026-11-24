@@ -1,0 +1,16 @@
+{
+  "kind": "texture",
+  "name": "Vinyl Hum",
+  "about": "A record run-in: low mains hum, sparse pops, fine surface crackle and a faint hiss.",
+  "seconds": 5,
+  "rate": 48000,
+  "loop": true,
+  "seed": 25,
+  "peak_db": -3,
+  "layers": [
+    { "type": "hum", "hz": 60, "harmonics": 6, "tilt_db": -9, "level": 0.12 },
+    { "type": "crackle", "density": 9, "decay_ms": 0.8, "lowpass": 6000, "level": 1 },
+    { "type": "crackle", "density": 40, "decay_ms": 0.1, "lowpass": 10000, "level": 0.3 },
+    { "type": "noise", "color": "pink", "lowpass": 5000, "width": 0.5, "level": 0.03 }
+  ]
+}

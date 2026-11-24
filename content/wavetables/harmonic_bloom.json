@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Harmonic Bloom",
+  "category": "Motion",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "Harmonics up to the forty-eighth switch on one at a time in a seeded random order as the position rises.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 1 : (h <= 48 && rand*0.5 + 0.5 < y*1.05 ? pow(h, -0.8) : 0)", "seed": 31 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

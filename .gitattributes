@@ -5,3 +5,9 @@
 *.png binary
 *.zlib binary
 *.bmp binary
+*.zpreset text eol=lf
+*.zshape text eol=lf
+*.zrack text eol=lf
+*.zfx text eol=lf
+*.ico binary
+*.mid binary

@@ -1,0 +1,11 @@
+{
+  "kind": "clip",
+  "name": "Trap 808 Pattern",
+  "about": "A half-time 808 line in C minor with repeated hits and steps that slide on mono presets.",
+  "tempo": 140,
+  "bars": 2,
+  "key": "C minor",
+  "parts": [
+    { "notes": "0:1.5:C2:1 1.5:0.5:C2:0.75 2:0.75:Eb2:0.9 2.75:1.25:G1:1 4:1:C2:1 5:0.5:C2:0.7 5.5:0.5:Bb1:0.8 6:2:C2:1" }
+  ]
+}

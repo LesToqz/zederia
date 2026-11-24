@@ -1,0 +1,7 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [],
+  "b": [],
+  "master": [
+    {"type": "eq", "low_type": "high_pass", "low_freq_hz": 35, "high_type": "shelf", "high_freq_hz": 9000, "high_gain_db": 1.5},
+    {"type": "reverb", "mix": 0.14, "mode": "room", "size": 0.35, "decay_ms": 900, "predelay_ms": 6, "low_cut_hz": 200, "high_cut_hz": 8000, "damping": 0.5}
+  ]}}

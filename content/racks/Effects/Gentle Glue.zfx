@@ -1,0 +1,1 @@
+{"format": "zederia.fx", "version": 1, "slot": {"type": "compressor", "threshold_db": -14, "ratio": 2, "attack_ms": 20, "release_ms": 160, "makeup_db": 1.5}}

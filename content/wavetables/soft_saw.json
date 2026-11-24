@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Soft Saw",
+  "category": "Basics",
+  "frames": 8,
+  "morph": "spectral",
+  "about": "A sawtooth whose upper harmonics come in step by step, from almost a sine to full brightness.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "exp(-(h - 1) * 0.6 * (1 - y)^2) / h", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

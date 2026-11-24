@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Ocean Swell",
+  "about": "Slow surges of low noise that rise and fall like waves.",
+  "seconds": 8,
+  "rate": 48000,
+  "loop": true,
+  "seed": 28,
+  "peak_db": -4,
+  "layers": [
+    { "type": "wind", "center_hz": 300, "sweep_octaves": 1.8, "rate_hz": 0.07, "q": 0.8, "level": 1 },
+    { "type": "noise", "color": "brown", "lowpass": 900, "width": 0.8, "level": 0.4 }
+  ]
+}

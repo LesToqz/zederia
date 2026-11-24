@@ -1,0 +1,15 @@
+{
+  "kind": "texture",
+  "name": "Bow Hair",
+  "about": "The grain of a bow on a string: a narrow, fast-moving noise band with fine rosin ticks.",
+  "seconds": 3,
+  "rate": 48000,
+  "loop": true,
+  "seed": 24,
+  "peak_db": -5,
+  "layers": [
+    { "type": "wind", "center_hz": 2800, "sweep_octaves": 0.3, "rate_hz": 2.0, "q": 4, "level": 1 },
+    { "type": "crackle", "density": 300, "decay_ms": 0.15, "lowpass": 9000, "level": 0.25 },
+    { "type": "noise", "color": "pink", "highpass": 1500, "width": 0.7, "level": 0.2 }
+  ]
+}

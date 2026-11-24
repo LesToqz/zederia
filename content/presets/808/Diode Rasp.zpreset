@@ -1,0 +1,532 @@
+{
+  "format": "zederia.patch",
+  "version": 1,
+  "meta": {
+    "name": "Diode Rasp",
+    "author": "zederia",
+    "pack": "808",
+    "type": "808",
+    "tags": [
+      "808",
+      "mono",
+      "gritty",
+      "harmonic"
+    ],
+    "notes": "Diode drive adds a persistent rasp above a long sine tail. The body stays audible under busy hats. Punch increases the opening pitch sweep. Tone adds harmonics."
+  },
+  "global": {
+    "mode": "mono",
+    "polyphony": 16,
+    "glide_ms": 0.0,
+    "glide_curve": 0.0,
+    "glide_mode": "always",
+    "glide_scaled": false,
+    "bend_range": [
+      2.0,
+      2.0
+    ],
+    "master_db": -5.9,
+    "master_tune_cents": 0.0,
+    "reference_hz": 440.0,
+    "quality": "high",
+    "quality_offline": "high",
+    "limiter": "off",
+    "dc_filter": true,
+    "fx_off": false,
+    "midi_out": true,
+    "midi_thru": false,
+    "mpe": false,
+    "mpe_bend_range_st": 48.0,
+    "follower": {
+      "source": "internal",
+      "attack_ms": 10.0,
+      "release_ms": 150.0
+    }
+  },
+  "voice": {
+    "steal": "oldest",
+    "priority": "last",
+    "velocity_sens": 0.22,
+    "filter_routing": 0.0,
+    "drift": 0.0,
+    "variance": {
+      "cutoff": 0.0,
+      "env": 0.0,
+      "pan": 0.0,
+      "level": 0.0
+    },
+    "warmth": 0.0,
+    "noise_floor": 0.0
+  },
+  "osc1": {
+    "on": true,
+    "engine": "classic",
+    "position": 0.0,
+    "octave": 0,
+    "semi": 0,
+    "fine_cents": 0.0,
+    "coarse_st": 0.0,
+    "level_db": -5.0,
+    "pan": 0.0,
+    "phase_deg": 0.0,
+    "phase_mode": "reset",
+    "phase_random": 0.0,
+    "keytrack": true,
+    "classic": {
+      "shape": 0.92,
+      "pulse_width": 0.5
+    },
+    "warp_a": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc2"
+    },
+    "warp_b": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc2"
+    },
+    "unison": {
+      "voices": 1,
+      "detune": 0.2,
+      "range_st": 2.0,
+      "blend": 0.7,
+      "width": 0.0,
+      "position_spread": 0.0,
+      "warp_spread": 0.0,
+      "law": "linear",
+      "stack": "off",
+      "phase": "random"
+    },
+    "sends": {
+      "filter_balance": 0.0,
+      "direct": 0.0
+    }
+  },
+  "osc2": {
+    "on": false,
+    "engine": "wavetable",
+    "position": 0.0,
+    "octave": 0,
+    "semi": 0,
+    "fine_cents": 0.0,
+    "coarse_st": 0.0,
+    "level_db": -6.0,
+    "pan": 0.0,
+    "phase_deg": 0.0,
+    "phase_mode": "reset",
+    "phase_random": 1.0,
+    "keytrack": true,
+    "classic": {
+      "shape": 0.0,
+      "pulse_width": 0.5
+    },
+    "warp_a": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc1"
+    },
+    "warp_b": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc1"
+    },
+    "unison": {
+      "voices": 1,
+      "detune": 0.2,
+      "range_st": 2.0,
+      "blend": 0.7,
+      "width": 0.8,
+      "position_spread": 0.0,
+      "warp_spread": 0.0,
+      "law": "linear",
+      "stack": "off",
+      "phase": "random"
+    },
+    "sends": {
+      "filter_balance": 0.0,
+      "direct": 0.0
+    }
+  },
+  "osc3": {
+    "on": false,
+    "engine": "wavetable",
+    "position": 0.0,
+    "octave": 0,
+    "semi": 0,
+    "fine_cents": 0.0,
+    "coarse_st": 0.0,
+    "level_db": -6.0,
+    "pan": 0.0,
+    "phase_deg": 0.0,
+    "phase_mode": "reset",
+    "phase_random": 1.0,
+    "keytrack": true,
+    "classic": {
+      "shape": 0.0,
+      "pulse_width": 0.5
+    },
+    "warp_a": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc1"
+    },
+    "warp_b": {
+      "mode": "off",
+      "amount": 0.0,
+      "source": "osc1"
+    },
+    "unison": {
+      "voices": 1,
+      "detune": 0.2,
+      "range_st": 2.0,
+      "blend": 0.7,
+      "width": 0.8,
+      "position_spread": 0.0,
+      "warp_spread": 0.0,
+      "law": "linear",
+      "stack": "off",
+      "phase": "random"
+    },
+    "sends": {
+      "filter_balance": 0.0,
+      "direct": 0.0
+    }
+  },
+  "sub": {
+    "on": false,
+    "shape": "sine",
+    "octave": -1,
+    "coarse_st": 0.0,
+    "fine_cents": 0.0,
+    "level_db": -6.0,
+    "pan": 0.0,
+    "direct": false,
+    "sends": {
+      "filter_balance": 0.0
+    }
+  },
+  "texture": {
+    "on": false,
+    "mode": "loop",
+    "start": 0.0,
+    "random_start": 0.0,
+    "keytrack": false,
+    "pitch_st": 0.0,
+    "fine_cents": 0.0,
+    "level_db": -12.0,
+    "pan": 0.0,
+    "direct": false,
+    "sends": {
+      "filter_balance": 0.0
+    }
+  },
+  "filter1": {
+    "on": false,
+    "type": "svf_lp12",
+    "cutoff_hz": 2000.0,
+    "resonance": 0.0,
+    "drive": 0.0,
+    "character": 0.5,
+    "stereo_offset": 0.0,
+    "keytrack": 0.0,
+    "mix": 1.0,
+    "mix_mode": "mix"
+  },
+  "filter2": {
+    "on": false,
+    "type": "svf_lp12",
+    "cutoff_hz": 2000.0,
+    "resonance": 0.0,
+    "drive": 0.0,
+    "character": 0.5,
+    "stereo_offset": 0.0,
+    "keytrack": 0.0,
+    "mix": 1.0,
+    "mix_mode": "mix"
+  },
+  "env1": {
+    "delay_ms": 0.0,
+    "attack_ms": 3.6,
+    "hold_ms": 0.0,
+    "decay_ms": 1900.0,
+    "sustain": 0.22,
+    "release_ms": 185.0,
+    "attack_curve": 0.0,
+    "decay_curve": 0.2,
+    "release_curve": 0.5
+  },
+  "env2": {
+    "delay_ms": 0.0,
+    "attack_ms": 0.0,
+    "hold_ms": 0.0,
+    "decay_ms": 48.0,
+    "sustain": 0.0,
+    "release_ms": 18.0,
+    "attack_curve": 0.0,
+    "decay_curve": 0.62,
+    "release_curve": 0.5,
+    "mode": "standard"
+  },
+  "env3": {
+    "delay_ms": 0.0,
+    "attack_ms": 1.0,
+    "hold_ms": 0.0,
+    "decay_ms": 300.0,
+    "sustain": 1.0,
+    "release_ms": 50.0,
+    "attack_curve": 0.0,
+    "decay_curve": 0.5,
+    "release_curve": 0.5,
+    "mode": "standard"
+  },
+  "env4": {
+    "delay_ms": 0.0,
+    "attack_ms": 1.0,
+    "hold_ms": 0.0,
+    "decay_ms": 300.0,
+    "sustain": 1.0,
+    "release_ms": 50.0,
+    "attack_curve": 0.0,
+    "decay_curve": 0.5,
+    "release_curve": 0.5,
+    "mode": "standard"
+  },
+  "lfo1": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo2": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo3": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo4": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo5": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo6": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo7": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "lfo8": {
+    "mode": "retrigger",
+    "rate_hz": 2.0,
+    "sync": false,
+    "division": "1/4",
+    "anchor": false,
+    "phase_deg": 0.0,
+    "delay_ms": 0.0,
+    "rise_ms": 0.0,
+    "smooth": 0.0,
+    "polarity": "bipolar",
+    "scope": "voice",
+    "keytrack": 0.0,
+    "audio_rate": false
+  },
+  "flux1": {
+    "type": "orbit",
+    "rate_hz": 1.0,
+    "sync": false,
+    "division": "1/4",
+    "scope": "global"
+  },
+  "flux2": {
+    "type": "orbit",
+    "rate_hz": 1.0,
+    "sync": false,
+    "division": "1/4",
+    "scope": "global"
+  },
+  "arp": {
+    "on": false,
+    "mode": "up",
+    "octaves": 1,
+    "rate": "1/16",
+    "gate": 0.5,
+    "swing": 0.0,
+    "latch": false,
+    "restart": true,
+    "steps": 16,
+    "pattern": 1
+  },
+  "chord": {
+    "memory": false,
+    "scale_lock": false,
+    "key": "c",
+    "scale": "major",
+    "lock_mode": "snap",
+    "strum_ms": 0.0,
+    "strum_direction": "up",
+    "notes": [
+      0,
+      4,
+      7
+    ]
+  },
+  "clip": {
+    "on": false,
+    "slot": 1,
+    "trigger": "key",
+    "latch": false,
+    "loop": true
+  },
+  "mod": [
+    {
+      "source": "env2",
+      "dest": "osc1.coarse",
+      "amount": 0.0703125,
+      "polarity": "uni",
+      "curve": "linear",
+      "enabled": true,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "source": "macro1",
+      "via": "env2",
+      "via_invert": false,
+      "dest": "osc1.coarse",
+      "amount": 0.0546875,
+      "polarity": "uni",
+      "curve": "linear",
+      "enabled": true,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "source": "macro2",
+      "dest": "osc1.classic.shape",
+      "amount": -0.15,
+      "polarity": "uni",
+      "curve": "linear",
+      "enabled": true,
+      "mute": false,
+      "solo": false
+    }
+  ],
+  "fx": {
+    "b_routing": "parallel",
+    "filter1_balance": 0.0,
+    "filter2_balance": 0.0,
+    "direct_balance": 0.0,
+    "a": [],
+    "b": [],
+    "master": [
+      {
+        "type": "drive",
+        "on": true,
+        "mix": 0.58,
+        "mode": "diode_b",
+        "amount": 0.72,
+        "filter_position": "off",
+        "filter_morph": 0.0,
+        "filter_freq_hz": 2000.0,
+        "filter_q": 0.2,
+        "curve_morph": 0.0,
+        "curve_symmetry": "symmetric",
+        "level_db": 0.0
+      }
+    ]
+  },
+  "macros": [
+    {
+      "name": "Punch",
+      "value": 0.0,
+      "bipolar": false
+    },
+    {
+      "name": "Tone",
+      "value": 0.0,
+      "bipolar": false
+    }
+  ]
+}

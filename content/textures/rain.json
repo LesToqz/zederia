@@ -1,0 +1,15 @@
+{
+  "kind": "texture",
+  "name": "Rain",
+  "about": "Dense fine drops over a few larger ones and a soft wash.",
+  "seconds": 5,
+  "rate": 48000,
+  "loop": true,
+  "seed": 27,
+  "peak_db": -4,
+  "layers": [
+    { "type": "crackle", "density": 900, "decay_ms": 0.25, "lowpass": 7000, "level": 1 },
+    { "type": "crackle", "density": 60, "decay_ms": 1.5, "lowpass": 3000, "level": 0.5 },
+    { "type": "noise", "color": "pink", "lowpass": 6000, "highpass": 400, "width": 0.9, "level": 0.25 }
+  ]
+}

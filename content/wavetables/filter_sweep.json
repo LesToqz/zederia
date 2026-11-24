@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Filter Sweep",
+  "category": "Motion",
+  "frames": 24,
+  "morph": "spectral",
+  "about": "A sawtooth under a resonant low-pass whose cutoff climbs from the fundamental to the sixty-fourth harmonic.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(1/h) / sqrt(1 + pow(h/(1 + 63*y*y), 8)) + 1.5*exp(-((h - (1 + 63*y*y))/1.2)^2)/h", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

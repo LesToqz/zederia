@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Triangle Saw",
+  "category": "Basics",
+  "frames": 2,
+  "morph": "spectral",
+  "about": "A triangle that sharpens into a sawtooth.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "frames": [0, 0], "expr": "(h % 2) / (h*h)", "phase": "(floor(h/2) % 2) * pi" },
+    { "op": "formula", "domain": "harmonics", "frames": [1, 1], "expr": "1/h", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

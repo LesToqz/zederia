@@ -1,0 +1,1 @@
+{"format": "zederia.shape", "version": 1, "class": "shape", "range": "bipolar", "about": "A triangle whose peak comes early: a quick rise and a long fall.", "content": {"points": [{"x": 0, "y": -1, "curve": 0}, {"x": 0.15, "y": 1, "curve": 0}, {"x": 1, "y": -1, "curve": 0}]}}

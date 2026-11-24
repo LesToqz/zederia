@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Notch Drift",
+  "category": "Motion",
+  "frames": 12,
+  "morph": "spectral",
+  "about": "A sawtooth with two notches that pass each other, one rising and one falling.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(1/h) * (1 - 0.95*exp(-((h - (3 + 20*y))/1.5)^2)) * (1 - 0.9*exp(-((h - (40 - 25*y))/3)^2))", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

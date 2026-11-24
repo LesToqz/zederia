@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Wood Tap",
+  "about": "A tap on a wooden bar: a few short partials and a dull knock. Plays once.",
+  "seconds": 0.6,
+  "rate": 48000,
+  "loop": false,
+  "seed": 33,
+  "peak_db": -2,
+  "layers": [
+    { "type": "partials", "at": 0, "hz": 520, "ratios": [1, 3.93, 9.2], "levels": [1, 0.4, 0.15], "decay_ms": 90, "decay_tilt": 0.7, "level": 1 },
+    { "type": "burst", "at": 0, "decay_ms": 4, "color": "pink", "lowpass": 3000, "level": 0.5 }
+  ]
+}

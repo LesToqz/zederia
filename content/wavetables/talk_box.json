@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Talk Box",
+  "category": "Formant",
+  "frames": 12,
+  "morph": "spectral",
+  "about": "A mouth that moves from oo through ah to ee: the first resonance opens and closes while the second climbs.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "pow(h, -0.6) * (0.03 + exp(-((h - (2.7 + 4*sin(pi*y)))/1.0)^2) + 0.75*exp(-((h - (7.9 + 13*y))/1.3)^2) + 0.35*exp(-((h - (20.4 + 7*y))/1.8)^2))" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

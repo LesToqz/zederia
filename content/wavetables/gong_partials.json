@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Gong Partials",
+  "category": "Metallic",
+  "frames": 8,
+  "morph": "spectral",
+  "about": "A soft fundamental under scattered upper partials whose spacing slides across the table; the phases are seeded at random.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 0.5 : (frac(pow(h, 0.79) * (0.83 + 0.4*y)) < 0.09 ? pow(h, -0.55) : 0) * (h < 400)", "phase": "rand * pi", "seed": 11 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

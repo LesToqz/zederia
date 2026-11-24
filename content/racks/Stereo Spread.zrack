@@ -1,0 +1,10 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [
+    {"type": "widener", "size": 0.5}
+  ],
+  "b": [],
+  "master": [
+    {"type": "delay", "mix": 0.12, "mode": "dual", "sync": false, "link": false, "time_l_ms": 11, "time_r_ms": 17, "feedback": 0.1},
+    {"type": "reverb", "mix": 0.12, "mode": "plate", "size": 0.4, "decay_ms": 1200, "low_cut_hz": 250},
+    {"type": "utility", "mono_below_hz": 120}
+  ]}}

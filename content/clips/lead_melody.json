@@ -1,0 +1,11 @@
+{
+  "kind": "clip",
+  "name": "Lead Melody",
+  "about": "Eight bars of melody in F minor in two-bar phrases, written over Minor Drive Chords: chord tones on the strong beats.",
+  "tempo": 124,
+  "bars": 8,
+  "key": "F minor",
+  "parts": [
+    { "notes": "0:1.5:C5:0.8 1.5:0.5:Ab4:0.65 2:1:C5:0.7 3:1:Eb5:0.75 4:2:F5:0.85 6:1:Eb5:0.7 7:0.75:C5:0.65 8:1.5:Db5:0.8 9.5:0.5:C5:0.65 10:1:Ab4:0.7 11:1:F4:0.7 12:3:Ab4:0.75 16:1.5:Eb5:0.8 17.5:0.5:C5:0.65 18:1:Eb5:0.7 19:1:Ab5:0.85 20:1.5:G5:0.75 21.5:0.5:F5:0.65 22:1.75:Eb5:0.7 24:1:G4:0.7 25:1:Bb4:0.7 26:1.5:Eb5:0.8 27.5:0.5:Db5:0.65 28:3.5:C5:0.75" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "clip",
+  "name": "Lofi Sevenths",
+  "about": "A descending line of seventh chords in C major, one bar each, with a pushed second hit.",
+  "tempo": 84,
+  "bars": 4,
+  "key": "C major",
+  "parts": [
+    { "chords": ["IVmaj7", "iii7", "ii7", "Imaj7"], "beats_per_chord": 4, "centre": 60, "low": 52, "high": 72, "bass": true,
+      "hits": [[0, 1.5], [1.75, 2.0]], "velocity": 0.6, "bass_velocity": 0.65 }
+  ]
+}

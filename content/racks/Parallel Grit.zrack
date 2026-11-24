@@ -1,0 +1,14 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "b_routing": "parallel",
+  "filter1_balance": 0.35,
+  "filter2_balance": 0.35,
+  "direct_balance": 0.35,
+  "a": [],
+  "b": [
+    {"type": "drive", "mode": "fuzz", "amount": 0.6},
+    {"type": "filter", "filter_type": "svf_hp12", "cutoff_hz": 300}
+  ],
+  "master": [
+    {"type": "compressor", "threshold_db": -16, "ratio": 3, "attack_ms": 15, "release_ms": 140, "makeup_db": 1.5},
+    {"type": "limiter", "ceiling_db": -1}
+  ]}}

@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Spectral Tilt",
+  "category": "Harmonic",
+  "frames": 12,
+  "morph": "spectral",
+  "about": "The full harmonic series tilted from a steep 12 dB per octave to almost flat.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h <= 160 ? pow(h, -2 + 1.7*y) : 0", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Window Sync",
+  "category": "Digital",
+  "frames": 16,
+  "morph": "crossfade",
+  "about": "A sine restarted every cycle and faded out under a falling ramp, its speed rising to sixteen times the note: a resonant sync sweep without a click.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "(1 - t) * sin(tau * t * (1 + 15*y))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

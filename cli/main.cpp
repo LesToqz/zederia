@@ -121,8 +121,31 @@ Usage: zederia-cli <command> [options]
       build RECIPE.json --out FILE
 
   texture build RECIPE.json --out FILE.wav
-  content build --in RECIPES_DIR --out FACTORY_DIR
-                               Build every wavetable and texture recipe (see content/README.md)
+  content build --in CONTENT_DIR --out FACTORY_DIR [--verbose]
+                               Build the factory folder: every wavetable, texture and clip recipe,
+                               and the presets, shapes and racks, each checked (content/README.md)
+  content check                Load and play every preset; exit code 1 on a load error, a missing
+                               table or sample, clipping, silence, stuck voices or CPU above budget
+      --presets DIR            presets to check (default: the factory folder's Presets)
+      --content DIR            factory folder for "factory:" references
+      --budget PCT             CPU budget for an 8-note chord, percent of one core (default 35)
+      --threads N              parallel renders (default: up to 4); CPU is measured alone
+      --no-cpu                 skip the CPU readings
+      --report FILE.json       write every result
+      --verbose                a line for every preset, not only those with findings
+
+  soak                         Long render under random automation, notes and preset switches;
+                               exit code 1 on non-finite output, runaway levels, stuck voices,
+                               presets that fail to load or memory that grows between passes
+      --minutes M              audio to render (default 10)
+      --presets DIR            presets to switch between (default: the init patch only)
+      --content DIR            factory folder for "factory:" references
+      --seed N                 random seed (default 1)
+      --preset-seconds S       how long each preset plays (default 12)
+      --moves N                parameter moves per second (default 60)
+      --notes N                notes per second (default 8)
+      --growth-limit MB        memory growth allowed from the second pass on (default 48)
+      --report FILE.json       write the results
 
   --version                    Print the version
 )";
@@ -189,15 +212,11 @@ int cmdRender(const Args& args) {
     zed::ContentLibrary library = zed::ContentLibrary::standard();
     if (args.has("content"))
         library.setFactoryDir(args.get("content"));
-    for (int i = 0; i < zed::kNumOscs; ++i) {
-        if (const auto& data = patch.tableData[static_cast<std::size_t>(i)]) { // a table kept in the patch
-            settings.tables[static_cast<std::size_t>(i)] = zed::TableData::build(*data.table);
-            continue;
-        }
-        std::string problem;
-        settings.tables[static_cast<std::size_t>(i)] = library.loadTable(patch.tables[static_cast<std::size_t>(i)], problem, presetDir);
-        if (settings.tables[static_cast<std::size_t>(i)] == nullptr)
-            std::fprintf(stderr, "warning: osc%d: %s; the built-in table is used instead\n", i + 1, problem.c_str());
+    {
+        std::vector<std::string> problems; // tables kept in the patch or named by it, built side by side
+        settings.tables = zed::loadPatchTables(patch, library, problems, presetDir);
+        for (const auto& problem : problems)
+            std::fprintf(stderr, "warning: %s\n", problem.c_str());
     }
     {
         std::string problem;
@@ -522,6 +541,7 @@ int main(int argc, char** argv) {
         if (command == "texture") return cmdTexture(args);
         if (command == "content") return cmdContent(args);
         if (command == "clip") return cmdClip(args);
+        if (command == "soak") return cmdSoak(args);
         if (command == "ui-snapshot") return cmdUiSnapshot(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

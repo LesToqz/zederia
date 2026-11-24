@@ -1,0 +1,1 @@
+{"format": "zederia.fx", "version": 1, "slot": {"type": "reverb", "mix": 0.3, "mode": "hall", "size": 0.85, "decay_ms": 6000, "predelay_ms": 35, "low_cut_hz": 200, "high_cut_hz": 8000, "damping": 0.45, "modulation": 0.4}}

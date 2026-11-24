@@ -1,0 +1,15 @@
+{
+  "kind": "texture",
+  "name": "Hammer Felt",
+  "about": "The soft knock of a felt hammer: a low thump, a dull burst and a few woody partials. Plays once.",
+  "seconds": 0.4,
+  "rate": 48000,
+  "loop": false,
+  "seed": 30,
+  "peak_db": -2,
+  "layers": [
+    { "type": "tone", "at": 0, "hz": 110, "decay_ms": 30, "drop_octaves": 0.5, "level": 0.8 },
+    { "type": "burst", "at": 0, "decay_ms": 8, "color": "pink", "lowpass": 1800, "level": 0.5 },
+    { "type": "partials", "at": 0, "hz": 330, "ratios": [1, 2.03, 3.1, 4.2], "decay_ms": 60, "decay_tilt": 0.8, "level": 0.3 }
+  ]
+}

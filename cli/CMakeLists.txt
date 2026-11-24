@@ -1,5 +1,8 @@
-add_executable(zederia-cli main.cpp TableCommands.cpp UiSnapshot.cpp CliUtil.h)
+add_executable(zederia-cli main.cpp TableCommands.cpp ContentCommands.cpp ProcessMemory.cpp UiSnapshot.cpp CliUtil.h ProcessMemory.h)
 target_link_libraries(zederia-cli PRIVATE zederia_core zederia_warnings)
+if(WIN32)
+    target_link_libraries(zederia-cli PRIVATE psapi)
+endif()
 # ui-snapshot draws the editor, so it needs the plug-in's code when the plug-in is built.
 if(TARGET Zederia)
     target_compile_definitions(zederia-cli PRIVATE ZED_HAVE_UI=1 $<TARGET_PROPERTY:Zederia,COMPILE_DEFINITIONS>)

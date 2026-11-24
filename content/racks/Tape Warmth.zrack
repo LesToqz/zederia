@@ -1,0 +1,10 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [
+    {"type": "drive", "mode": "tube", "amount": 0.2},
+    {"type": "chorus", "mix": 0.2, "voices": 2, "rate_hz": 0.25, "depth": 0.25, "delay1_ms": 9, "delay2_ms": 16}
+  ],
+  "b": [],
+  "master": [
+    {"type": "eq", "low_type": "shelf", "low_freq_hz": 120, "low_gain_db": 1.5, "high_type": "shelf", "high_freq_hz": 7000, "high_gain_db": -3},
+    {"type": "compressor", "threshold_db": -16, "ratio": 2, "attack_ms": 25, "release_ms": 180, "makeup_db": 1.5}
+  ]}}

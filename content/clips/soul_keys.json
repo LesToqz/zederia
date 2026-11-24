@@ -1,0 +1,12 @@
+{
+  "kind": "clip",
+  "name": "Soul Keys",
+  "about": "A ii, V, I, vi turnaround with sevenths in E-flat major, struck twice a bar, with a bass.",
+  "tempo": 92,
+  "bars": 8,
+  "key": "Eb major",
+  "parts": [
+    { "chords": ["ii7", "V7", "Imaj7", "vi7"], "beats_per_chord": 8, "centre": 62, "low": 53, "high": 74, "bass": true,
+      "hits": [[0, 3.5], [3.5, 0.5], [4, 3.75]], "velocity": 0.65, "bass_velocity": 0.7 }
+  ]
+}

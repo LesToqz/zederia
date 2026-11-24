@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Sine Octaves",
+  "category": "Basics",
+  "frames": 6,
+  "morph": "spectral",
+  "about": "A sine that gathers octaves above it one by one: 2, 4, 8, 16 and 32 times its frequency.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 1 : h == 2 ? clamp(y*5, 0, 1)*0.6 : h == 4 ? clamp(y*5 - 1, 0, 1)*0.45 : h == 8 ? clamp(y*5 - 2, 0, 1)*0.32 : h == 16 ? clamp(y*5 - 3, 0, 1)*0.22 : h == 32 ? clamp(y*5 - 4, 0, 1)*0.15 : 0" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

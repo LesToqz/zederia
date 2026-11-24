@@ -1,0 +1,13 @@
+{
+  "kind": "texture",
+  "name": "Air Hiss",
+  "about": "Only the very top of the spectrum: air above 7 kHz, fully wide.",
+  "seconds": 3,
+  "rate": 48000,
+  "loop": true,
+  "seed": 22,
+  "peak_db": -10,
+  "layers": [
+    { "type": "noise", "color": "white", "highpass": 7000, "width": 1, "level": 1 }
+  ]
+}

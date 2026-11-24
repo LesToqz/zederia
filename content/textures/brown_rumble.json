@@ -1,0 +1,13 @@
+{
+  "kind": "texture",
+  "name": "Brown Rumble",
+  "about": "A deep, nearly mono rumble below 180 Hz, to thicken basses and impacts.",
+  "seconds": 4,
+  "rate": 48000,
+  "loop": true,
+  "seed": 21,
+  "peak_db": -6,
+  "layers": [
+    { "type": "noise", "color": "brown", "lowpass": 180, "highpass": 25, "width": 0.3, "level": 1 }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "clip",
+  "name": "Minor Drive Chords",
+  "about": "Four chords in F minor, two bars each, voice-led with a root bass: i, VI, III, VII.",
+  "tempo": 124,
+  "bars": 8,
+  "key": "F minor",
+  "parts": [
+    { "chords": ["i", "VI", "III", "VII"], "beats_per_chord": 8, "centre": 60, "low": 53, "high": 75, "bass": true,
+      "hits": [[0, 7.75]], "velocity": 0.7, "bass_velocity": 0.75 }
+  ]
+}
