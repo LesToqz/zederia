@@ -7,6 +7,8 @@
 #include "zederia/table/TableData.h"
 
 #include <algorithm>
+#include <array>
+#include <thread>
 
 // --- Table builder ---------------------------------------------------------------------------------
 
@@ -103,19 +105,58 @@ void ZederiaProcessor::applyLoaded(const zed::Patch& incoming, bool honourLocks)
             if (engine_.tuningLocked())
                 next.tuning = document_.tuning;
         }
-        // Tables and the texture: only what differs is loaded.
+        // Tables and the texture: only what differs is loaded, the tables side by side (a preset
+        // with three spectral tables loads in about the time of one); an oscillator holding the
+        // same table as an earlier one shares its build.
+        std::array<std::shared_ptr<const zed::TableData>, zed::kNumOscs> built, previous;
+        std::array<int, zed::kNumOscs> sameAs;
+        sameAs.fill(-1);
+        std::vector<int> needed;
         for (int osc = 0; osc < zed::kNumOscs; ++osc) {
             const auto k = static_cast<std::size_t>(osc);
             if (next.tables[k] == document_.tables[k] && next.tableData[k] == document_.tableData[k])
                 continue;
             tableBuilder_->cancel(osc);
-            if (next.tableData[k]) {
-                engine_.setTable(osc, zed::TableData::build(*next.tableData[k].table, engine_.table(osc).get()));
-            } else {
-                std::string error;
-                auto table = library_.loadTable(next.tables[k], error);
-                engine_.setTable(osc, std::move(table));
+            previous[k] = engine_.table(osc);
+            for (const int other : needed)
+                if (next.tableData[k] ? (next.tableData[static_cast<std::size_t>(other)] && next.tableData[k] == next.tableData[static_cast<std::size_t>(other)])
+                                      : (!next.tableData[static_cast<std::size_t>(other)] && next.tables[k] == next.tables[static_cast<std::size_t>(other)]))
+                    sameAs[k] = other;
+            needed.push_back(osc);
+        }
+        const auto build = [&](int osc) {
+            const auto k = static_cast<std::size_t>(osc);
+            try {
+                if (next.tableData[k]) {
+                    built[k] = zed::TableData::build(*next.tableData[k].table, previous[k].get());
+                } else {
+                    std::string error;
+                    built[k] = library_.loadTable(next.tables[k], error); // null: the built-in table
+                }
+            } catch (const std::exception&) {
+                built[k] = nullptr; // out of memory: the built-in table
             }
+        };
+        std::vector<int> toBuild;
+        for (const int osc : needed)
+            if (sameAs[static_cast<std::size_t>(osc)] < 0)
+                toBuild.push_back(osc);
+        std::vector<std::thread> workers;
+        for (std::size_t i = 0; i + 1 < toBuild.size(); ++i) {
+            try {
+                workers.emplace_back(build, toBuild[i]);
+            } catch (const std::exception&) {
+                build(toBuild[i]);
+            }
+        }
+        if (!toBuild.empty())
+            build(toBuild.back());
+        for (std::thread& w : workers)
+            w.join();
+        for (const int osc : needed) {
+            const auto k = static_cast<std::size_t>(osc);
+            const int source = sameAs[k] >= 0 ? sameAs[k] : osc;
+            engine_.setTable(osc, built[static_cast<std::size_t>(source)]);
         }
         if (next.textureSample != document_.textureSample) {
             std::string error;

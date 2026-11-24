@@ -129,8 +129,22 @@ void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcep
 int main(int argc, char* argv[]) {
 #if ZED_TEST_WITH_GUI
     const juce::ScopedJuceInitialiser_GUI gui;
+    // Processors find their factory content through ZEDERIA_FACTORY first: an empty folder of this
+    // test process, so no test depends on what is installed on the machine (a new processor starts
+    // with the factory's default preset when there is one). Tests that need content build their own.
+    const juce::File noFactory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                     .getChildFile("zederia_test_no_factory_" + juce::Uuid().toString());
+    noFactory.createDirectory();
+#if defined(_WIN32)
+    _putenv(("ZEDERIA_FACTORY=" + noFactory.getFullPathName()).toRawUTF8());
+#else
+    setenv("ZEDERIA_FACTORY", noFactory.getFullPathName().toRawUTF8(), 1);
+#endif
 #endif
     const int result = Catch::Session().run(argc, argv);
+#if ZED_TEST_WITH_GUI
+    noFactory.deleteRecursively();
+#endif
     if (leakedViolations != 0) {
         std::fprintf(stderr, "\nFAILED: the audio-thread guard reported violations in %d test case(s)\n", leakedViolations);
         return result != 0 ? result : 1;

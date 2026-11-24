@@ -35,3 +35,6 @@ target_link_libraries(zederia-mcp PRIVATE zederia_mcp_lib zederia_warnings)
 if(MSVC)
     target_compile_definitions(zederia-mcp PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
+
+# Its icon and its version in the file.
+zed_add_version_resource(zederia-mcp "Zederia agent server (MCP)" "zederia-mcp.exe" app)

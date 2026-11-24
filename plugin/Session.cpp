@@ -426,11 +426,38 @@ bool Session::savePresetFile(const juce::File& file, const zed::PatchMeta& meta,
     return true;
 }
 
+juce::File Session::defaultPresetFile() const {
+    const juce::String yours = Prefs::get().defaultPreset;
+    if (yours.isNotEmpty() && juce::File::isAbsolutePath(yours) && juce::File(yours).existsAsFile())
+        return juce::File(yours);
+    const std::string factory = p_.library().factoryDir();
+    if (!factory.empty()) {
+        const juce::File file = juce::File(juce::String::fromUTF8(factory.c_str())).getChildFile("Presets").getChildFile("Default.zpreset");
+        if (file.existsAsFile())
+            return file;
+    }
+    return {};
+}
+
+void Session::startWithDefault() {
+    const juce::File file = defaultPresetFile();
+    juce::MemoryBlock bytes;
+    if (file == juce::File() || !file.loadFileAsData(bytes))
+        return;
+    const zed::LoadResult loaded = zed::loadPatch(std::string_view(static_cast<const char*>(bytes.getData()), bytes.getSize()));
+    if (!loaded.ok())
+        return; // the built-in init sound, as without a default
+    p_.loadPresetPatch(loaded.patch);
+    presetFile_ = file;
+    const zed::Patch state = p_.snapshot();
+    history_.reset(state, "Start");
+    presetState_ = state;
+}
+
 void Session::initPatch() {
-    const juce::String path = Prefs::get().defaultPreset;
-    if (path.isNotEmpty()) {
+    if (const juce::File file = defaultPresetFile(); file != juce::File()) {
         juce::String error;
-        if (loadPresetFile(juce::File(path), error))
+        if (loadPresetFile(file, error))
             return;
     }
     history_.absorb(p_.snapshot());

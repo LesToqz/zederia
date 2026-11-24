@@ -46,9 +46,9 @@ catch_discover_tests(zederia_tests TEST_PREFIX "core." PROPERTIES TIMEOUT 600)
 
 # Command-line tools, end to end.
 add_test(NAME cli.version COMMAND zederia-cli --version)
-set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-cli ${PROJECT_VERSION}")
+set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-cli ${ZED_VERSION_FULL}")
 add_test(NAME mcp.version COMMAND zederia-mcp --version)
-set_tests_properties(mcp.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-mcp ${PROJECT_VERSION}")
+set_tests_properties(mcp.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-mcp ${ZED_VERSION_FULL}")
 add_test(NAME cli.params_doc_is_current
          COMMAND zederia-cli params --format md --check ${CMAKE_SOURCE_DIR}/docs/PARAMETERS.md)
 add_test(NAME cli.validate_good_patch

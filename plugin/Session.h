@@ -83,7 +83,14 @@ public:
     // --- Presets -------------------------------------------------------------------------------
     bool loadPresetFile(const juce::File& file, juce::String& error);
     bool savePresetFile(const juce::File& file, const zed::PatchMeta& meta, juce::String& error);
+    // Init: the default preset (below), or the built-in init sound when there is none.
     void initPatch();
+    // The default preset a new instance starts with and Init loads: yours (the preferences' Default
+    // preset) when the file exists, else the factory's Presets/Default.zpreset when it exists;
+    // otherwise none (an empty File), and the built-in init sound is used.
+    juce::File defaultPresetFile() const;
+    // Called once, by a new processor: starts with the default preset, the history starting there.
+    void startWithDefault();
     juce::File currentPreset() const { return presetFile_; }
     juce::String presetName() const;
     // True when the sound differs from the preset as it was loaded or saved.

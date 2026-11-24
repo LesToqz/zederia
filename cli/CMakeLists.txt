@@ -1,4 +1,4 @@
-add_executable(zederia-cli main.cpp TableCommands.cpp ContentCommands.cpp ProcessMemory.cpp UiSnapshot.cpp CliUtil.h ProcessMemory.h)
+add_executable(zederia-cli main.cpp TableCommands.cpp ContentCommands.cpp ProcessMemory.cpp UiSnapshot.cpp BrandCommands.cpp CliUtil.h ProcessMemory.h)
 target_link_libraries(zederia-cli PRIVATE zederia_core zederia_warnings)
 if(WIN32)
     target_link_libraries(zederia-cli PRIVATE psapi)
@@ -9,3 +9,6 @@ if(TARGET Zederia)
     target_include_directories(zederia-cli PRIVATE ${CMAKE_SOURCE_DIR}/plugin $<TARGET_PROPERTY:Zederia,INCLUDE_DIRECTORIES>)
     target_link_libraries(zederia-cli PRIVATE Zederia)
 endif()
+
+# Its icon and its version in the file.
+zed_add_version_resource(zederia-cli "Zederia command-line tool" "zederia-cli.exe" app)

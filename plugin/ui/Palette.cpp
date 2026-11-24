@@ -183,8 +183,12 @@ PrefsPanel::PrefsPanel(Context& ctx) : ctx_(ctx) {
            [this, &p, save](Button&) { p.gpuRendering = !p.gpuRendering; save(); if (onLayout) onLayout(); });
     addRow("MPE for new instances", "New instances start with MPE on.", [&p] { return p.mpeDefault ? juce::String("On") : juce::String("Off"); },
            [&p, save](Button&) { p.mpeDefault = !p.mpeDefault; save(); });
-    addRow("Default preset", "What Init loads: the built-in init sound, or the current preset file.",
-           [&p] { return p.defaultPreset.isEmpty() ? juce::String("Built-in init") : juce::File(p.defaultPreset).getFileNameWithoutExtension(); },
+    addRow("Default preset", "What a new instance starts with and Init loads: the factory's Default preset (the built-in init sound without one), or the preset open now when you click; click again to go back.",
+           [this, &p] {
+               if (p.defaultPreset.isNotEmpty())
+                   return juce::File(p.defaultPreset).getFileNameWithoutExtension();
+               return ctx_.session.defaultPresetFile() == juce::File() ? juce::String("Built-in init") : juce::String("Factory default");
+           },
            [this, &p, save](Button&) {
                const juce::File current = ctx_.session.currentPreset();
                p.defaultPreset = p.defaultPreset.isEmpty() && current.existsAsFile() ? current.getFullPathName() : juce::String();

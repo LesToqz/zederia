@@ -147,6 +147,12 @@ Usage: zederia-cli <command> [options]
       --growth-limit MB        memory growth allowed from the second pass on (default 48)
       --report FILE.json       write the results
 
+  brand --svg FILE.svg --out DIR [--installer DIR]
+                               Make the icons from the logo (plugin/brand/zederia-mark.svg):
+                               DIR/zederia.ico (16 to 256 px) and DIR/png/zederia-<size>.png, and with
+                               --installer the installer's wizard images; exit code 1 when the gap
+                               between the slabs closes at 16 or 32 px (scripts/make-icons.ps1)
+
   --version                    Print the version
 )";
 
@@ -542,6 +548,7 @@ int main(int argc, char** argv) {
         if (command == "content") return cmdContent(args);
         if (command == "clip") return cmdClip(args);
         if (command == "soak") return cmdSoak(args);
+        if (command == "brand") return cmdBrand(args);
         if (command == "ui-snapshot") return cmdUiSnapshot(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

@@ -65,4 +65,40 @@ Catch2 3.16.1 (tests only; not part of the plug-in or the tools)
   https://github.com/catchorg/Catch2
   Boost Software License 1.0.
 
+
+Third-party code inside JUCE
+============================
+
+JUCE carries these libraries in its modules (its JUCE.spdx.json lists them
+with their exact sources). The ones below are compiled into the Zederia
+plug-in, the Standalone and the command-line tool, because the JUCE modules
+Zederia uses contain them:
+
+  zlib 1.3.2 (data compression)                      zlib License
+  HarfBuzz 15.0.0 (text shaping)                     MIT License (old variant)
+  SheenBidi 2.9.0 (bidirectional text)               Apache License 2.0
+  LunaSVG 3.5.0 and PlutoVG 1.3.2 (SVG drawing)      MIT License
+  libpng 1.6.58 (PNG images)                         libpng License 2.0
+  libjpeg 10.0, Independent JPEG Group (JPEG images) IJG License
+  libwebp 1.6.0 (WebP images)                        BSD 3-Clause License
+  FLAC 1.5.0 (audio file decoding)                   BSD 3-Clause License
+  libogg 1.3.6 and libvorbis 1.3.7 (audio files)     BSD 3-Clause License
+  Opus 1.6.1, opusfile 0.12 and libopusenc 0.3       BSD 3-Clause License
+  LV2 1.18.0, lilv 0.24.12, serd 0.30.10,
+  sord 0.16.9 and sratom 0.6.8 (plug-in hosting)     ISC License
+
+This software is based in part on the work of the Independent JPEG Group.
+
+
+The installer
+=============
+
+Inno Setup
+  https://jrsoftware.org/isinfo.php
+  Copyright (C) 1997-2026 Jordan Russell. Portions Copyright (C) 2000-2026
+  Martijn Laan. All rights reserved.
+  ZederiaSetup.exe and its uninstaller are made with Inno Setup and contain
+  its setup program, used under the Inno Setup License
+  (https://jrsoftware.org/files/is/license.txt).
+
 The full text of each licence is in that component's source distribution.

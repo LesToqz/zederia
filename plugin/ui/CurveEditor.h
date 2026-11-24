@@ -48,6 +48,11 @@ public:
     void deleteSelected();
     void applyPreset(const juce::String& name); // "Sine", "Triangle", "Saw up", "Saw down", "Square", "Random steps", "Line", "S-curve"
     static juce::StringArray presetNames();
+    // A shape file (.zshape, from the Shapes folders) into the curve; false when it cannot be read.
+    bool applyShapeFile(const juce::File& file);
+    // The basic shapes, then the factory's and the user's shape files; each applies itself as one undo step.
+    void addShapeItems(juce::PopupMenu& menu);
+    void showShapesMenu(juce::Component* target);
 
     void draw(juce::Graphics& g) override;
     bool tick() override;

@@ -2,7 +2,10 @@
 # (docs/ENVIRONMENT.md). The processor wraps zederia_core; the interface is in ui/.
 juce_add_plugin(Zederia
     PRODUCT_NAME "Zederia"
+    VERSION ${PROJECT_VERSION}
     COMPANY_NAME "Zederia"
+    COMPANY_COPYRIGHT "Copyright (C) 2026 LesToqz. Free software under the GNU AGPL v3 or later."
+    DESCRIPTION "Wavetable synthesizer"
     BUNDLE_ID com.zederia.zederia
     PLUGIN_MANUFACTURER_CODE Zedr
     PLUGIN_CODE Zdra
@@ -35,6 +38,8 @@ set(ZED_PLUGIN_SOURCES
     ui/HostKeys.cpp ui/HostKeys.h
     ui/Widgets.cpp ui/Widgets.h
     ui/CurveEditor.cpp ui/CurveEditor.h
+    ui/ContentMenu.cpp ui/ContentMenu.h
+    ui/Brand.cpp ui/Brand.h
     ui/Displays.cpp ui/Displays.h
     ui/Audit.cpp ui/Audit.h
     ui/Shell.cpp ui/Shell.h
@@ -53,7 +58,7 @@ set(ZED_PLUGIN_SOURCES
     ${ZED_THEME_SOURCE})
 target_sources(Zederia PRIVATE ${ZED_PLUGIN_SOURCES})
 zed_strict_sources(PluginProcessor.cpp ProcessorEditing.cpp AgentLink.cpp Session.cpp Prefs.cpp PluginEditor.cpp
-    ui/Theme.cpp ui/Context.cpp ui/HostKeys.cpp ui/Widgets.cpp ui/CurveEditor.cpp ui/Displays.cpp ui/Audit.cpp ui/Shell.cpp ui/OutputMonitor.cpp
+    ui/Theme.cpp ui/Context.cpp ui/HostKeys.cpp ui/Widgets.cpp ui/CurveEditor.cpp ui/ContentMenu.cpp ui/Brand.cpp ui/Displays.cpp ui/Audit.cpp ui/Shell.cpp ui/OutputMonitor.cpp
     ui/Dock.cpp ui/ModOverlay.cpp ui/Palette.cpp ui/SynthPage.cpp ui/FxPage.cpp ui/ModPage.cpp ui/TablePage.cpp ui/PlayPage.cpp
     ui/LibraryPage.cpp ui/AgentPage.cpp ui/KitPage.cpp)
 
@@ -70,4 +75,21 @@ if(ZED_BUILD_CLAP)
     clap_juce_extensions_plugin(TARGET Zederia
         CLAP_ID "com.zederia.zederia"
         CLAP_FEATURES instrument synthesizer)
+endif()
+
+# The logo as the icon of the Standalone (window, taskbar, Start menu) and of the plug-in files, and
+# as the VST3 bundle's folder icon (Plugin.ico and desktop.ini at its root, as the VST3 bundle
+# layout describes; the folder gets the system attribute, which makes Explorer read desktop.ini).
+zed_add_icon_resource(Zederia_Standalone)
+zed_add_icon_resource(Zederia_VST3)
+if(TARGET Zederia_CLAP) # the framework writes no version resource for the CLAP file: this one has the icon too
+    zed_add_version_resource(Zederia_CLAP "Zederia (CLAP plug-in)" "Zederia.clap" dll)
+endif()
+if(WIN32 AND TARGET Zederia_VST3)
+    set(zed_vst3_bundle "$<TARGET_FILE_DIR:Zederia_VST3>/../..")
+    add_custom_command(TARGET Zederia_VST3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy "${ZED_ICON}" "${zed_vst3_bundle}/Plugin.ico"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/brand/desktop.ini" "${zed_vst3_bundle}/desktop.ini"
+        COMMAND attrib +s "$<SHELL_PATH:${zed_vst3_bundle}>"
+        VERBATIM)
 endif()

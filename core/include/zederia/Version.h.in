@@ -1,7 +1,7 @@
 // Generated from the project version in the top-level CMakeLists.txt.
 #pragma once
 
-#define ZED_VERSION_STRING "@PROJECT_VERSION@"
+#define ZED_VERSION_STRING "@ZED_VERSION_FULL@"
 #define ZED_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define ZED_VERSION_MINOR @PROJECT_VERSION_MINOR@
 #define ZED_VERSION_PATCH @PROJECT_VERSION_PATCH@

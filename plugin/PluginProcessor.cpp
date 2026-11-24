@@ -143,6 +143,7 @@ ZederiaProcessor::ZederiaProcessor()
     keyboard_.addListener(this);
     tableBuilder_ = std::make_unique<TableBuilder>(*this);
     session_ = std::make_unique<Session>(*this);
+    session_->startWithDefault(); // yours, the factory's, or the built-in init sound
     agentLink_ = std::make_unique<AgentLink>(*this);
     // Off by default (plan 4.8); ZEDERIA_AGENT_LINK=1 switches it on for automated live-link tests.
     if (juce::SystemStats::getEnvironmentVariable("ZEDERIA_AGENT_LINK", {}) == "1") {

@@ -166,7 +166,7 @@ public:
         paste_.setTooltip("Paste shape");
         copy_.setHelp("Copy shape", "Copy this shape; paste it into any LFO, envelope, warp curve or drive curve.");
         paste_.setHelp("Paste shape", "Paste a copied shape here.");
-        shapes_.setHelp("Shapes", "Start from a basic shape.");
+        shapes_.setHelp("Shapes", "Start from a basic shape, or a shape from the factory or your Shapes folder.");
         steps_.setHelp("Step drawing", "Drag across the grid to draw steps.");
         snap_.setHelp("Snap", "Points snap to the grid (hold Alt while dragging to move freely).");
         steps_.onClick = [this] { if (auto* e = editor()) { e->stepMode = !e->stepMode; e->repaint(); } updateButtons(); };
@@ -174,16 +174,8 @@ public:
         copy_.onClick = [this] { copyShape(); };
         paste_.onClick = [this] { pasteShape(); };
         shapes_.onClick = [this] {
-            juce::PopupMenu menu;
-            for (const auto& name : CurveEditor::presetNames())
-                menu.addItem(name, [this, name] {
-                    if (auto* e = editor()) {
-                        e->applyPreset(name);
-                        if (e->onChange) e->onChange(e->shape());
-                        if (e->onCommit) e->onCommit(e->shape(), "Shape " + name);
-                    }
-                });
-            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&shapes_));
+            if (auto* e = editor())
+                e->showShapesMenu(&shapes_);
         };
         CurveEditor::Config lfoConfig;
         lfoConfig.loopPoint = true;
