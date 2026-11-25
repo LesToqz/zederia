@@ -557,7 +557,11 @@ TEST_CASE("mcp: closing a session while other requests use it is safe", "[mcp][t
                         ++answered;
                 }
             });
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        // Close while the workers are busy: once the first answer is back (a fixed 2 ms wait raced
+        // with the threads starting on a loaded machine, and then nothing had been answered yet).
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (answered.load() == 0 && std::chrono::steady_clock::now() < until)
+            std::this_thread::yield();
         rig.ok("close_session", {{"target", t}});
         stop = true;
         for (auto& w : workers)

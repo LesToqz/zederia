@@ -1306,6 +1306,48 @@ TEST_CASE("plug-in: a new instance starts with the default preset, and Init load
     CHECK(r.session().currentPreset() == juce::File());
 }
 
+TEST_CASE("plug-in: the parameters' defaults are the values a new instance starts with", "[plugin][default]") {
+    // clap-validator's param-default-values: with the factory's Default preset installed a new
+    // instance opens with that preset's values, so those are the defaults the host is told
+    // (milestone 7: it failed once the installer had put the factory content in place).
+    const juce::String before = juce::SystemStats::getEnvironmentVariable("ZEDERIA_FACTORY", {});
+    const juce::File factory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_defaults_" + juce::Uuid().toString());
+    REQUIRE(factory.getChildFile("Presets").createDirectory().wasOk());
+    REQUIRE(juce::File(juce::String(ZED_CONTENT_DIR)).getChildFile("presets").getChildFile("Default.zpreset").copyFileTo(factory.getChildFile("Presets").getChildFile("Default.zpreset")));
+    _putenv(("ZEDERIA_FACTORY=" + factory.getFullPathName()).toRawUTF8());
+    {
+        ZederiaProcessor p;
+        REQUIRE(p.session().presetName() == "Default");
+        int checked = 0, differ = 0;
+        for (auto* parameter : p.getParameters()) {
+            ++checked;
+            if (std::abs(parameter->getDefaultValue() - parameter->getValue()) > 1.0e-6f) {
+                ++differ;
+                UNSCOPED_INFO(parameter->getName(64) << ": default " << parameter->getDefaultValue() << ", value " << parameter->getValue());
+            }
+        }
+        CHECK(checked > 700);
+        CHECK(differ == 0);
+        // The preset moves values away from the registry's, or the check above would prove nothing.
+        const auto& cutoff = zed::Registry::get().at(idx("filter1.cutoff"));
+        CHECK(std::abs(p.hostParameter(idx("filter1.cutoff"))->getDefaultValue() - static_cast<float>(cutoff.toNormalized(cutoff.def))) > 0.01f);
+        auto* reverbMix = p.hostParameter(idx("fx.m1.mix"));
+        REQUIRE(reverbMix != nullptr);
+        CHECK(reverbMix->getDefaultValue() == Catch::Approx(0.05).margin(1e-6));
+        // A slot that now holds another effect reports that effect's own default.
+        REQUIRE(p.removeEffect(2, 0));
+        REQUIRE(p.insertEffect(2, 0, "delay"));
+        const auto& delayMix = p.effectiveDef(idx("fx.m1.mix"));
+        CHECK(reverbMix->getDefaultValue() == Catch::Approx(delayMix.toNormalized(delayMix.def)).margin(1e-6));
+    }
+    _putenv(("ZEDERIA_FACTORY=" + before).toRawUTF8());
+    factory.deleteRecursively();
+    // Without a default preset the defaults are the registry's, as before.
+    ZederiaProcessor r;
+    const auto& cutoff = zed::Registry::get().at(idx("filter1.cutoff"));
+    CHECK(r.hostParameter(idx("filter1.cutoff"))->getDefaultValue() == Catch::Approx(cutoff.toNormalized(cutoff.def)).margin(1e-6));
+}
+
 TEST_CASE("editor: factory shapes, racks, effect presets and clips are offered where they are used", "[editor][content]") {
     Rig rig;
     const juce::File factory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_menus_" + juce::Uuid().toString());
