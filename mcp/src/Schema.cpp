@@ -352,16 +352,25 @@ int editDistance(const std::string& a, const std::string& b) {
 }
 
 std::string closest(const std::string& word, const std::vector<std::string>& candidates) {
+    // Suggestions are for typing slips. A long word is not one, and measuring its distance to
+    // every candidate would keep the request busy for a long time.
+    constexpr std::size_t kMaxWord = 64;
+    if (word.empty() || word.size() > kMaxWord)
+        return {};
+    const int allowed = std::max(2, static_cast<int>(word.size()) / 3);
     std::string best;
-    int bestD = 1 << 30;
+    int bestD = allowed + 1;
     for (const auto& c : candidates) {
+        // The distance is at least the difference in length, so far longer or shorter names are skipped.
+        const int lengthGap = std::abs(static_cast<int>(c.size()) - static_cast<int>(word.size()));
+        if (lengthGap >= bestD)
+            continue;
         const int d = editDistance(word, c);
         if (d < bestD) {
             bestD = d;
             best = c;
         }
     }
-    const int allowed = std::max(2, static_cast<int>(word.size()) / 3);
     return bestD <= allowed && bestD > 0 ? best : std::string();
 }
 

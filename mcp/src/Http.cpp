@@ -5,9 +5,12 @@
 // headers that must match the body; handshake revisions use Mcp-Session-Id sessions.
 #include "Transport.h"
 
+#include "zederia/link/JsonLimits.h"
 #include "zederia/link/Link.h"
 #include "zederia/util/Compress.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -44,17 +47,38 @@ bool loopbackHost(const std::string& host) {
     return h == "127.0.0.1" || h == "localhost" || h == "[::1]" || h == "::1";
 }
 
-// "http://127.0.0.1:7425" -> host part; "" when unreadable.
+// "http://127.0.0.1:7425" -> "127.0.0.1"; "" unless it is a well-formed origin: http or https,
+// a host, an optional port of one to five digits, and nothing after it.
 std::string originHost(const std::string& origin) {
     const auto scheme = origin.find("://");
     if (scheme == std::string::npos)
         return {};
-    std::string rest = origin.substr(scheme + 3);
-    if (rest.find('/') != std::string::npos)
-        rest = rest.substr(0, rest.find('/'));
-    if (!rest.empty() && rest.front() == '[')
-        return rest.substr(0, rest.find(']') + 1);
-    return rest.substr(0, rest.find(':'));
+    const std::string kind = lower(origin.substr(0, scheme));
+    if (kind != "http" && kind != "https")
+        return {};
+    const std::string rest = origin.substr(scheme + 3);
+    std::string host, port;
+    if (!rest.empty() && rest.front() == '[') {
+        const auto close = rest.find(']');
+        if (close == std::string::npos)
+            return {};
+        host = rest.substr(0, close + 1);
+        port = rest.substr(close + 1);
+    } else {
+        const auto colon = rest.find(':');
+        host = rest.substr(0, colon);
+        port = colon == std::string::npos ? std::string() : rest.substr(colon);
+    }
+    if (host.empty() || host.find_first_of("/@?#\\ ") != std::string::npos)
+        return {};
+    if (!port.empty()) {
+        if (port.size() < 2 || port.size() > 6 || port.front() != ':')
+            return {};
+        for (std::size_t i = 1; i < port.size(); ++i)
+            if (port[i] < '0' || port[i] > '9')
+                return {};
+    }
+    return host;
 }
 
 std::string hostPart(const std::string& hostHeader) {
@@ -90,6 +114,9 @@ void jsonReply(httplib::Response& res, int status, const J& body) {
 struct HttpServer::Impl {
     Server& server;
     HttpOptions options;
+    // Open subscription streams. Declared before `http`, whose stream providers count it down
+    // when they go, so it outlives them.
+    std::atomic<int> listening{0};
     httplib::Server http;
     std::thread thread;
     std::mutex mutex;
@@ -99,6 +126,8 @@ struct HttpServer::Impl {
         std::chrono::steady_clock::time_point lastUsed;
     };
     std::map<std::string, Session> sessions;
+    static constexpr std::size_t kMaxSessions = 64;
+    static constexpr int kMaxListenStreams = 2; // of the endpoint's eight workers
 
     Impl(Server& s, HttpOptions o) : server(s), options(std::move(o)) {}
 
@@ -138,6 +167,11 @@ struct HttpServer::Impl {
             return;
         if (req.body.size() > kMaxRequestBytes) {
             jsonReply(res, 413, Server::error(J(), kInvalidRequest, "Request too large"));
+            return;
+        }
+        if (!zed::jsonNestingAllowed(req.body)) {
+            jsonReply(res, 400, Server::error(J(), kInvalidRequest,
+                                              "Invalid request: nested more than " + std::to_string(zed::kMaxJsonDepth) + " levels deep"));
             return;
         }
         J m = J::parse(req.body, nullptr, false);
@@ -230,13 +264,25 @@ struct HttpServer::Impl {
             auto ch = std::make_shared<LegacyChannel>();
             RequestInfo info;
             J reply = server.handle(m, ch.get(), info);
-            const std::string newId = zed::link::randomHex(16);
+            std::string newId;
+            if (!zed::link::secureRandomHex(16, newId)) {
+                jsonReply(res, 500, Server::error(id, kInternalError, "No secure random numbers for a session id"));
+                return;
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                // Sessions unused for a day are forgotten.
+                // Sessions unused for a day are forgotten, and at most kMaxSessions are kept: the
+                // one unused longest makes room.
                 const auto now = std::chrono::steady_clock::now();
                 for (auto it = sessions.begin(); it != sessions.end();)
                     it = now - it->second.lastUsed > std::chrono::hours(24) ? sessions.erase(it) : std::next(it);
+                while (sessions.size() >= kMaxSessions) {
+                    auto oldest = sessions.begin();
+                    for (auto it = sessions.begin(); it != sessions.end(); ++it)
+                        if (it->second.lastUsed < oldest->second.lastUsed)
+                            oldest = it;
+                    sessions.erase(oldest);
+                }
                 sessions[newId] = Session{ch, {}, now};
             }
             res.set_header("Mcp-Session-Id", newId);
@@ -245,11 +291,25 @@ struct HttpServer::Impl {
         }
 
         if (method == "subscriptions/listen" && era == Server::Era::Modern) {
+            // Answered here, not by the server: check the revision as the server would.
+            const std::string version = argString(m["params"]["_meta"], "io.modelcontextprotocol/protocolVersion");
+            if (std::find(supportedVersions().begin(), supportedVersions().end(), version) == supportedVersions().end()) {
+                jsonReply(res, 400, Server::error(id, kUnsupportedVersion, "Unsupported protocol version",
+                                                  {{"supported", supportedVersions()}, {"requested", version}}));
+                return;
+            }
+            // Each open stream holds one of the endpoint's few worker threads: at most a few at once.
+            if (listening.fetch_add(1) >= kMaxListenStreams) {
+                listening.fetch_sub(1);
+                jsonReply(res, 429, Server::error(id, kInvalidRequest, "Too many open subscription streams: close one first"));
+                return;
+            }
             // No list changes while the server runs: acknowledge nothing and keep the stream
             // open (with keep-alive comments) until the client closes it.
             res.set_header("X-Accel-Buffering", "no");
             res.set_header("Cache-Control", "no-cache");
-            res.set_chunked_content_provider("text/event-stream", [id](std::size_t, httplib::DataSink& sink) {
+            auto counted = std::shared_ptr<std::atomic<int>>(&listening, [](std::atomic<int>* n) { n->fetch_sub(1); });
+            res.set_chunked_content_provider("text/event-stream", [id, counted](std::size_t, httplib::DataSink& sink) {
                 const J ack = {{"jsonrpc", "2.0"},
                                {"method", "notifications/subscriptions/acknowledged"},
                                {"params", {{"_meta", {{"io.modelcontextprotocol/subscriptionId", id}}}, {"notifications", J::object()}}}};
@@ -284,7 +344,11 @@ struct HttpServer::Impl {
                 jsonReply(res, 404, Server::error(id, kInvalidRequest, "Session not found: start a new one with initialize"));
                 return;
             }
-            it->second.active[id.dump()] = cancelled;
+            // Ids of requests in flight must differ (JSON-RPC): one cancellation entry each.
+            if (!it->second.active.emplace(id.dump(), cancelled).second) {
+                jsonReply(res, 400, Server::error(id, kInvalidRequest, "Invalid request: a request with this id is still running"));
+                return;
+            }
         }
         const auto forget = [this, sessionId, id] {
             if (sessionId.empty())

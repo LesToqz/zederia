@@ -522,8 +522,9 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              folder = clean;
                          }
                          const fs::path file = bridge.resolveWrite(folder + "/" + name + ".zpreset", {".zpreset"}, "/name", bridge.userFolder("Presets"));
+                         const bool overwrite = argBool(a, "overwrite", false);
                          std::error_code ec;
-                         if (fs::exists(file, ec) && !argBool(a, "overwrite", false))
+                         if (fs::exists(file, ec) && !overwrite)
                              fail("/name", "a preset called \"" + name + "\" already exists there", "pass overwrite: true, or choose another name");
                          auto r = bridge.edit(t, call, "Name preset " + name, [&](Patch& p) {
                              p.meta.name = name;
@@ -535,6 +536,14 @@ void addLibraryTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              p.meta.pack = pack;
                          });
                          const std::string text = zed::savePatch(r.after);
+                         // Without overwrite the file is created only when the name is still free, so a
+                         // save of the same name that finished meanwhile is not replaced.
+                         bool taken = false;
+                         if (!overwrite && !zed::link::createNewFile(utf8(file), taken)) {
+                             if (taken)
+                                 fail("/name", "a preset called \"" + name + "\" was saved there meanwhile", "pass overwrite: true, or choose another name");
+                             fail("/name", "the preset could not be written to " + utf8(file), "check the folder is writable");
+                         }
                          std::ofstream f(file, std::ios::binary);
                          f << text;
                          if (!f)

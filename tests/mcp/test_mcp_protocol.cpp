@@ -2,6 +2,7 @@
 // outputs against its schemas, error paths, and cancellation of long renders.
 #include "McpTestUtil.h"
 
+#include "zederia/link/JsonLimits.h"
 #include "zederia/link/Link.h"
 
 #include <catch2/catch_approx.hpp>
@@ -596,4 +597,107 @@ TEST_CASE("mcp: agents save presets in Presets/Agent unless the user names anoth
         CHECK(anyPath(rig.error("save_preset", {{"target", t}, {"name", "X"}, {"folder", bad}}), "/folder"));
     }
     CHECK_FALSE(fs::exists(rig.root / "user" / "Elsewhere"));
+}
+
+TEST_CASE("mcp: limits and safe file names from the milestone 7 review of the bridge", "[mcp][safety][review]") {
+    Rig rig("review");
+    const std::string t = rig.ok("open_session", J::object())["target"];
+    const J note = J::array({{{"note", 60}, {"start", 0}, {"length", 0.25}}});
+
+    // JSON nested deeper than 64 levels is refused before parsing; strings do not count.
+    const std::string bracketsInString = R"({"a":[1,{"b":"[[[["}]})";
+    const std::string escapedQuote = R"(["a\"[[[",["b"]])";
+    CHECK(zed::jsonNestingDepth(bracketsInString) == 3);
+    CHECK(zed::jsonNestingDepth(escapedQuote) == 2);
+    CHECK(zed::jsonNestingAllowed(std::string(64, '[') + std::string(64, ']')));
+    CHECK_FALSE(zed::jsonNestingAllowed(std::string(65, '[') + std::string(65, ']')));
+
+    // A very long unknown parameter id is answered at once, with no suggestion; a slip still gets one.
+    const auto started = std::chrono::steady_clock::now();
+    J e = rig.error("set_params", {{"target", t}, {"params", {{{"id", std::string(200000, 'q')}, {"value", 1}}}}});
+    CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
+    CHECK_FALSE(anyText(e, "did you mean"));
+    CHECK(zmcp::closest("filter1.cutof", {"osc1.level", "filter1.cutoff"}) == "filter1.cutoff");
+    CHECK(zmcp::closest(std::string(80, 'a'), {std::string(80, 'a') + "b"}).empty());
+
+    // Renders given the same name at the same time get a file each.
+    std::vector<J> twins(2);
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 2; ++i)
+        threads.emplace_back([&, i] {
+            zmcp::RequestInfo info;
+            zmcp::LegacyChannel ch;
+            J params = {{"name", "render_audio"}, {"arguments", {{"target", t}, {"notes", note}, {"units", "seconds"}, {"name", "twin"}}}};
+            params["_meta"] = Rig::meta();
+            const J request = {{"jsonrpc", "2.0"}, {"id", 900 + i}, {"method", "tools/call"}, {"params", params}};
+            twins[static_cast<std::size_t>(i)] = rig.server.handle(request, &ch, info);
+        });
+    for (auto& th : threads)
+        th.join();
+    std::set<std::string> files;
+    for (const auto& r : twins) {
+        INFO(r.dump().substr(0, 1000));
+        REQUIRE(r.contains("result"));
+        REQUIRE(r["result"].value("isError", true) == false);
+        files.insert(r["result"]["structuredContent"]["file"].get<std::string>());
+    }
+    CHECK(files.size() == 2);
+    CHECK(fs::exists(rig.root / "user" / "Renders" / "twin.wav"));
+    CHECK(fs::exists(rig.root / "user" / "Renders" / "twin_2.wav"));
+
+    // A render in the Renders folder is a resource; one in another folder links to its own file.
+    const J linked = rig.ok("render_audio", {{"target", t}, {"notes", note}, {"units", "seconds"}, {"name", "linked"}});
+    CHECK(linked["uri"] == "zederia://renders/linked");
+    const J resource = rig.send(rig.modern("resources/read", {{"uri", "zederia://renders/linked"}}));
+    REQUIRE(resource.contains("result"));
+    CHECK(resource["result"]["contents"][0]["text"].get<std::string>().find("zederia.render") != std::string::npos);
+    const J elsewhere = rig.ok("render_audio", {{"target", t}, {"notes", note}, {"units", "seconds"}, {"name", "linked take"}, {"folder", "Takes"}});
+    const std::string uri = elsewhere["uri"];
+    CHECK(uri.rfind("file:///", 0) == 0);
+    CHECK(uri.find("/Takes/linked%20take.wav") != std::string::npos);
+    CHECK(uri.find('\\') == std::string::npos);
+    CHECK(fs::exists(rig.root / "user" / "Renders" / "Takes" / "linked take.wav"));
+
+    // Audio too large to analyse is refused before it is read.
+    const fs::path huge = rig.root / "user" / "Renders" / "huge.wav";
+    std::ofstream(huge, std::ios::binary) << "RIFF";
+    fs::resize_file(huge, 401ull * 1024 * 1024);
+    CHECK(anyText(rig.error("analyze_audio", {{"path", "Renders/huge.wav"}}), "larger than 400 MB"));
+    CHECK(anyText(rig.error("compare_audio", {{"a", "Renders/linked.wav"}, {"b", "Renders/huge.wav"}}), "larger than 400 MB"));
+    fs::remove(huge);
+
+    // A damaged permissions file switches everything off until the AGENT page saves them again.
+    const fs::path permissions = rig.root / "settings" / "agent.json";
+    std::ofstream(permissions, std::ios::binary) << "{ \"read_patch\": true, ";
+    auto p = zed::link::loadPermissions();
+    CHECK_FALSE(p.readPatch);
+    CHECK_FALSE(p.editPatch);
+    CHECK_FALSE(p.writeZederia);
+    CHECK_FALSE(p.writeElsewhere);
+    CHECK_FALSE(p.audition);
+    CHECK_FALSE(p.readSamples);
+    CHECK(rig.call("render_audio", {{"target", t}, {"notes", note}, {"units", "seconds"}, {"name", "refused"}})["isError"] == true);
+    CHECK_FALSE(fs::exists(rig.root / "user" / "Renders" / "refused.wav"));
+    std::ofstream(permissions, std::ios::binary) << std::string(200, '[') + std::string(200, ']');
+    CHECK_FALSE(zed::link::loadPermissions().editPatch);
+    fs::remove(permissions);
+    CHECK(zed::link::loadPermissions() == zed::link::Permissions{});
+
+    // Tokens and session ids come from the system's secure random numbers.
+    std::string a, b;
+    REQUIRE(zed::link::secureRandomHex(16, a));
+    REQUIRE(zed::link::secureRandomHex(16, b));
+    CHECK(a.size() == 32);
+    CHECK(a.find_first_not_of("0123456789abcdef") == std::string::npos);
+    CHECK(a != b);
+
+    // A file is created only while its name is free.
+    bool taken = false;
+    const fs::path fresh = rig.root / "user" / "fresh.txt";
+    CHECK(zed::link::createNewFile(fresh.string(), taken));
+    CHECK_FALSE(taken);
+    CHECK_FALSE(zed::link::createNewFile(fresh.string(), taken));
+    CHECK(taken);
+    CHECK_FALSE(zed::link::createNewFile((rig.root / "missing" / "x.txt").string(), taken));
+    CHECK_FALSE(taken);
 }

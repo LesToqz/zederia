@@ -1,4 +1,5 @@
 #include "zederia/link/Link.h"
+#include "zederia/link/JsonLimits.h"
 
 #include <algorithm>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -128,6 +130,27 @@ struct UserOnlySecurity {
 
 } // namespace
 
+bool createNewFile(const std::string& path, bool& taken) {
+    taken = false;
+#ifdef _WIN32
+    HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD e = GetLastError();
+        taken = e == ERROR_FILE_EXISTS || e == ERROR_ALREADY_EXISTS;
+        return false;
+    }
+    CloseHandle(h);
+    return true;
+#else
+    std::error_code ec;
+    if (fs::exists(pathOf(path), ec)) {
+        taken = true;
+        return false;
+    }
+    return static_cast<bool>(std::ofstream(pathOf(path), std::ios::binary));
+#endif
+}
+
 bool writePrivateFile(const std::string& path, const std::string& text, std::string& error) {
     std::error_code ec;
     fs::create_directories(pathOf(path).parent_path(), ec);
@@ -214,17 +237,9 @@ std::string settingsDir() {
 
 std::string discoveryDir() { return utf8Of(pathOf(localDir()) / "link"); }
 
-std::string randomHex(int bytes) {
-    std::vector<unsigned char> buf(static_cast<std::size_t>(std::max(1, bytes)));
-#ifdef _WIN32
-    if (BCryptGenRandom(nullptr, buf.data(), static_cast<ULONG>(buf.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
-        for (auto& b : buf) // never expected; still not predictable across processes
-            b = static_cast<unsigned char>(GetTickCount64() ^ GetCurrentProcessId() ^ reinterpret_cast<std::uintptr_t>(&b));
-#else
-    std::random_device rd;
-    for (auto& b : buf)
-        b = static_cast<unsigned char>(rd());
-#endif
+namespace {
+
+std::string hexOf(const std::vector<unsigned char>& buf) {
     static const char* hex = "0123456789abcdef";
     std::string out;
     for (const unsigned char b : buf) {
@@ -232,6 +247,42 @@ std::string randomHex(int bytes) {
         out.push_back(hex[b & 15]);
     }
     return out;
+}
+
+// Bytes from the system's secure random source; false when there is none.
+bool secureBytes(std::vector<unsigned char>& buf) {
+#ifdef _WIN32
+    if (BCryptGenRandom(nullptr, buf.data(), static_cast<ULONG>(buf.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+        return true;
+#endif
+    try {
+        std::random_device rd; // the system's source here (MSVC: RtlGenRandom; elsewhere /dev/urandom)
+        for (auto& b : buf)
+            b = static_cast<unsigned char>(rd());
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+} // namespace
+
+bool secureRandomHex(int bytes, std::string& out) {
+    std::vector<unsigned char> buf(static_cast<std::size_t>(std::max(1, bytes)));
+    if (!secureBytes(buf)) {
+        out.clear();
+        return false;
+    }
+    out = hexOf(buf);
+    return true;
+}
+
+std::string randomHex(int bytes) {
+    std::vector<unsigned char> buf(static_cast<std::size_t>(std::max(1, bytes)));
+    if (!secureBytes(buf)) // names and ids only (never secrets): unique enough without a secure source
+        for (std::size_t i = 0; i < buf.size(); ++i)
+            buf[i] = static_cast<unsigned char>((std::chrono::steady_clock::now().time_since_epoch().count() >> (i % 8)) ^ (i * 131u));
+    return hexOf(buf);
 }
 
 // --- Discovery --------------------------------------------------------------------------------------
@@ -300,7 +351,7 @@ std::vector<Discovery> listDiscoveries() {
         if (!readText(it->path(), text))
             continue;
         Discovery d;
-        const J j = J::parse(text, nullptr, false);
+        const J j = jsonNestingAllowed(text) ? J::parse(text, nullptr, false) : J(J::value_t::discarded);
         if (j.is_discarded() || !fromJson(j, d))
             continue;
         if (!processAlive(d.pid)) {
@@ -646,9 +697,17 @@ std::string permissionsPath() { return utf8Of(pathOf(settingsDir()) / "agent.jso
 Permissions loadPermissions() {
     std::string text;
     if (!readText(pathOf(permissionsPath()), text))
-        return Permissions{};
-    const J j = J::parse(text, nullptr, false);
-    return j.is_discarded() ? Permissions{} : permissionsFromJson(j);
+        return Permissions{}; // none saved yet: the defaults
+    const J j = jsonNestingAllowed(text) ? J::parse(text, nullptr, false) : J(J::value_t::discarded);
+    if (j.is_discarded() || !j.is_object()) {
+        // A damaged file must not hand back what the user may have switched off: everything stays
+        // off until the AGENT page saves the permissions again.
+        Permissions closed;
+        closed.readPatch = closed.editPatch = closed.writeZederia = closed.writeElsewhere = false;
+        closed.audition = closed.readSamples = false;
+        return closed;
+    }
+    return permissionsFromJson(j);
 }
 
 bool savePermissions(const Permissions& p, std::string& error) {

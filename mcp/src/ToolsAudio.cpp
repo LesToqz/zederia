@@ -7,6 +7,7 @@
 #include "zederia/util/Compress.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -23,6 +24,23 @@ std::vector<std::uint8_t> readBytes(const fs::path& p) {
     return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+// Audio for the analysis: refused before it is read when the file is larger than ten minutes of
+// stereo 32-bit audio at 96 kHz could be, and after decoding when it plays longer than ten minutes.
+constexpr std::uintmax_t kMaxAnalysisBytes = 400ull * 1024 * 1024;
+constexpr double kMaxAnalysisSeconds = 600.0;
+
+void loadForAnalysis(const fs::path& file, const char* where, std::vector<float>& l, std::vector<float>& r, double& sr) {
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(file, ec);
+    if (!ec && size > kMaxAnalysisBytes)
+        fail(where, "the file is larger than 400 MB", "analyze a shorter excerpt of at most ten minutes");
+    std::string error;
+    if (!zed::analysis::loadAudioFile(readBytes(file), l, r, sr, error))
+        fail(where, "the file cannot be read: " + error, "use a PCM or float WAV file");
+    if (static_cast<double>(l.size()) / sr > kMaxAnalysisSeconds)
+        fail(where, "the file is longer than 10 minutes", "analyze a shorter excerpt");
+}
+
 void writeBytes(const fs::path& p, const std::vector<std::uint8_t>& bytes) {
     std::ofstream f(p, std::ios::binary);
     f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
@@ -34,13 +52,40 @@ zed::WavFormat wavFormat(const std::string& s) {
     return s == "pcm16" ? zed::WavFormat::Pcm16 : s == "float32" ? zed::WavFormat::Float32 : zed::WavFormat::Pcm24;
 }
 
-// A file stem that does not exist yet in `dir` ("name", "name_2", "name_3" ...).
+// A file name that was free in `dir` ("name", "name_2", "name_3" ...). The file is created at
+// once, so two renders given the same name at the same time never write into one file.
 fs::path freshPath(const fs::path& dir, const std::string& stem, const std::string& ext, bool overwrite) {
     fs::path p = dir / pathFromUtf8(stem + ext);
-    std::error_code ec;
-    for (int n = 2; !overwrite && fs::exists(p, ec) && n < 10000; ++n)
+    if (overwrite)
+        return p;
+    for (int n = 2; n <= 10000; ++n) {
+        bool taken = false;
+        if (zed::link::createNewFile(utf8(p), taken))
+            return p;
+        if (!taken)
+            fail("", "the file " + utf8(p) + " could not be created", "check the folder is writable and the disk has room");
         p = dir / pathFromUtf8(stem + "_" + std::to_string(n) + ext);
-    return p;
+    }
+    fail("/name", "there are already 10000 renders called \"" + stem + "\" in " + utf8(dir), "choose another name or pass overwrite: true");
+}
+
+// A file:// URI for a local file: forward slashes, other characters outside the unreserved set
+// percent-encoded.
+std::string fileUri(const fs::path& p) {
+    std::string s = utf8(p);
+    std::replace(s.begin(), s.end(), '\\', '/');
+    static const char* hex = "0123456789ABCDEF";
+    std::string out = "file:///";
+    for (const unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~' || c == '/' || c == ':')
+            out += static_cast<char>(c);
+        else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
 }
 
 struct Rendered {
@@ -156,17 +201,19 @@ struct Written {
     std::vector<J> content;
 };
 
-// Writes the audio (and tail, MIDI, spectrogram, sidecar) and analyses it.
+// Writes the audio (and tail, MIDI, spectrogram, sidecar) and analyses it. A render in the
+// Renders folder is the resource zederia://renders/<name>; one elsewhere links to its file.
 Written writeRender(const Rendered& r, const fs::path& dir, const std::string& stem, const J& a, const zed::Clip* clip,
-                    const std::string& targetName, const std::vector<std::string>& problems) {
+                    const std::string& targetName, const std::vector<std::string>& problems, bool inRenders) {
     Written w;
     const bool overwrite = argBool(a, "overwrite", false);
     const fs::path wav = freshPath(dir, stem, ".wav", overwrite);
     const std::string finalStem = utf8(wav.stem());
+    const std::string uri = inRenders ? "zederia://renders/" + finalStem : fileUri(wav);
     const auto fmt = wavFormat(argString(a, "format", "pcm24"));
     writeBytes(wav, zed::encodeWav(r.left, r.right, r.sampleRate, fmt));
     w.info["file"] = utf8(wav);
-    w.info["uri"] = "zederia://renders/" + finalStem;
+    w.info["uri"] = uri;
     w.info["duration_s"] = std::round(static_cast<double>(r.left.size()) / r.sampleRate * 1000.0) / 1000.0;
     w.info["sample_rate"] = r.sampleRate;
     if (!r.tailLeft.empty()) {
@@ -194,7 +241,7 @@ Written writeRender(const Rendered& r, const fs::path& dir, const std::string& s
     if (!problems.empty())
         w.info["problems"] = problems;
     w.content.insert(w.content.begin(), J{{"type", "resource_link"},
-                                          {"uri", "zederia://renders/" + finalStem},
+                                          {"uri", uri},
                                           {"name", finalStem + ".wav"},
                                           {"mimeType", "audio/wav"},
                                           {"description", "rendered audio at " + utf8(wav)}});
@@ -332,7 +379,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              }
                              if (stem.find_first_of("/\\:*?\"<>|") != std::string::npos || stem.find("..") != std::string::npos)
                                  fail("/name", "the name cannot contain / \\ : * ? \" < > | or ..", "use letters, digits, - and _");
-                             Written w = writeRender(r, dir, stem, a, isClip ? &clip : nullptr, t, problems);
+                             Written w = writeRender(r, dir, stem, a, isClip ? &clip : nullptr, t, problems, folder.empty());
                              w.info["tail"] = job.tail;
                              if (isClip) {
                                  w.info["loop"] = {{"bars", clip.bars}, {"beats", clip.lengthBeats()}, {"tempo", job.bpm}, {"seconds", job.loopSeconds}};
@@ -370,11 +417,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          const fs::path file = bridge.resolveRead(argString(a, "path"), {".wav"}, "/path");
                          std::vector<float> l, r;
                          double sr = 48000.0;
-                         std::string error;
-                         if (!zed::analysis::loadAudioFile(readBytes(file), l, r, sr, error))
-                             fail("/path", "the file cannot be read: " + error, "use a PCM or float WAV file");
-                         if (static_cast<double>(l.size()) / sr > 600.0)
-                             fail("/path", "the file is longer than 10 minutes", "analyze a shorter excerpt");
+                         loadForAnalysis(file, "/path", l, r, sr);
                          zed::analysis::Audio audio{l, r, sr};
                          zed::analysis::Options o;
                          o.noteOffSeconds = argNumber(a, "note_off_s", -1.0);
@@ -401,11 +444,8 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          const fs::path fb = bridge.resolveRead(argString(a, "b"), {".wav"}, "/b");
                          std::vector<float> la, ra, lb, rb;
                          double sa = 48000, sb = 48000;
-                         std::string error;
-                         if (!zed::analysis::loadAudioFile(readBytes(fa), la, ra, sa, error))
-                             fail("/a", "cannot read: " + error, "use a WAV file");
-                         if (!zed::analysis::loadAudioFile(readBytes(fb), lb, rb, sb, error))
-                             fail("/b", "cannot read: " + error, "use a WAV file");
+                         loadForAnalysis(fa, "/a", la, ra, sa);
+                         loadForAnalysis(fb, "/b", lb, rb, sb);
                          const auto c = zed::analysis::compare({la, ra, sa}, {lb, rb, sb});
                          ToolOutput out;
                          out.structured = {{"a", utf8(fa)}, {"b", utf8(fb)}, {"comparison", zed::analysis::toJson(c)}};
@@ -570,7 +610,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                              std::vector<std::string> problems;
                              const double from = static_cast<double>(done) / static_cast<double>(total);
                              const Rendered r = runRender(bridge, job, call, from, from + 1.0 / static_cast<double>(total), problems);
-                             Written w = writeRender(r, dir, stem, args, clip, extra.value("preset", sources[0]), problems);
+                             Written w = writeRender(r, dir, stem, args, clip, extra.value("preset", sources[0]), problems, false);
                              extra["file"] = w.info["file"];
                              extra["kind"] = kind;
                              if (w.info.contains("midi_file"))
@@ -636,7 +676,7 @@ void addAudioTools(std::vector<ToolDef>& tools, Bridge& bridge) {
                          ToolOutput out;
                          out.structured = {{"folder", utf8(dir)}, {"files", files}, {"count", files.size()}};
                          out.summary = "Exported " + std::to_string(files.size()) + " file(s) to " + utf8(dir) + ".";
-                         out.content.push_back({{"type", "resource_link"}, {"uri", "file:///" + utf8(dir)}, {"name", name}, {"description", "the pack folder"}});
+                         out.content.push_back({{"type", "resource_link"}, {"uri", fileUri(dir)}, {"name", name}, {"description", "the pack folder"}});
                          return out;
                      }});
 }

@@ -4,6 +4,7 @@
 #include "zederia/engine/Engine.h"
 #include "zederia/params/Registry.h"
 #include "zederia/patch/PatchIO.h"
+#include "zederia/rt/AudioThreadGuard.h"
 
 #include <algorithm>
 #include <atomic>
@@ -382,7 +383,7 @@ ContentCheckReport checkPresets(const std::string& presetsDir, const ContentLibr
     const int threads = std::clamp(options.threads > 0 ? options.threads : static_cast<int>(std::min(hardware, 4u)), 1, 16);
     std::atomic<int> nextIndex{0};
     std::atomic<int> done{0};
-    std::mutex reporting;
+    rt::Mutex reporting;
     const auto worker = [&] {
         for (int i = nextIndex.fetch_add(1); i < total; i = nextIndex.fetch_add(1)) {
             const auto k = static_cast<std::size_t>(i);
@@ -392,7 +393,7 @@ ContentCheckReport checkPresets(const std::string& presetsDir, const ContentLibr
             report.presets[k] = checkWithoutCpu(files[k].string(), relative, library, options, patches[k], ok);
             loaded[k] = ok ? 1 : 0;
             if (!options.measureCpu && options.progress) {
-                const std::lock_guard<std::mutex> lock(reporting);
+                const std::lock_guard<rt::Mutex> lock(reporting);
                 options.progress(done.fetch_add(1) + 1, total, report.presets[k]);
             }
         }
