@@ -14,6 +14,24 @@ function(zed_add_icon_resource target)
     set_property(SOURCE "${rc}" APPEND PROPERTY OBJECT_DEPENDS "${ZED_ICON}")
 endfunction()
 
+# The version resource of the Standalone and the VST3 plug-in, which share one resource file made
+# by the framework from `shared_target` (the plug-in's shared code). Defining
+# JUCE_USER_DEFINED_RC_FILE there makes that file include this version block instead of its own.
+function(zed_set_plugin_version_resource shared_target description)
+    if(NOT WIN32 OR NOT TARGET ${shared_target})
+        return()
+    endif()
+    set(ZED_RC_DESCRIPTION "${description}")
+    if(ZED_VERSION_SUFFIX)
+        set(ZED_RC_FLAGS "VS_FF_PRERELEASE")
+    else()
+        set(ZED_RC_FLAGS "0x0L")
+    endif()
+    set(rc "${CMAKE_CURRENT_BINARY_DIR}/${shared_target}_version.rc")
+    configure_file("${CMAKE_SOURCE_DIR}/cmake/PluginVersion.rc.in" "${rc}" @ONLY)
+    target_compile_definitions(${shared_target} PRIVATE "JUCE_USER_DEFINED_RC_FILE=\"${rc}\"")
+endfunction()
+
 # The icon and a version resource, for the command-line tool and the agent server.
 function(zed_add_version_resource target description file type)
     if(NOT WIN32)

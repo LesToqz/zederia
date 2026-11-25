@@ -82,6 +82,7 @@ endif()
 # layout describes; the folder gets the system attribute, which makes Explorer read desktop.ini).
 zed_add_icon_resource(Zederia_Standalone)
 zed_add_icon_resource(Zederia_VST3)
+zed_set_plugin_version_resource(Zederia "Zederia wavetable synthesizer")
 if(TARGET Zederia_CLAP) # the framework writes no version resource for the CLAP file: this one has the icon too
     zed_add_version_resource(Zederia_CLAP "Zederia (CLAP plug-in)" "Zederia.clap" dll)
 endif()
