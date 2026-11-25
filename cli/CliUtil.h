@@ -33,6 +33,7 @@ inline bool isFlag(const std::string& name) {
 }
 
 int cmdUiSnapshot(const Args& args); // UiSnapshot.cpp, or a stub when the plug-in is not built
+int cmdUiHelp(const Args& args);     // UiSnapshot.cpp: the help-strip texts as the manual's interface reference
 int cmdBrand(const Args& args);      // BrandCommands.cpp, or a stub when the plug-in is not built
 
 inline bool parseArgs(int argc, char** argv, int first, Args& out) {

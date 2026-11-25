@@ -83,6 +83,10 @@ Usage: zederia-cli <command> [options]
       --audit                  check clipping, overlap, truncated and small text, unlabeled
                                controls and theme contrast; exit code 1 on any finding
 
+  ui-help                      Print the help-strip texts of every page as Markdown (the manual's reference)
+      --update FILE            replace the generated block between the ui-help markers in FILE
+      --check FILE             exit code 1 when that block in FILE is out of date
+
   table SUBCOMMAND             The wavetable toolkit. Tables are WAV files of 2048-sample frames.
                                Frame numbers start at 0; --scope is all, a frame, or a range such as 2-7.
       info FILE [--json]       name, frames, morph mode, level and size
@@ -550,6 +554,7 @@ int main(int argc, char** argv) {
         if (command == "soak") return cmdSoak(args);
         if (command == "brand") return cmdBrand(args);
         if (command == "ui-snapshot") return cmdUiSnapshot(args);
+        if (command == "ui-help") return cmdUiHelp(args);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return kFailed;

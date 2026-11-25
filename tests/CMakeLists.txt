@@ -108,6 +108,9 @@ if(ZED_BUILD_PLUGIN)
     # The snapshot tool end to end: one page at one scale, with the interface checks.
     add_test(NAME cli.ui_snapshot_audit
              COMMAND zederia-cli ui-snapshot --page synth --scale 100 --audit --out ${CMAKE_CURRENT_BINARY_DIR}/ui_snapshot)
+    # The manual's interface reference is the help-strip texts of the interface itself.
+    add_test(NAME cli.manual_reference
+             COMMAND zederia-cli ui-help --check ${CMAKE_SOURCE_DIR}/docs/MANUAL.md)
 endif()
 # The factory content, end to end: every preset loads and plays within its limits (milestone 7).
 # Renders take minutes in an unoptimised build, so the test runs in optimised builds only.
