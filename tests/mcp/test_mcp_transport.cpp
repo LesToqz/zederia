@@ -7,10 +7,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <thread>
 
@@ -387,4 +389,170 @@ TEST_CASE("mcp: HTTP cancellation: closing the event stream stops the render", "
     CHECK(h.rig.server.cancelledCount() == before + 1);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     CHECK_FALSE(fs::exists(h.rig.root / "user" / "Renders" / "http_cancelled.wav"));
+}
+
+TEST_CASE("mcp: transports refuse deep nesting, malformed origins, extra streams and reused ids", "[mcp][transport][safety][review]") {
+    // stdio: a deeply nested line is answered with an error and the next line still works.
+    {
+        Rig rig("stdio_nesting");
+        const std::string deep = std::string(5000, '[') + std::string(5000, ']');
+        const auto out = runStdioScript(rig.server, rig.root,
+                                        {R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"x":)" + deep + "}}",
+                                         R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"theory","arguments":{"action":"scale","key":"D dorian"},"_meta":)" +
+                                             metaText() + "}}"});
+        bool refused = false;
+        for (const auto& msg : out)
+            refused = refused || (msg.contains("error") && msg["id"].is_null() && msg["error"]["message"].get<std::string>().find("nested") != std::string::npos);
+        CHECK(refused);
+        CHECK(byId(out, 1).is_null());
+        CHECK(byId(out, 2)["result"]["structuredContent"]["scale"]["name"] == "D dorian");
+    }
+
+    HttpRig h("http_review");
+    auto c = h.client();
+    const std::string list = HttpRig::body("tools/list", J::object());
+
+    // HTTP: the same, before parsing.
+    std::string deepBody = list;
+    deepBody.insert(deepBody.size() - 1, ",\"x\":" + std::string(5000, '[') + std::string(5000, ']'));
+    auto r = c.Post("/mcp", h.modernHeaders("tools/list"), deepBody, "application/json");
+    REQUIRE(r);
+    CHECK(r->status == 400);
+    CHECK(J::parse(r->body)["error"]["code"] == -32600);
+
+    // An Origin must be well formed: http or https, a host, a port of digits, nothing after it.
+    for (const std::string bad : {"http://localhost:3000/path", "http://localhost:30000000", "http://localhost:30a0", "ftp://localhost",
+                                  "http://user@localhost", "http://localhost:", "http://[::1", "localhost", "null"}) {
+        INFO(bad);
+        auto headers = h.modernHeaders("tools/list");
+        headers.emplace("Origin", bad);
+        r = c.Post("/mcp", headers, list, "application/json");
+        REQUIRE(r);
+        CHECK(r->status == 403);
+    }
+    for (const std::string good : {"http://[::1]:8080", "https://127.0.0.1", "HTTP://LOCALHOST:5173"}) {
+        INFO(good);
+        auto headers = h.modernHeaders("tools/list");
+        headers.emplace("Origin", good);
+        r = c.Post("/mcp", headers, list, "application/json");
+        REQUIRE(r);
+        CHECK(r->status == 200);
+    }
+
+    // subscriptions/listen checks the revision like every other request.
+    J badListen = J::parse(HttpRig::body("subscriptions/listen", {{"notifications", J::object()}}, 20));
+    badListen["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = "1900-01-01";
+    auto oldHeaders = h.modernHeaders("subscriptions/listen");
+    oldHeaders.erase("MCP-Protocol-Version");
+    oldHeaders.emplace("MCP-Protocol-Version", "1900-01-01");
+    r = c.Post("/mcp", oldHeaders, badListen.dump(), "application/json");
+    REQUIRE(r);
+    CHECK(r->status == 400);
+    CHECK(J::parse(r->body)["error"]["code"] == -32022);
+
+    // At most two subscription streams are open at once; a third waits until one closes.
+    const auto listenRequest = [&](int id) {
+        httplib::Request hr;
+        hr.method = "POST";
+        hr.path = "/mcp";
+        hr.headers = h.modernHeaders("subscriptions/listen");
+        hr.set_header("Content-Type", "application/json");
+        hr.body = HttpRig::body("subscriptions/listen", {{"notifications", J::object()}}, id);
+        return hr;
+    };
+    std::atomic<int> acknowledged{0};
+    std::vector<std::unique_ptr<httplib::Client>> streams;
+    for (int i = 0; i < 2; ++i)
+        streams.push_back(std::make_unique<httplib::Client>("127.0.0.1", h.port));
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 2; ++i)
+        readers.emplace_back([&, i] {
+            httplib::Request hr = listenRequest(30 + i);
+            hr.content_receiver = [&](const char* data, std::size_t len, std::uint64_t, std::uint64_t) {
+                if (std::string(data, len).find("acknowledged") != std::string::npos)
+                    ++acknowledged;
+                return true;
+            };
+            streams[static_cast<std::size_t>(i)]->send(hr);
+        });
+    auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (acknowledged.load() < 2 && std::chrono::steady_clock::now() < until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(acknowledged.load() == 2);
+    r = c.Post("/mcp", h.modernHeaders("subscriptions/listen"), HttpRig::body("subscriptions/listen", {{"notifications", J::object()}}, 32), "application/json");
+    REQUIRE(r);
+    CHECK(r->status == 429);
+    for (auto& s : streams)
+        s->stop();
+    for (auto& th : readers)
+        th.join();
+    int status = 0;
+    for (int attempt = 0; attempt < 50 && status != 200; ++attempt) {
+        httplib::Client again("127.0.0.1", h.port);
+        httplib::Request hr = listenRequest(40 + attempt);
+        hr.response_handler = [&](const httplib::Response& response) {
+            status = response.status;
+            return true;
+        };
+        hr.content_receiver = [](const char*, std::size_t, std::uint64_t, std::uint64_t) { return false; }; // close at once
+        again.send(hr);
+        if (status != 200)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    CHECK(status == 200);
+
+    // A handshake session refuses a request whose id is still running.
+    httplib::Headers auth = {{"Authorization", "Bearer " + h.token}, {"Accept", "application/json, text/event-stream"}};
+    r = c.Post("/mcp", auth, R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}})",
+               "application/json");
+    REQUIRE(r);
+    REQUIRE(r->status == 200);
+    auto withSession = auth;
+    withSession.emplace("Mcp-Session-Id", r->get_header_value("Mcp-Session-Id"));
+    withSession.emplace("MCP-Protocol-Version", "2025-11-25");
+    CHECK(c.Post("/mcp", withSession, R"({"jsonrpc":"2.0","method":"notifications/initialized"})", "application/json")->status == 202);
+    const std::string target = h.rig.ok("open_session", J::object())["target"];
+    h.rig.ok("apply_patch", {{"target", target},
+                             {"patch", J::parse(R"({"osc1":{"unison":{"voices":16}},"osc2":{"on":true,"unison":{"voices":16}},"osc3":{"on":true,"unison":{"voices":16}}})")}});
+    const J longRequest = {{"jsonrpc", "2.0"},
+                           {"id", 7},
+                           {"method", "tools/call"},
+                           {"params",
+                            {{"name", "render_audio"},
+                             {"arguments", {{"target", target}, {"notes", J::parse(heavyNotes())}, {"units", "seconds"}, {"name", "http_reused_id"}}},
+                             {"_meta", {{"progressToken", "reused"}}}}}};
+    std::atomic<bool> running{false}, stop{false};
+    std::thread longOne([&] {
+        httplib::Client lc("127.0.0.1", h.port);
+        lc.set_read_timeout(60, 0);
+        httplib::Request hr;
+        hr.method = "POST";
+        hr.path = "/mcp";
+        hr.headers = withSession;
+        hr.set_header("Content-Type", "application/json");
+        hr.body = longRequest.dump();
+        hr.content_receiver = [&](const char* data, std::size_t len, std::uint64_t, std::uint64_t) {
+            if (std::string(data, len).find("notifications/progress") != std::string::npos)
+                running = true;
+            return !stop.load();
+        };
+        lc.send(hr);
+    });
+    until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!running.load() && std::chrono::steady_clock::now() < until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(running.load());
+    r = c.Post("/mcp", withSession, R"({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"theory","arguments":{"action":"scale","key":"D dorian"}}})",
+               "application/json");
+    REQUIRE(r);
+    CHECK(r->status == 400);
+    CHECK(r->body.find("still running") != std::string::npos);
+    // Closing the stream stops the render before the server goes.
+    const int cancelledBefore = h.rig.server.cancelledCount();
+    stop = true;
+    longOne.join();
+    until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (h.rig.server.cancelledCount() == cancelledBefore && std::chrono::steady_clock::now() < until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(h.rig.server.cancelledCount() == cancelledBefore + 1);
 }

@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Alloy Sweep",
+  "category": "Metallic",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "A quasi-periodic comb of partials whose spacing changes slowly across sixteen frames, from bronze to steel.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 0.7 : (frac(h * (0.137 + 0.08*y)) < 0.11 ? pow(h, -0.5) : 0) * (h < 256)", "phase": "rand * pi", "seed": 17 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Drum Head",
+  "category": "Metallic",
+  "frames": 4,
+  "morph": "crossfade",
+  "about": "The first modes of a round drum head, at five times the note and the ratios 1.59, 2.14, 2.30, 2.65, 2.92 and 3.16 of it; brighter across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 0.3 : h == 5 ? 1 : h == 8 ? 0.55 + 0.3*y : h == 11 ? 0.4 + 0.3*y : h == 12 ? 0.3 + 0.3*y : h == 13 ? 0.25 + 0.3*y : h == 15 ? 0.2 + 0.25*y : h == 16 ? 0.15 + 0.25*y : h == 18 ? 0.1 + 0.2*y : 0", "phase": "rand * pi", "seed": 2 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

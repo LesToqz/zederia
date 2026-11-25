@@ -1,0 +1,8 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [
+    {"type": "phaser", "mix": 0.5, "stages": 6, "rate_hz": 0.18, "depth": 0.7, "center_hz": 900, "feedback": 0.4, "stereo_phase_deg": 90}
+  ],
+  "b": [],
+  "master": [
+    {"type": "reverb", "mix": 0.18, "mode": "hall", "size": 0.6, "decay_ms": 2600, "low_cut_hz": 200, "high_cut_hz": 9000}
+  ]}}

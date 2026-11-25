@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Steel Squares",
+  "category": "Metallic",
+  "frames": 6,
+  "morph": "spectral",
+  "about": "Partials at the odd square numbers (1, 9, 25, 49, 81 ...), the spacing of a struck bar; the weight moves from the lowest to the higher modes.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "frac((sqrt(h) - 1) / 2) == 0 ? exp(-(((sqrt(h) - 1) / 2 - 4*y)^2) / 2) * pow(h, -0.25) : 0" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,4 +1,4 @@
-// Recipes and the starter content (plan 7, 9), the content library that resolves a patch's table
+// Recipes (plan 7, 9; the whole factory set is tested in test_factory.cpp), the content library that resolves a patch's table
 // and sample references, and resynthesis (plan 3.10): bake warp, bake patch, shape to wave.
 #include "../support/Analysis.h"
 #include "../support/TestUtil.h"
@@ -45,13 +45,6 @@ nlohmann::json recipeFile(const std::string& relative) {
     return nlohmann::json::parse(bytes.begin(), bytes.end());
 }
 
-std::vector<std::uint8_t> fileBytes(const fs::path& file) {
-    std::vector<std::uint8_t> bytes;
-    std::string error;
-    REQUIRE(readFile(file.string(), bytes, error));
-    return bytes;
-}
-
 Frame sineFrame(int harmonic) {
     Frame f;
     for (int n = 0; n < kFrameSize; ++n)
@@ -67,88 +60,6 @@ double maxDifference(const Frame& a, const Frame& b) {
 }
 
 } // namespace
-
-TEST_CASE("content: the starter set builds from its recipes, the same way every time", "[content]") {
-    TempDir first("content_a"), second("content_b");
-    const ContentBuild a = buildContentFolder(ZED_CONTENT_DIR, first.str());
-    for (const auto& e : a.errors)
-        FAIL_CHECK(e);
-    CHECK(a.tables == 12);
-    CHECK(a.textures == 6);
-    CHECK(a.written.size() == 18);
-    const ContentBuild b = buildContentFolder(ZED_CONTENT_DIR, second.str());
-    REQUIRE(b.written == a.written);
-
-    std::size_t bytes = 0;
-    for (const std::string& file : a.written) {
-        INFO(file);
-        const auto one = fileBytes(first.path / file), two = fileBytes(second.path / file);
-        CHECK(one == two); // reproducible
-        bytes += one.size();
-        std::string error;
-        if (file.rfind("Wavetables/", 0) == 0) {
-            Wavetable table;
-            REQUIRE(decodeWavetable(one, table, error));
-            CHECK(table.size() >= 1);
-            CHECK_FALSE(table.name.empty());
-            float loudest = 0.0f;
-            for (const Frame& f : table.frames) {
-                for (const float s : f)
-                    REQUIRE(std::isfinite(s));
-                loudest = std::max(loudest, framePeak(f));
-            }
-            CHECK(loudest > 0.5f);
-            CHECK(loudest <= 1.0001f);
-            // No frame carries a noticeable offset, and every table loads into the oscillator.
-            for (const Frame& f : table.frames)
-                CHECK(std::abs(analyzeFrame(f).dc) < 0.05);
-            CHECK(TableData::build(table)->frames() >= 1);
-        } else {
-            WavData wav;
-            REQUIRE(decodeWav(one, wav, error));
-            CHECK(wav.channelCount() == 2);
-            CHECK(wav.sampleRate == 48000.0);
-            float peak = 0.0f;
-            double energy = 0.0;
-            for (const auto& channel : wav.channels)
-                for (const float s : channel) {
-                    peak = std::max(peak, std::abs(s));
-                    energy += static_cast<double>(s) * s;
-                }
-            CHECK(peak <= 1.0f);
-            CHECK(peak > 0.3f);
-            CHECK(energy > 0.0);
-            const auto sample = SampleData::fromWav(wav, file);
-            CHECK(sample->frames > 1000);
-            if (file.find("Click Transient") != std::string::npos)
-                CHECK_FALSE(sample->hasLoop); // the one-shot of the set
-            else
-                CHECK(sample->hasLoop);
-        }
-    }
-    WARN("starter content: " << a.tables << " wavetables and " << a.textures << " textures, " << bytes / 1024 << " KB built from recipes");
-
-    // The set covers the table features: every morph mode but "none" with generated positions,
-    // a stepped table, and tables from one frame count to dozens.
-    std::set<std::string> morphs;
-    bool stepped = false;
-    int fewest = 1000, most = 0;
-    for (const std::string& file : a.written) {
-        if (file.rfind("Wavetables/", 0) != 0)
-            continue;
-        Wavetable table;
-        std::string error;
-        REQUIRE(decodeWavetable(fileBytes(first.path / file), table, error));
-        morphs.insert(std::string(morphModeName(table.morph)));
-        stepped = stepped || table.stepped;
-        fewest = std::min(fewest, table.size());
-        most = std::max(most, table.size());
-    }
-    CHECK(morphs == std::set<std::string>{"none", "crossfade", "spectral", "spectral_aligned", "spectral_zero"});
-    CHECK(stepped);
-    CHECK(fewest <= 2);
-    CHECK(most >= 24);
-}
 
 TEST_CASE("content: looped textures are seamless and the one-shot ends in silence", "[content][texture]") {
     WavData wav;
@@ -225,7 +136,7 @@ TEST_CASE("content: recipe errors name the step and the problem", "[content][err
     };
     CHECK(textureError(J::parse(R"({"kind":"texture","seconds":0})")).find("\"seconds\" must be") != std::string::npos);
     CHECK(textureError(J::parse(R"({"kind":"texture"})")).find("no \"layers\"") != std::string::npos);
-    CHECK(textureError(J::parse(R"({"kind":"texture","layers":[{"type":"hum"}]})")) == "layer 1: unknown layer type \"hum\"");
+    CHECK(textureError(J::parse(R"({"kind":"texture","layers":[{"type":"buzz"}]})")) == "layer 1: unknown layer type \"buzz\"");
     CHECK(textureError(J::parse(R"({"kind":"texture","layers":[{"type":"noise","color":"green"}]})")).find("white, pink or brown") != std::string::npos);
 
     // A folder without recipes, and one with a broken recipe among good ones.
@@ -279,10 +190,10 @@ TEST_CASE("library: references resolve to files and load into the engine", "[con
 
     // Listing finds everything, by reference.
     const auto tables = library.listTables();
-    CHECK(tables.size() == 13);
+    CHECK(tables.size() == static_cast<std::size_t>(built.tables) + 1);
     CHECK(std::find(tables.begin(), tables.end(), "factory:Basics/Saw Morph") != tables.end());
     CHECK(std::find(tables.begin(), tables.end(), "user:Mine/Growl") != tables.end());
-    CHECK(library.listTextures().size() == 6);
+    CHECK(library.listTextures().size() == static_cast<std::size_t>(built.textures));
 
     // Missing files and references that try to leave their folder are refused with a reason.
     CHECK(library.loadTable("factory:Basics/Nothing Here", error) == nullptr);

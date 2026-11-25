@@ -1,0 +1,1 @@
+{"format": "zederia.fx", "version": 1, "slot": {"type": "delay", "mix": 0.22, "mode": "ping_pong", "sync": true, "division_l": "1/8", "division_r": "1/8", "feedback": 0.4, "band_center_hz": 1800, "band_width": 0.6}}

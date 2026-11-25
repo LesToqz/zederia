@@ -17,7 +17,12 @@
 #include "ui/PlayPage.h"
 #include "ui/SynthPage.h"
 #include "ui/TablePage.h"
+#include "ui/Brand.h"
+#include "ui/ContentMenu.h"
 #include "ui/CurveEditor.h"
+#include "ui/Theme.h"
+#include "zederia/midi/MidiFile.h"
+#include "zederia/patch/Modules.h"
 #include "zederia/patch/PatchIO.h"
 #include "zederia/table/Formula.h"
 
@@ -1163,7 +1168,10 @@ TEST_CASE("editor: the AGENT page's Connect panel offers a config and a prompt f
     CHECK_FALSE(agent.connectShown());
 
     const juce::String path = zui::AgentPage::serverPath();
-    CHECK(path.endsWith("/AppData/Local/Programs/Zederia/zederia-mcp.exe"));
+    const auto forward = [](const juce::File& f) { return f.getFullPathName().replaceCharacter('\\', '/'); };
+    CHECK((path == forward(zui::AgentPage::installedServer()) || path == forward(zui::AgentPage::developmentServer())));
+    CHECK(forward(zui::AgentPage::developmentServer()).endsWith("/AppData/Local/Programs/Zederia/zederia-mcp.exe"));
+    CHECK(zui::AgentPage::installedServer().getFileName() == "zederia-mcp.exe");
     CHECK(zui::AgentPage::codexToml() == "[mcp_servers.zederia]\ncommand = \"" + path + "\"\nargs = [\"--stdio\"]\n");
     for (const auto& json : {zui::AgentPage::claudeJson(), zui::AgentPage::antigravityJson()}) {
         const auto parsed = nlohmann::json::parse(json.toStdString());
@@ -1179,6 +1187,274 @@ TEST_CASE("editor: the AGENT page's Connect panel offers a config and a prompt f
         CHECK(prompt.contains("--stdio"));
         CHECK(prompt.contains("zederia://guide/agent"));
     }
+}
+
+TEST_CASE("editor: the header's mark is the logo, plugin/brand/zederia-mark.svg, in its colour", "[editor][brand]") {
+    const juce::File svg = juce::File(juce::String(ZED_CONTENT_DIR)).getSiblingFile("plugin").getChildFile("brand").getChildFile("zederia-mark.svg");
+    const auto xml = juce::XmlDocument::parse(svg);
+    REQUIRE(xml != nullptr);
+    CHECK(xml->getStringAttribute("fill").equalsIgnoreCase("#efb96b"));
+    CHECK(xml->getStringAttribute("fill-rule") == "evenodd");
+    CHECK(xml->getStringAttribute("viewBox") == "9.8 10.3 110.4 110.4");
+    const auto box = zui::brand::markViewBox();
+    CHECK(box == juce::Rectangle<float>(9.8f, 10.3f, 110.4f, 110.4f));
+    CHECK(zui::brand::markColour() == juce::Colour(0xffefb96bu));
+    CHECK(zui::theme().lamp == zui::brand::markColour()); // the header draws the mark in the lamp colour
+    // The SVG's paths, point by point (M, L and Z only), against the mark the header draws.
+    std::vector<std::vector<juce::Point<float>>> fromSvg, drawn;
+    for (auto* path = xml->getChildByName("path"); path != nullptr; path = path->getNextElementWithTagName("path")) {
+        juce::StringArray tokens;
+        tokens.addTokens(path->getStringAttribute("d"), " ,", "");
+        tokens.removeEmptyStrings();
+        for (int i = 0; i < tokens.size(); ++i) {
+            if (tokens[i] == "M")
+                fromSvg.emplace_back();
+            if ((tokens[i] == "M" || tokens[i] == "L") && i + 2 < tokens.size()) {
+                fromSvg.back().push_back({tokens[i + 1].getFloatValue(), tokens[i + 2].getFloatValue()});
+                i += 2;
+            }
+        }
+    }
+    const juce::Path mark = zui::brand::mark();
+    for (juce::Path::Iterator it(mark); it.next();) {
+        if (it.elementType == juce::Path::Iterator::startNewSubPath)
+            drawn.emplace_back();
+        if (it.elementType == juce::Path::Iterator::startNewSubPath || it.elementType == juce::Path::Iterator::lineTo)
+            drawn.back().push_back({it.x1, it.y1});
+    }
+    REQUIRE(fromSvg.size() == 2);
+    CHECK(drawn == fromSvg);
+    CHECK_FALSE(zui::brand::mark().isUsingNonZeroWinding()); // even-odd, as the SVG
+}
+
+TEST_CASE("editor: the icons are made from the logo, and the gap between the slabs stays open", "[editor][brand]") {
+    const juce::File brandDir = juce::File(juce::String(ZED_CONTENT_DIR)).getSiblingFile("plugin").getChildFile("brand");
+    juce::String error;
+    const zui::brand::Logo logo = zui::brand::loadLogo(brandDir.getChildFile("zederia-mark.svg"), error);
+    INFO(error);
+    REQUIRE(logo.drawable != nullptr);
+    std::vector<juce::Image> images;
+    for (const int size : {16, 20, 24, 32, 40, 48, 64, 96, 128, 256}) {
+        INFO(size << " px");
+        images.push_back(zui::brand::renderIcon(logo, size));
+        const auto gap = zui::brand::measureGap(images.back());
+        CHECK(gap.visible());
+        CHECK(gap.gap <= 0.05f);
+        // The colour is the logo's: the most covered pixels are #efb96b.
+        const juce::Image::BitmapData data(images.back(), juce::Image::BitmapData::readOnly);
+        juce::PixelARGB solid;
+        for (int y = 0; y < size; ++y)
+            for (int x = 0; x < size; ++x)
+                if (reinterpret_cast<const juce::PixelARGB*>(data.getPixelPointer(x, y))->getAlpha() == 255)
+                    solid = *reinterpret_cast<const juce::PixelARGB*>(data.getPixelPointer(x, y));
+        CHECK(juce::Colour(solid.getRed(), solid.getGreen(), solid.getBlue()) == zui::brand::markColour());
+    }
+    // A logo drawn without the gap is caught.
+    juce::Image closed = images[0].createCopy();
+    {
+        juce::Graphics g(closed);
+        g.setColour(zui::brand::markColour());
+        g.fillRect(0, 10, 16, 3);
+    }
+    CHECK_FALSE(zui::brand::measureGap(closed).visible());
+    // The icon file in the repository is what the logo makes now (scripts/make-icons.ps1 after a change).
+    const juce::MemoryBlock made = zui::brand::iconFile(images);
+    juce::MemoryBlock stored;
+    REQUIRE(brandDir.getChildFile("zederia.ico").loadFileAsData(stored));
+    CHECK(made == stored);
+}
+
+TEST_CASE("plug-in: a new instance starts with the default preset, and Init loads it", "[plugin][default]") {
+    const juce::String before = juce::SystemStats::getEnvironmentVariable("ZEDERIA_FACTORY", {});
+    const auto setFactory = [](const juce::String& dir) {
+        _putenv(("ZEDERIA_FACTORY=" + dir).toRawUTF8());
+    };
+    const juce::File factory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_default_" + juce::Uuid().toString());
+    const juce::File preset = factory.getChildFile("Presets").getChildFile("Default.zpreset");
+    REQUIRE(factory.getChildFile("Presets").createDirectory().wasOk());
+    REQUIRE(juce::File(juce::String(ZED_CONTENT_DIR)).getChildFile("presets").getChildFile("Default.zpreset").copyFileTo(preset));
+    setFactory(factory.getFullPathName());
+    {
+        ZederiaProcessor p;
+        CHECK(p.session().presetName() == "Default");
+        CHECK(p.session().currentPreset() == preset);
+        CHECK_FALSE(p.session().modified());
+        CHECK_FALSE(p.session().undo()); // the history starts with it
+        p.session().edit("Quieter", [](Patch& q) {
+            q.set(idx("osc1.level"), -20.0);
+            return true;
+        });
+        CHECK(p.session().modified());
+        p.session().initPatch();
+        CHECK(p.session().presetName() == "Default");
+        CHECK_FALSE(p.session().modified());
+        // A default of your own wins, for Init and for new instances.
+        const juce::File mine = factory.getChildFile("Mine.zpreset");
+        REQUIRE(mine.replaceWithText(juce::String::fromUTF8(readPatch("lead.zpreset").c_str())));
+        Prefs::get().defaultPreset = mine.getFullPathName();
+        p.session().initPatch();
+        CHECK(p.session().presetName() == "Test Lead");
+        ZederiaProcessor q;
+        CHECK(q.session().presetName() == "Test Lead");
+        Prefs::get().defaultPreset = {};
+    }
+    // Without a default preset: the built-in init sound.
+    setFactory(before);
+    factory.deleteRecursively();
+    ZederiaProcessor r;
+    CHECK(r.session().presetName() == "Init");
+    CHECK(r.session().currentPreset() == juce::File());
+}
+
+TEST_CASE("plug-in: the parameters' defaults are the values a new instance starts with", "[plugin][default]") {
+    // clap-validator's param-default-values: with the factory's Default preset installed a new
+    // instance opens with that preset's values, so those are the defaults the host is told
+    // (milestone 7: it failed once the installer had put the factory content in place).
+    const juce::String before = juce::SystemStats::getEnvironmentVariable("ZEDERIA_FACTORY", {});
+    const juce::File factory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_defaults_" + juce::Uuid().toString());
+    REQUIRE(factory.getChildFile("Presets").createDirectory().wasOk());
+    REQUIRE(juce::File(juce::String(ZED_CONTENT_DIR)).getChildFile("presets").getChildFile("Default.zpreset").copyFileTo(factory.getChildFile("Presets").getChildFile("Default.zpreset")));
+    _putenv(("ZEDERIA_FACTORY=" + factory.getFullPathName()).toRawUTF8());
+    {
+        ZederiaProcessor p;
+        REQUIRE(p.session().presetName() == "Default");
+        int checked = 0, differ = 0;
+        for (auto* parameter : p.getParameters()) {
+            ++checked;
+            if (std::abs(parameter->getDefaultValue() - parameter->getValue()) > 1.0e-6f) {
+                ++differ;
+                UNSCOPED_INFO(parameter->getName(64) << ": default " << parameter->getDefaultValue() << ", value " << parameter->getValue());
+            }
+        }
+        CHECK(checked > 700);
+        CHECK(differ == 0);
+        // The preset moves values away from the registry's, or the check above would prove nothing.
+        const auto& cutoff = zed::Registry::get().at(idx("filter1.cutoff"));
+        CHECK(std::abs(p.hostParameter(idx("filter1.cutoff"))->getDefaultValue() - static_cast<float>(cutoff.toNormalized(cutoff.def))) > 0.01f);
+        auto* reverbMix = p.hostParameter(idx("fx.m1.mix"));
+        REQUIRE(reverbMix != nullptr);
+        CHECK(reverbMix->getDefaultValue() == Catch::Approx(0.05).margin(1e-6));
+        // A slot that now holds another effect reports that effect's own default.
+        REQUIRE(p.removeEffect(2, 0));
+        REQUIRE(p.insertEffect(2, 0, "delay"));
+        const auto& delayMix = p.effectiveDef(idx("fx.m1.mix"));
+        CHECK(reverbMix->getDefaultValue() == Catch::Approx(delayMix.toNormalized(delayMix.def)).margin(1e-6));
+    }
+    _putenv(("ZEDERIA_FACTORY=" + before).toRawUTF8());
+    factory.deleteRecursively();
+    // Without a default preset the defaults are the registry's, as before.
+    ZederiaProcessor r;
+    const auto& cutoff = zed::Registry::get().at(idx("filter1.cutoff"));
+    CHECK(r.hostParameter(idx("filter1.cutoff"))->getDefaultValue() == Catch::Approx(cutoff.toNormalized(cutoff.def)).margin(1e-6));
+}
+
+TEST_CASE("editor: factory shapes, racks, effect presets and clips are offered where they are used", "[editor][content]") {
+    Rig rig;
+    const juce::File factory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_menus_" + juce::Uuid().toString());
+    const auto write = [](const juce::File& file, const std::string& text) {
+        REQUIRE(file.getParentDirectory().createDirectory().wasOk());
+        REQUIRE(file.replaceWithText(juce::String::fromUTF8(text.c_str())));
+    };
+    write(factory.getChildFile("Shapes/Peak.zshape"), copyShape({{{0.0, -1.0, 0.0}, {0.5, 1.0, 0.0}, {1.0, -1.0, 0.0}}}, ShapeKind::Lfo));
+    write(rig.userFolder.getChildFile("Shapes/Mine/Wave.zshape"), copyShape({{{0.0, 0.0, 0.5}, {0.25, 1.0, -0.5}, {1.0, 0.0, 0.0}}}, ShapeKind::Lfo));
+    Patch withReverb;
+    std::vector<Issue> issues;
+    REQUIRE(loadRackPreset(R"({"format":"zederia.rack","version":1,"fx":{"master":[{"type":"reverb","mix":0.3}]}})", withReverb, issues));
+    write(factory.getChildFile("Racks/Hall.zrack"), saveRackPreset(withReverb));
+    write(factory.getChildFile("Racks/Effects/Room.zfx"), saveSlotPreset(withReverb, 2, 0));
+    Clip clip;
+    clip.notes = {{0.0, 1.0, 60, 0.8}, {1.0, 1.0, 64, 0.8}};
+    const auto mid = midi::clipToFile(clip);
+    REQUIRE(factory.getChildFile("Clips").createDirectory().wasOk());
+    REQUIRE(factory.getChildFile("Clips/Riff.mid").replaceWithData(mid.data(), mid.size()));
+    rig.processor.setContentFolders(factory.getFullPathName().toStdString(), rig.userFolder.getFullPathName().toStdString());
+
+    const auto texts = [](const juce::PopupMenu& menu) {
+        juce::StringArray out;
+        for (juce::PopupMenu::MenuItemIterator it(menu, true); it.next();)
+            if (it.getItem().text.isNotEmpty())
+                out.add(it.getItem().text);
+        return out;
+    };
+    const auto shapes = zui::contentSections(rig.ctx(), "Shapes");
+    REQUIRE(shapes.size() == 2);
+    CHECK(shapes[0].first == "Factory");
+    CHECK(shapes[1].first == "Yours");
+    // Every curve editor's Shapes menu: the basic shapes, then the files, folders as submenus.
+    const auto editors = all<zui::CurveEditor>(*rig.editor);
+    REQUIRE_FALSE(editors.empty());
+    zui::CurveEditor* lfo = nullptr;
+    zui::CurveEditor* envelope = nullptr;
+    for (auto* e : editors) {
+        if (e->config().bipolar && lfo == nullptr)
+            lfo = e;
+        if (e->config().anchoredStart && envelope == nullptr)
+            envelope = e;
+    }
+    REQUIRE(lfo != nullptr);
+    REQUIRE(envelope != nullptr);
+    juce::PopupMenu menu;
+    lfo->addShapeItems(menu);
+    const auto items = texts(menu);
+    CHECK(items.contains("Sine"));
+    CHECK(items.contains("Peak"));
+    CHECK(items.contains("Mine"));
+    CHECK(items.contains("Wave"));
+    CHECK(items.indexOf("Sine") < items.indexOf("Peak"));
+    REQUIRE(lfo->applyShapeFile(factory.getChildFile("Shapes/Peak.zshape")));
+    REQUIRE(lfo->shape().points.size() == 3);
+    CHECK(lfo->shape().points[1].y == 1.0);
+    // An envelope takes it from silence, its levels in 0..1.
+    REQUIRE(envelope->applyShapeFile(factory.getChildFile("Shapes/Peak.zshape")));
+    CHECK(envelope->shape().points.front().x == 0.0);
+    CHECK(envelope->shape().points.front().y == 0.0);
+    CHECK(envelope->shape().points[1].y == 1.0);
+    CHECK_FALSE(lfo->applyShapeFile(factory.getChildFile("Racks/Hall.zrack"))); // not a shape
+    // Racks, effect presets and clips: the factory's.
+    juce::File picked;
+    juce::PopupMenu racks, effects, clips;
+    CHECK(zui::addContentFiles(racks, zui::contentSections(rig.ctx(), "Racks"), "*.zrack", [&](const juce::File& f) { picked = f; }) == 1);
+    CHECK(texts(racks).contains("Hall"));
+    CHECK(zui::addContentFiles(effects, zui::contentSections(rig.ctx(), "Racks/Effects"), "*.zfx", [&](const juce::File& f) { picked = f; }) == 1);
+    CHECK(texts(effects).contains("Room"));
+    CHECK(zui::addContentFiles(clips, zui::contentSections(rig.ctx(), "Clips"), "*.mid;*.midi", [&](const juce::File& f) { picked = f; }) == 1);
+    CHECK(texts(clips).contains("Riff"));
+    for (juce::PopupMenu::MenuItemIterator it(clips, true); it.next();)
+        if (it.getItem().action)
+            it.getItem().action();
+    CHECK(picked == factory.getChildFile("Clips/Riff.mid"));
+    factory.deleteRecursively();
+}
+
+TEST_CASE("editor: client setup names the server of the installed or the development copy", "[editor][agent]") {
+    const juce::File root = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia_test_server_path");
+    root.deleteRecursively();
+    const juce::File installed = root.getChildFile("Program Files/Zederia/zederia-mcp.exe");
+    const juce::File development = root.getChildFile("Local/Programs/Zederia/zederia-mcp.exe");
+    const juce::File devVst3 = root.getChildFile("Local/Programs/Common/VST3/Zederia.vst3/Contents/x86_64-win/Zederia.vst3");
+    const juce::File devStandalone = root.getChildFile("Local/Programs/Zederia/Zederia.exe");
+    const juce::File installedVst3 = root.getChildFile("Common Files/VST3/Zederia.vst3/Contents/x86_64-win/Zederia.vst3");
+    const juce::File buildTree = root.getChildFile("build/release/Zederia.exe");
+    const auto forward = [](const juce::File& f) { return f.getFullPathName().replaceCharacter('\\', '/'); };
+    using zui::AgentPage;
+    // Neither exists: the installed location, or the development one for a development copy.
+    CHECK(AgentPage::chooseServer(installedVst3, installed, development) == forward(installed));
+    CHECK(AgentPage::chooseServer(buildTree, installed, development) == forward(installed));
+    CHECK(AgentPage::chooseServer(devVst3, installed, development) == forward(development));
+    // Both exist: each copy names its own; a copy that is neither names the installed one.
+    REQUIRE(installed.create().wasOk());
+    REQUIRE(development.create().wasOk());
+    CHECK(AgentPage::chooseServer(installedVst3, installed, development) == forward(installed));
+    CHECK(AgentPage::chooseServer(devVst3, installed, development) == forward(development));
+    CHECK(AgentPage::chooseServer(devStandalone, installed, development) == forward(development));
+    CHECK(AgentPage::chooseServer(buildTree, installed, development) == forward(installed));
+    // Only one exists: that one, whoever asks.
+    REQUIRE(installed.deleteFile());
+    CHECK(AgentPage::chooseServer(installedVst3, installed, development) == forward(development));
+    REQUIRE(installed.create().wasOk());
+    REQUIRE(development.deleteFile());
+    CHECK(AgentPage::chooseServer(devVst3, installed, development) == forward(installed));
+    root.deleteRecursively();
 }
 
 TEST_CASE("editor: the PLAY page edits steps and clips, and clips go to and from MIDI files", "[editor][play]") {

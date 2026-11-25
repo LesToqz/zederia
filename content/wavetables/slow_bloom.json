@@ -1,0 +1,16 @@
+{
+  "kind": "table",
+  "name": "Slow Bloom",
+  "category": "Motion",
+  "frames": 8,
+  "morph": "spectral_aligned",
+  "about": "Eight soft random spectra, ordered from dark to bright, that open slowly when swept: material for evolving pads.",
+  "steps": [
+    { "op": "harmonic", "name": "randomize_lowest", "n": 24, "amount": 1, "seed": 5 },
+    { "op": "harmonic", "name": "fade_highs", "amount": 0.7 },
+    { "op": "formula", "domain": "harmonics", "expr": "(h == 1 ? max(in, 0.6) : in) * (0.3 + 0.7*exp(-h*0.15*(1 - y)))" },
+    { "op": "process", "name": "align_fundamental" },
+    { "op": "process", "name": "normalize_each" },
+    { "op": "sort", "by": "brightness" }
+  ]
+}

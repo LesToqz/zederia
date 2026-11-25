@@ -756,19 +756,10 @@ public:
         paste_.setTooltip("Paste curve");
         copy_.onClick = [this] { copyShape(); };
         paste_.onClick = [this] { pasteShape(); };
-        shapes_.onClick = [this] {
-            juce::PopupMenu menu;
-            for (const auto& name : CurveEditor::presetNames())
-                menu.addItem(name, [this, name] {
-                    warp_.applyPreset(name);
-                    if (warp_.onChange) warp_.onChange(warp_.shape());
-                    if (warp_.onCommit) warp_.onCommit(warp_.shape(), "Shape " + name);
-                });
-            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&shapes_));
-        };
+        shapes_.onClick = [this] { warp_.showShapesMenu(&shapes_); };
         copy_.setHelp("Copy curve", "Copy this curve; paste it into any warp, LFO, envelope or drive curve.");
         paste_.setHelp("Paste curve", "Paste a copied curve here.");
-        shapes_.setHelp("Shapes", "Start from a basic shape.");
+        shapes_.setHelp("Shapes", "Start from a basic shape, or a shape from the factory or your Shapes folder.");
         steps_.setHelp("Step drawing", "Drag across the grid to draw steps.");
         snap_.setHelp("Snap", "Points snap to the grid (hold Alt while dragging to move freely).");
         CurveEditor::Config warpConfig;

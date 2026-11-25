@@ -4,7 +4,9 @@
 #   CLAP   %LOCALAPPDATA%\Programs\Common\CLAP\Zederia.clap
 #   tools  %LOCALAPPDATA%\Programs\Zederia\  (zederia-cli, zederia-mcp, the standalone)
 #   factory content  %LOCALAPPDATA%\Zederia\Factory\  (built from the recipes in content/; the
-#                    per-user fallback of the factory folder, see plan 5.6)
+#                    per-user fallback of the factory folder, see plan 5.6). While the installer's
+#                    %PROGRAMDATA%\Zederia\Factory exists, every copy of Zederia uses that one.
+# Beside an installed Zederia, hosts that scan the per-user plug-in folders list both copies.
 #
 #   scripts/install-dev.ps1               install the Release build
 #   scripts/install-dev.ps1 -Config Debug

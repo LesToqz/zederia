@@ -1,0 +1,1 @@
+{"format": "zederia.shape", "version": 1, "class": "shape", "range": "bipolar", "about": "Two quick spikes and a long rest.", "content": {"points": [{"x": 0, "y": -0.6, "curve": 0}, {"x": 0.06, "y": 1, "curve": 0}, {"x": 0.12, "y": -1, "curve": 0}, {"x": 0.18, "y": 0.4, "curve": 0}, {"x": 0.26, "y": -0.6, "curve": 0}, {"x": 1, "y": -0.6, "curve": 0}]}}

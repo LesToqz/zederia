@@ -1,6 +1,7 @@
 #include "Bridge.h"
 
 #include "zederia/Version.h"
+#include "zederia/link/JsonLimits.h"
 #include "zederia/patch/Shape.h"
 #include "zederia/table/TableData.h"
 
@@ -331,7 +332,7 @@ J Bridge::liveCall(const zed::link::Discovery& d, const std::string& method, con
     std::string response;
     if (!client.request(request.dump(), response, timeoutMs, error))
         fail("/target", "the instance did not answer: " + error, "try again; if the host is busy, wait a moment");
-    const J reply = J::parse(response, nullptr, false);
+    const J reply = zed::jsonNestingAllowed(response) ? J::parse(response, nullptr, false) : J(J::value_t::discarded);
     if (reply.is_discarded() || !reply.is_object())
         fail("/target", "the instance sent an unreadable answer", "update the plug-in and the server to the same version");
     if (!reply.value("ok", false)) {
@@ -493,6 +494,30 @@ J Bridge::history(const std::string& target, const Call& call, const std::string
             {"undo", h.undoLabel()}, {"redo", h.redoLabel()}, {"steps", steps}};
 }
 
+template <typename T, typename Load>
+std::shared_ptr<const T> Bridge::cached(std::map<std::string, CacheEntry<T>>& cache, std::size_t limit, const std::string& ref,
+                                        const std::string& file, Load&& load, std::string& error) {
+    std::error_code ec;
+    const fs::file_time_type written = file.empty() ? fs::file_time_type{} : fs::last_write_time(pathFromUtf8(file), ec);
+    auto it = cache.find(ref);
+    if (it != cache.end() && it->second.written == written && !ec) {
+        it->second.used = ++cacheClock_;
+        return it->second.data;
+    }
+    std::shared_ptr<const T> data = load(error);
+    if (!data) {
+        if (it != cache.end())
+            cache.erase(it);
+        return nullptr;
+    }
+    if (it == cache.end() && cache.size() >= limit) {
+        auto oldest = std::min_element(cache.begin(), cache.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+        cache.erase(oldest);
+    }
+    cache[ref] = CacheEntry<T>{data, ec ? fs::file_time_type{} : written, ++cacheClock_};
+    return data;
+}
+
 zed::RenderSettings Bridge::renderSettings(const Patch& patch, std::vector<std::string>& problems) {
     zed::RenderSettings settings;
     for (int i = 0; i < zed::kNumOscs; ++i) {
@@ -505,31 +530,25 @@ zed::RenderSettings Bridge::renderSettings(const Patch& patch, std::vector<std::
         if (ref.empty())
             continue;
         std::lock_guard<std::mutex> lock(tableMutex_);
-        auto it = tableCache_.find(ref);
-        if (it == tableCache_.end()) {
-            std::string error;
-            auto t = library_.loadTable(ref, error);
-            if (!t) {
-                problems.push_back("osc" + std::to_string(i + 1) + " table \"" + ref + "\": " + error + "; the built-in table plays instead");
-                continue;
-            }
-            it = tableCache_.emplace(ref, std::move(t)).first;
+        std::string error;
+        auto t = cached(tableCache_, kTableCacheSize, ref, library_.tablePath(ref),
+                        [&](std::string& e) { return library_.loadTable(ref, e); }, error);
+        if (!t) {
+            problems.push_back("osc" + std::to_string(i + 1) + " table \"" + ref + "\": " + error + "; the built-in table plays instead");
+            continue;
         }
-        settings.tables[idx] = it->second;
+        settings.tables[idx] = std::move(t);
     }
     if (!patch.textureSample.empty()) {
         std::lock_guard<std::mutex> lock(tableMutex_);
-        auto it = textureCache_.find(patch.textureSample);
-        if (it == textureCache_.end()) {
-            std::string error;
-            auto t = library_.loadTexture(patch.textureSample, error);
-            if (t)
-                it = textureCache_.emplace(patch.textureSample, std::move(t)).first;
-            else
-                problems.push_back("texture \"" + patch.textureSample + "\": " + error + "; the built-in noise plays instead");
-        }
-        if (it != textureCache_.end())
-            settings.texture = it->second;
+        std::string error;
+        const std::string& ref = patch.textureSample;
+        auto t = cached(textureCache_, kTextureCacheSize, ref, library_.texturePath(ref),
+                        [&](std::string& e) { return library_.loadTexture(ref, e); }, error);
+        if (t)
+            settings.texture = std::move(t);
+        else
+            problems.push_back("texture \"" + ref + "\": " + error + "; the built-in noise plays instead");
     }
     return settings;
 }

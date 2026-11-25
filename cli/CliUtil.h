@@ -28,11 +28,13 @@ struct Args {
 // Options that take no value.
 inline bool isFlag(const std::string& name) {
     static const char* flags[] = {"json", "print", "compact", "list", "update-baseline", "report-only", "profile", "help", "normalize", "descending",
-                                  "snap", "average", "unipolar", "live-quality", "audit", "trace"};
+                                  "snap", "average", "unipolar", "live-quality", "audit", "trace", "no-cpu", "verbose", "release-before-switch"};
     return std::any_of(std::begin(flags), std::end(flags), [&](const char* f) { return name == f; });
 }
 
 int cmdUiSnapshot(const Args& args); // UiSnapshot.cpp, or a stub when the plug-in is not built
+int cmdUiHelp(const Args& args);     // UiSnapshot.cpp: the help-strip texts as the manual's interface reference
+int cmdBrand(const Args& args);      // BrandCommands.cpp, or a stub when the plug-in is not built
 
 inline bool parseArgs(int argc, char** argv, int first, Args& out) {
     for (int i = first; i < argc; ++i) {
@@ -98,5 +100,9 @@ inline bool readBytes(const std::string& path, std::vector<std::uint8_t>& bytes)
 int cmdTable(const Args& args);
 int cmdTexture(const Args& args);
 int cmdContent(const Args& args);
+
+// content check and soak (ContentCommands.cpp).
+int cmdContentCheck(const Args& args);
+int cmdSoak(const Args& args);
 
 } // namespace cli

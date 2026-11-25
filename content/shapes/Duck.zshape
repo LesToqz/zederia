@@ -1,0 +1,1 @@
+{"format": "zederia.shape", "version": 1, "class": "shape", "range": "bipolar", "about": "Down at the start of the cycle, back up within half of it: a side-chain style duck at a synced rate.", "content": {"points": [{"x": 0, "y": -1, "curve": 0.75}, {"x": 0.5, "y": 1, "curve": 0}, {"x": 1, "y": 1, "curve": 0}]}}

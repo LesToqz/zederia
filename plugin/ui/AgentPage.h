@@ -17,6 +17,14 @@ public:
 
     // What the copy buttons put on the clipboard (plan 4.9), for this computer's server path.
     static juce::String serverPath();
+    // Where the installer puts the server (C:\Program Files\Zederia, or the folder it recorded in
+    // the registry) and where scripts/install-dev.ps1 puts it (%LOCALAPPDATA%\Programs\Zederia).
+    static juce::File installedServer();
+    static juce::File developmentServer();
+    // The server the client setup names: the one that belongs to this copy of Zederia (`self`, the
+    // running plug-in or Standalone; a development copy runs from %LOCALAPPDATA%\Programs), else
+    // whichever exists, the installed one first; with neither, the installed location. Forward slashes.
+    static juce::String chooseServer(const juce::File& self, const juce::File& installed, const juce::File& development);
     static juce::String claudeJson();    // .mcp.json
     static juce::String claudeCommand(); // claude mcp add, for every project of this user
     static juce::String codexToml();     // config.toml

@@ -99,8 +99,10 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
         std::_Exit(code); // request threads that outlived the grace period end with the process
     }
-    if (http.token.empty())
-        http.token = zed::link::randomHex(24);
+    if (http.token.empty() && !zed::link::secureRandomHex(24, http.token)) {
+        std::fprintf(stderr, "zederia-mcp: this computer gave no secure random numbers for the token; pass one with --token\n");
+        return 1;
+    }
     zmcp::HttpServer httpServer(server, http);
     std::string error;
     if (!httpServer.start(error)) {

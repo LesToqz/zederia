@@ -345,12 +345,15 @@ namespace {
 // parallel, one process each, so every process has a folder of its own and removes it at the end.
 struct FactoryFolder {
     std::string path;
+    int tables = 0, textures = 0;
     FactoryFolder() {
         const auto dir = std::filesystem::temp_directory_path() /
                          ("zederia_test_plugin_factory_" + juce::Uuid().toString().toStdString());
         const ContentBuild built = buildContentFolder(ZED_CONTENT_DIR, dir.string());
         REQUIRE(built.errors.empty());
         path = dir.string();
+        tables = built.tables;
+        textures = built.textures;
     }
     ~FactoryFolder() {
         std::error_code ec;
@@ -358,10 +361,11 @@ struct FactoryFolder {
     }
 };
 
-const std::string& factoryFolder() {
+const FactoryFolder& factory() {
     static const FactoryFolder folder;
-    return folder.path;
+    return folder;
 }
+const std::string& factoryFolder() { return factory().path; }
 
 } // namespace
 
@@ -399,8 +403,8 @@ TEST_CASE("plug-in: tables and the texture load by reference, change while playi
     zed::rt::resetViolations();
     Host host;
     host.processor.setContentFolders(factoryFolder(), "");
-    CHECK(host.processor.library().listTables().size() == 12);
-    CHECK(host.processor.library().listTextures().size() == 6);
+    CHECK(host.processor.library().listTables().size() == static_cast<std::size_t>(factory().tables));
+    CHECK(host.processor.library().listTextures().size() == static_cast<std::size_t>(factory().textures));
 
     host.midi.addEvent(juce::MidiMessage::noteOn(1, 48, 0.9f), 0);
     host.run(10);
@@ -447,8 +451,8 @@ TEST_CASE("plug-in: tables and textures chosen as the editor does play", "[plugi
     REQUIRE(dynamic_cast<ZederiaEditor*>(base.get()) != nullptr);
     const auto tables = host.processor.library().listTables();
     const auto textures = host.processor.library().listTextures();
-    CHECK(tables.size() == 12);
-    CHECK(textures.size() == 6);
+    CHECK(tables.size() == static_cast<std::size_t>(factory().tables));
+    CHECK(textures.size() == static_cast<std::size_t>(factory().textures));
     // The source cards change tables and samples through the session, as one undo step each.
     host.processor.session().edit("Osc 2 table", [&](zed::Patch& p) {
         p.tables[1] = tables[3];

@@ -1,0 +1,11 @@
+{
+  "kind": "clip",
+  "name": "Four on the Floor",
+  "about": "A kick on every beat with a softer pickup before the bar line, for drum and 808 presets on C2.",
+  "tempo": 124,
+  "bars": 2,
+  "key": "C minor",
+  "parts": [
+    { "notes": "0:0.5:C2:1 1:0.5:C2:0.85 2:0.5:C2:1 3:0.5:C2:0.85 4:0.5:C2:1 5:0.5:C2:0.85 6:0.5:C2:1 7:0.25:C2:0.85 7.5:0.25:C2:0.55" }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "kind": "table",
+  "name": "Analog Shapes",
+  "category": "Basics",
+  "frames": 4,
+  "morph": "crossfade",
+  "about": "Sawtooth, square, triangle and a quarter pulse with the gentle top roll-off of an analog circuit.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "frames": [0, 0], "expr": "1/h / sqrt(1 + (h/40)^2)", "phase": "pi" },
+    { "op": "formula", "domain": "harmonics", "frames": [1, 1], "expr": "(h % 2)/h / sqrt(1 + (h/40)^2)" },
+    { "op": "formula", "domain": "harmonics", "frames": [2, 2], "expr": "(h % 2)/(h*h)", "phase": "(floor(h/2) % 2) * pi" },
+    { "op": "formula", "domain": "harmonics", "frames": [3, 3], "expr": "sin(pi*h*0.25)/h / sqrt(1 + (h/40)^2)", "phase": "pi/2 - pi*h*0.25" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

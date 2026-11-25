@@ -1,0 +1,12 @@
+{
+  "kind": "clip",
+  "name": "Ambient Bed",
+  "about": "Slow, open chords in D major for pads: Imaj7, vi7, IVmaj7 and a suspended V, two bars each.",
+  "tempo": 70,
+  "bars": 8,
+  "key": "D major",
+  "parts": [
+    { "chords": ["Imaj7", "vi7", "IVmaj7", "Vsus4"], "beats_per_chord": 8, "centre": 62, "low": 54, "high": 76, "bass": true,
+      "hits": [[0, 8]], "velocity": 0.6, "bass_velocity": 0.55 }
+  ]
+}

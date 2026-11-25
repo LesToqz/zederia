@@ -18,6 +18,7 @@ add_executable(zederia_tests
     core/test_import.cpp
     core/test_sources.cpp
     core/test_content.cpp
+    core/test_factory.cpp
     core/test_filter.cpp
     core/test_modulators.cpp
     core/test_tuning.cpp
@@ -45,9 +46,9 @@ catch_discover_tests(zederia_tests TEST_PREFIX "core." PROPERTIES TIMEOUT 600)
 
 # Command-line tools, end to end.
 add_test(NAME cli.version COMMAND zederia-cli --version)
-set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-cli ${PROJECT_VERSION}")
+set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-cli ${ZED_VERSION_FULL}")
 add_test(NAME mcp.version COMMAND zederia-mcp --version)
-set_tests_properties(mcp.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-mcp ${PROJECT_VERSION}")
+set_tests_properties(mcp.version PROPERTIES PASS_REGULAR_EXPRESSION "zederia-mcp ${ZED_VERSION_FULL}")
 add_test(NAME cli.params_doc_is_current
          COMMAND zederia-cli params --format md --check ${CMAKE_SOURCE_DIR}/docs/PARAMETERS.md)
 add_test(NAME cli.validate_good_patch
@@ -107,4 +108,15 @@ if(ZED_BUILD_PLUGIN)
     # The snapshot tool end to end: one page at one scale, with the interface checks.
     add_test(NAME cli.ui_snapshot_audit
              COMMAND zederia-cli ui-snapshot --page synth --scale 100 --audit --out ${CMAKE_CURRENT_BINARY_DIR}/ui_snapshot)
+    # The manual's interface reference is the help-strip texts of the interface itself.
+    add_test(NAME cli.manual_reference
+             COMMAND zederia-cli ui-help --check ${CMAKE_SOURCE_DIR}/docs/MANUAL.md)
+endif()
+# The factory content, end to end: every preset loads and plays within its limits (milestone 7).
+# Renders take minutes in an unoptimised build, so the test runs in optimised builds only.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_test(NAME cli.content_check
+             COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:zederia-cli> -DOUT=${CMAKE_CURRENT_BINARY_DIR}/content_check
+                     -DCONTENT=${CMAKE_SOURCE_DIR}/content -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ContentCheck.cmake)
+    set_tests_properties(cli.content_check PROPERTIES TIMEOUT 1800)
 endif()

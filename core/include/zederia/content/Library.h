@@ -12,6 +12,7 @@
 #include "zederia/patch/Patch.h"
 #include "zederia/table/TableData.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -50,6 +51,14 @@ private:
     std::vector<std::string> list(std::string_view kindFolder) const;
     std::string factory_, user_;
 };
+
+// The tables a patch plays, from the tables it embeds or the references it names. The tables that
+// need building are built at the same time on separate threads (a preset with three spectral
+// tables loads in about the time of one), and oscillators holding the same table share one build.
+// A table that cannot be loaded is null, with one message for it in `problems`.
+std::array<std::shared_ptr<const TableData>, kNumOscs> loadPatchTables(const Patch& patch, const ContentLibrary& library,
+                                                                      std::vector<std::string>& problems,
+                                                                      std::string_view presetDir = {});
 
 // Loads every table and the texture sample a patch names and hands them to the engine. What
 // cannot be loaded falls back to the built-in object; one message per problem is returned.

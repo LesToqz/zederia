@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "FM Ladder",
+  "category": "Digital",
+  "frames": 12,
+  "morph": "crossfade",
+  "about": "A sine phase-modulated by its octave, the depth rising across the table: hollow, then reedy, then hard.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "sin(tau*t + 5*y * sin(tau*2*t))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

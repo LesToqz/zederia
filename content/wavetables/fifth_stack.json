@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Fifth Stack",
+  "category": "Harmonic",
+  "frames": 6,
+  "morph": "spectral",
+  "about": "Harmonics made of octaves and fifths only (products of two and three); the fifths gain weight across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(h==1||h==2||h==3||h==4||h==6||h==8||h==9||h==12||h==16||h==18||h==24||h==27||h==32||h==36||h==48||h==54||h==64) ? pow(h, -0.9) * (1 + 1.5*y*((h % 3) == 0)) : 0" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -4,6 +4,7 @@
 #include "Session.h"
 
 #include "zederia/Version.h"
+#include "zederia/link/JsonLimits.h"
 #include "zederia/patch/PatchIO.h"
 #include "zederia/render/OfflineRenderer.h"
 #include "zederia/util/Math.h"
@@ -96,7 +97,10 @@ bool AgentLink::setEnabled(bool on, std::string& error) {
     zed::link::Discovery d;
     d.instanceId = zed::link::randomHex(8);
     d.pipe = zed::link::newPipeName();
-    d.token = zed::link::randomHex(24);
+    if (!zed::link::secureRandomHex(24, d.token)) {
+        error = "this computer gave no secure random numbers for the link's token";
+        return false;
+    }
     d.version = zed::kVersion;
     d.pid = zed::link::currentProcessId();
     d.started = static_cast<std::int64_t>(std::time(nullptr));
@@ -127,6 +131,8 @@ bool AgentLink::setEnabled(bool on, std::string& error) {
 void AgentLink::touched() { generation_.fetch_add(1); }
 
 std::string AgentLink::handleLine(const std::string& line) {
+    if (!zed::jsonNestingAllowed(line)) // refused before parsing: nesting that deep could exhaust the stack
+        return failure("the request is nested too deeply", "send a request of the link protocol").dump();
     const J request = J::parse(line, nullptr, false);
     if (!request.is_object())
         return failure("the request is not JSON", "update zederia-mcp to this instance's version").dump();

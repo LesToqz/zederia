@@ -1,0 +1,7 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [],
+  "b": [],
+  "master": [
+    {"type": "delay", "mix": 0.35, "mode": "ping_pong", "sync": true, "division_l": "1/4D", "division_r": "1/4D", "feedback": 0.55, "band_center_hz": 900, "band_width": 0.45, "saturation": 0.3, "modulation": 0.2},
+    {"type": "reverb", "mix": 0.12, "mode": "room", "size": 0.5, "decay_ms": 1400, "low_cut_hz": 300, "high_cut_hz": 5000}
+  ]}}

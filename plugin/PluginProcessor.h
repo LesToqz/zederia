@@ -90,6 +90,10 @@ public:
     const zed::ParamDef& effectiveDef(int index) const;
     double plainValue(int index) const { return engine_.params().get(index); }
     float normalizedValue(int index) const;
+    // The default the host is told: the value this instance started with (its Default preset's,
+    // or the registry's without one), so a host's reset returns to the opening sound. A rack
+    // slot's parameter keeps it only while the slot holds the effect it started with.
+    float defaultNormalized(int index) const;
     // Sets a value from the interface; goes through the host when the parameter is automatable.
     void setNormalizedFromUi(int index, float normalized);
     void beginGesture(int index);
@@ -273,6 +277,9 @@ private:
     zed::ContentLibrary library_ = zed::ContentLibrary::standard();
     std::vector<std::string> assetProblems_;
     std::array<std::atomic<int>, zed::kNumFxLanes * zed::kNumFxSlots> slotTypes_;
+    // Set once in the constructor, read by defaultNormalized() from any thread.
+    std::vector<float> startDefaults_;
+    std::array<int, zed::kNumFxLanes * zed::kNumFxSlots> startSlotTypes_{};
     std::atomic<int> generation_{0};
 
     // On-screen keyboard: the message thread writes, the audio thread reads, without locks.

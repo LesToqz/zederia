@@ -1,5 +1,7 @@
 #include "Transport.h"
 
+#include "zederia/link/JsonLimits.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -78,6 +80,11 @@ void runRequest(StdioState& s, J message, std::shared_ptr<std::atomic<bool>> can
 }
 
 void handleLine(StdioState& s, const std::string& line) {
+    if (!zed::jsonNestingAllowed(line)) {
+        s.send(Server::error(J(), kInvalidRequest,
+                             "Invalid request: nested more than " + std::to_string(zed::kMaxJsonDepth) + " levels deep"));
+        return;
+    }
     J m = J::parse(line, nullptr, false);
     if (m.is_discarded()) {
         s.send(Server::error(J(), kParseError, "Parse error: each line must be one JSON-RPC message"));

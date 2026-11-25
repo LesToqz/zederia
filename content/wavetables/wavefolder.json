@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Wavefolder",
+  "category": "Digital",
+  "frames": 16,
+  "morph": "crossfade",
+  "about": "A sine driven into a triangle folder, up to seven times its range: each extra fold adds a ripple.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "1 - abs(4*frac((sin(tau*t)*(1 + 6*y) + 1)/4) - 2)" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

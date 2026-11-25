@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <system_error>
+#include <thread>
 
 namespace zed {
 namespace {
@@ -177,20 +178,69 @@ std::vector<std::string> ContentLibrary::list(std::string_view kindFolder) const
 std::vector<std::string> ContentLibrary::listTables() const { return list("Wavetables"); }
 std::vector<std::string> ContentLibrary::listTextures() const { return list("Textures"); }
 
+std::array<std::shared_ptr<const TableData>, kNumOscs> loadPatchTables(const Patch& patch, const ContentLibrary& library,
+                                                                      std::vector<std::string>& problems, std::string_view presetDir) {
+    std::array<std::shared_ptr<const TableData>, kNumOscs> tables;
+    std::array<std::string, kNumOscs> errors;
+    // An oscillator that holds the same table as an earlier one shares its build.
+    std::array<int, kNumOscs> sameAs;
+    sameAs.fill(-1);
+    for (std::size_t i = 0; i < kNumOscs; ++i)
+        for (std::size_t j = 0; j < i && sameAs[i] < 0; ++j)
+            if (patch.tableData[i] ? (patch.tableData[j] && patch.tableData[i] == patch.tableData[j])
+                                   : (!patch.tableData[j] && patch.tables[i] == patch.tables[j]))
+                sameAs[i] = static_cast<int>(j);
+    const std::string folder(presetDir);
+    const auto build = [&](std::size_t i) {
+        try {
+            if (const auto& data = patch.tableData[i]) // kept in the patch
+                tables[i] = TableData::build(*data.table);
+            else
+                tables[i] = library.loadTable(patch.tables[i], errors[i], folder);
+        } catch (const std::exception& e) { // out of memory, most likely
+            tables[i] = nullptr;
+            errors[i] = std::string("the table could not be built (") + e.what() + ")";
+        }
+    };
+    // The built-in table needs no work; every other one gets a thread, the last on this one.
+    std::vector<std::size_t> heavy;
+    for (std::size_t i = 0; i < kNumOscs; ++i) {
+        if (sameAs[i] >= 0)
+            continue;
+        if (patch.tableData[i] || !patch.tables[i].empty())
+            heavy.push_back(i);
+        else
+            build(i);
+    }
+    std::vector<std::thread> workers;
+    for (std::size_t k = 0; k + 1 < heavy.size(); ++k) {
+        try {
+            workers.emplace_back(build, heavy[k]);
+        } catch (const std::exception&) { // no thread to be had: build it here instead
+            build(heavy[k]);
+        }
+    }
+    if (!heavy.empty())
+        build(heavy.back());
+    for (std::thread& w : workers)
+        w.join();
+    for (std::size_t i = 0; i < kNumOscs; ++i) {
+        if (sameAs[i] >= 0) {
+            tables[i] = tables[static_cast<std::size_t>(sameAs[i])];
+            errors[i] = errors[static_cast<std::size_t>(sameAs[i])];
+        }
+        if (tables[i] == nullptr)
+            problems.push_back("osc" + std::to_string(i + 1) + ": " + errors[i] + "; the built-in table is used instead");
+    }
+    return tables;
+}
+
 std::vector<std::string> applyPatchAssets(Engine& engine, const Patch& patch, const ContentLibrary& library,
                                           std::string_view presetDir) {
     std::vector<std::string> problems;
-    for (int i = 0; i < kNumOscs; ++i) {
-        if (const auto& data = patch.tableData[static_cast<std::size_t>(i)]) { // kept in the patch
-            engine.setTable(i, TableData::build(*data.table));
-            continue;
-        }
-        std::string error;
-        auto table = library.loadTable(patch.tables[static_cast<std::size_t>(i)], error, presetDir);
-        if (table == nullptr)
-            problems.push_back("osc" + std::to_string(i + 1) + ": " + error + "; the built-in table is used instead");
-        engine.setTable(i, std::move(table));
-    }
+    const auto tables = loadPatchTables(patch, library, problems, presetDir);
+    for (int i = 0; i < kNumOscs; ++i)
+        engine.setTable(i, tables[static_cast<std::size_t>(i)]); // null selects the built-in table
     std::string error;
     auto sample = library.loadTexture(patch.textureSample, error, presetDir);
     if (sample == nullptr)

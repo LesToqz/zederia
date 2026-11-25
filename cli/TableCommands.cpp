@@ -690,16 +690,21 @@ int cmdTexture(const Args& args) {
 }
 
 int cmdContent(const Args& args) {
+    if (args.positional.size() == 1 && args.positional[0] == "check")
+        return cmdContentCheck(args);
     if (args.positional.size() != 1 || args.positional[0] != "build" || !args.has("in") || !args.has("out")) {
-        std::fprintf(stderr, "error: usage: zederia-cli content build --in RECIPES_DIR --out FACTORY_DIR\n");
+        std::fprintf(stderr, "error: usage: zederia-cli content build --in CONTENT_DIR --out FACTORY_DIR\n"
+                             "              zederia-cli content check [--presets DIR] [--content FACTORY_DIR]\n");
         return kUsage;
     }
     const zed::ContentBuild result = zed::buildContentFolder(args.get("in"), args.get("out"));
-    for (const auto& file : result.written)
-        std::printf("  %s\n", file.c_str());
+    if (args.has("verbose"))
+        for (const auto& file : result.written)
+            std::printf("  %s\n", file.c_str());
     for (const auto& error : result.errors)
         std::fprintf(stderr, "error: %s\n", error.c_str());
-    std::printf("built %d wavetable(s) and %d texture(s) into %s\n", result.tables, result.textures, args.get("out").c_str());
+    std::printf("built %d wavetable(s), %d texture(s) and %d clip(s); copied %d preset(s), %d shape(s) and %d rack preset(s) into %s\n",
+                result.tables, result.textures, result.clips, result.presets, result.shapes, result.racks, args.get("out").c_str());
     return result.errors.empty() ? kOk : kFailed;
 }
 

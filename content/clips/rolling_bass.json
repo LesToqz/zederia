@@ -1,0 +1,12 @@
+{
+  "kind": "clip",
+  "name": "Rolling Bass",
+  "about": "A sixteenth-note bass in G minor with accents on the beats.",
+  "tempo": 126,
+  "bars": 2,
+  "key": "G minor",
+  "parts": [
+    { "notes": "0:0.2:G1:0.95 0.25:0.2:G1:0.55 0.5:0.2:G2:0.8 0.75:0.2:G1:0.55 1:0.2:Bb1:0.95 1.25:0.2:G1:0.55 1.5:0.2:D2:0.8 1.75:0.2:G1:0.55 2:0.2:F1:0.95 2.25:0.2:G1:0.55 2.5:0.2:F2:0.8 2.75:0.2:G1:0.55 3:0.2:D2:0.95 3.25:0.2:C2:0.6 3.5:0.2:Bb1:0.8 3.75:0.2:A1:0.6",
+      "repeat": 2, "every": 4 }
+  ]
+}

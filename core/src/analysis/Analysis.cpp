@@ -415,26 +415,6 @@ Descriptors analyze(const Audio& audio, const Options& options) {
     const double noteOff = options.noteOffSeconds;
     const std::size_t offFine = noteOff >= 0.0 ? std::min(fine.size(), static_cast<std::size_t>(noteOff * fs / hopFine))
                                                 : fine.size();
-    {
-        std::size_t i = peakAt;
-        while (i < fine.size() && ampDb(fine[i]) > ampDb(envPeak) - 20.0)
-            ++i;
-        if (i < fine.size())
-            d.decayMs = static_cast<double>(i - peakAt) * hopFine / fs * 1000.0;
-        const double heldFor = static_cast<double>(std::max<std::size_t>(offFine, peakAt + 1) - peakAt) * hopFine / fs;
-        // Level just before note-off (or at the end) relative to the peak.
-        const std::size_t probe = offFine > peakAt + 2 ? offFine - 2 : peakAt;
-        const double heldDb = ampDb(fine[std::min(probe, fine.size() - 1)]) - ampDb(envPeak);
-        const double notePart = static_cast<double>(std::max<std::size_t>(offFine, 1)) * hopFine / fs;
-        if (static_cast<double>(peakAt) * hopFine / fs > 0.5 * notePart && notePart > 0.2)
-            d.decayShape = "swelling";
-        else if (d.decayMs >= 0.0 && d.decayMs < 200.0)
-            d.decayShape = "percussive";
-        else if (heldDb < -20.0 || (d.decayMs >= 0.0 && static_cast<double>(peakAt) * hopFine / fs + d.decayMs / 1000.0 < notePart))
-            d.decayShape = "decaying";
-        else if (heldFor > 0.0)
-            d.decayShape = "sustained";
-    }
     const int hop10 = std::max(1, static_cast<int>(std::round(fs * 0.01)));
     const auto env10 = envelope(audio, hop10);
     if (noteOff >= 0.0) {
@@ -472,6 +452,7 @@ Descriptors analyze(const Audio& audio, const Options& options) {
 
     // Pitch: YIN on 4096-sample frames where the sound is within 20 dB of its peak.
     const auto mono = monoOf(audio);
+    double lowestF0 = 0.0;
     {
         const int size = fs > 60000.0 ? 8192 : 4096;
         const int minLag = std::max(2, static_cast<int>(fs / 2000.0)), maxLag = std::min(size / 2 - 2, static_cast<int>(fs / 30.0));
@@ -492,6 +473,7 @@ Descriptors analyze(const Audio& audio, const Options& options) {
         }
         if (f0s.size() >= 1) {
             const double f0 = median(f0s);
+            lowestF0 = *std::min_element(f0s.begin(), f0s.end());
             d.pitched = true;
             d.fundamentalHz = f0;
             d.pitchConfidence = confSum / static_cast<double>(f0s.size());
@@ -508,6 +490,45 @@ Descriptors analyze(const Audio& audio, const Options& options) {
             // Several notes: the median is only a summary, and harmonic measures against it mean nothing.
             d.pitchVaries = d.stabilityCents > 100.0;
         }
+    }
+
+    // Decay and its shape, on an envelope whose window spans two periods of the lowest pitch found
+    // (1 to 50 ms). A shorter window dips at every zero crossing of a low note, which made a held
+    // C3 read as a 4 ms "percussive" decay.
+    {
+        const double windowSeconds = lowestF0 > 0.0 ? std::clamp(2.0 / lowestF0, 0.001, 0.05) : 0.001;
+        const int window = std::max(1, static_cast<int>(std::round(fs * windowSeconds)));
+        const auto slow = window > static_cast<int>(std::round(fs * 0.001)) ? slidingEnvelope(audio, window, hopFine) : fine;
+        // Only windows that fit inside the audio: the last ones hold a few samples and dip.
+        const std::size_t span = static_cast<std::size_t>(window / hopFine);
+        const std::size_t complete = slow.size() > span + 1 ? slow.size() - span : slow.size();
+        const double loudest = *std::max_element(slow.begin(), slow.begin() + static_cast<std::ptrdiff_t>(complete));
+        const double topDb = ampDb(loudest);
+        // Where the sound first comes within 1 dB of its loudest: a steady note wavers by tiny
+        // amounts, so the loudest window itself could be anywhere along it.
+        std::size_t top = 0;
+        while (top + 1 < complete && ampDb(slow[top]) < topDb - 1.0)
+            ++top;
+        std::size_t i = top;
+        while (i < complete && ampDb(slow[i]) > topDb - 20.0)
+            ++i;
+        if (i < complete)
+            d.decayMs = static_cast<double>(i - top) * hopFine / fs * 1000.0;
+        const std::size_t off = std::min(offFine, complete);
+        const double heldFor = static_cast<double>(std::max<std::size_t>(off, top + 1) - top) * hopFine / fs;
+        // Level just before note-off (or at the end) relative to the peak, from a window that ends
+        // before the note-off.
+        const std::size_t probe = off > top + 2 + span ? off - 2 - span : top;
+        const double heldDb = ampDb(slow[std::min(probe, slow.size() - 1)]) - topDb;
+        const double notePart = static_cast<double>(std::max<std::size_t>(off, 1)) * hopFine / fs;
+        if (static_cast<double>(top) * hopFine / fs > 0.5 * notePart && notePart > 0.2)
+            d.decayShape = "swelling";
+        else if (d.decayMs >= 0.0 && d.decayMs < 200.0)
+            d.decayShape = "percussive";
+        else if (heldDb < -20.0 || (d.decayMs >= 0.0 && static_cast<double>(top) * hopFine / fs + d.decayMs / 1000.0 < notePart))
+            d.decayShape = "decaying";
+        else if (heldFor > 0.0)
+            d.decayShape = "sustained";
     }
 
     // Spectrum

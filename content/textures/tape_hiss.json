@@ -1,0 +1,15 @@
+{
+  "kind": "texture",
+  "name": "Tape Hiss",
+  "about": "Tape noise: a soft pink bed, a brighter top and a slow wander in its colour.",
+  "seconds": 4,
+  "rate": 48000,
+  "loop": true,
+  "seed": 26,
+  "peak_db": -9,
+  "layers": [
+    { "type": "noise", "color": "pink", "lowpass": 12000, "highpass": 300, "width": 0.9, "level": 1 },
+    { "type": "noise", "color": "white", "highpass": 9000, "width": 1, "level": 0.3 },
+    { "type": "wind", "center_hz": 6000, "sweep_octaves": 0.2, "rate_hz": 0.08, "q": 0.5, "level": 0.2 }
+  ]
+}

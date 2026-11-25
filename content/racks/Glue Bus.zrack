@@ -1,0 +1,8 @@
+{"format": "zederia.rack", "version": 1, "fx": {
+  "a": [],
+  "b": [],
+  "master": [
+    {"type": "compressor", "threshold_db": -14, "ratio": 2.5, "attack_ms": 20, "release_ms": 150, "makeup_db": 2},
+    {"type": "eq", "low_type": "shelf", "low_freq_hz": 90, "low_gain_db": 1, "mid1_freq_hz": 350, "mid1_gain_db": -1.5, "mid1_q": 0.3, "high_type": "shelf", "high_freq_hz": 10000, "high_gain_db": 1},
+    {"type": "limiter", "ceiling_db": -0.8, "release_ms": 100}
+  ]}}

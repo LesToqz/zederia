@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Pluck Decay",
+  "category": "Motion",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "A string plucked at a seventh of its length and left to ring: position 0 is the bright attack, 1 the dark end. Sweep it with an envelope.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "abs(sin(pi*h/7)) / h * exp(-y*(h*h*0.003 + h*0.04))", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

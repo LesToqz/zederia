@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Tine Bell",
+  "category": "Metallic",
+  "frames": 10,
+  "morph": "crossfade",
+  "about": "A sine phase-modulated by its fourteenth harmonic: a soft tine at the start, a clear bell at the end.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "sin(tau*t + (0.2 + 2.8*y) * sin(tau*14*t))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

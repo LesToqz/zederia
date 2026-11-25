@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Plate Modes",
+  "category": "Metallic",
+  "frames": 8,
+  "morph": "spectral",
+  "about": "The modes of a square plate (sums of two squares) over a weak fundamental; the upper modes ring louder across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 0.4 : (h==2||h==5||h==8||h==10||h==13||h==17||h==18||h==20||h==25||h==26||h==29||h==32||h==34||h==37||h==40||h==41||h==45||h==50||h==52||h==53||h==58||h==61||h==65||h==68||h==72||h==73||h==74||h==80) ? pow(h, -0.65 + 0.45*y) * (0.6 + 0.4*sin(h*1.7 + y*5)) : 0", "phase": "rand * pi", "seed": 4 },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

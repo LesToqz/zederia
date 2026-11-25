@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Phase Distort",
+  "category": "Digital",
+  "frames": 12,
+  "morph": "crossfade",
+  "about": "A cosine read at two speeds within each cycle: the faster first half turns it from a sine into a bright, sawtooth-like wave.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "-cos(tau * (t < (0.5 - 0.47*y) ? 0.5*t/(0.5 - 0.47*y) : 0.5 + 0.5*(t - (0.5 - 0.47*y))/(0.5 + 0.47*y)))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

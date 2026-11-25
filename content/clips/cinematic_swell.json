@@ -1,0 +1,13 @@
+{
+  "kind": "clip",
+  "name": "Cinematic Swell",
+  "about": "C minor with the major dominant: i, iv, VI, V, two bars each; the V borrows its B natural from the harmonic minor.",
+  "tempo": 80,
+  "bars": 8,
+  "key": "C minor",
+  "chromatic": true,
+  "parts": [
+    { "chords": ["i", "iv", "VI", "V"], "beats_per_chord": 8, "centre": 60, "low": 52, "high": 74, "bass": true,
+      "hits": [[0, 8]], "velocity": 0.65, "bass_velocity": 0.7 }
+  ]
+}

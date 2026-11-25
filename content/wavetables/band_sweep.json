@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Band Sweep",
+  "category": "Motion",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "An octave-wide band of a sawtooth moved up six octaves.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "(1/h) * exp(-((log2(h) - 6*y)^2) / 0.35)", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

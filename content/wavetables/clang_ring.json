@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "Clang Ring",
+  "category": "Metallic",
+  "frames": 8,
+  "morph": "crossfade",
+  "about": "A sine under the ring modulation of two whole-number partials; the upper one climbs, so the sum and difference tones spread apart.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "0.5*sin(tau*t) + sin(tau*7*t) * sin(tau*(11 + round(y*12))*t)" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

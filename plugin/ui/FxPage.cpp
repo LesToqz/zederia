@@ -1,5 +1,6 @@
 #include "FxPage.h"
 
+#include "ContentMenu.h"
 #include "CurveEditor.h"
 #include "Displays.h"
 
@@ -304,21 +305,28 @@ void showSlotMenu(Context& ctx, FxPage& page, int lane, int slot, juce::Componen
                 fc.getResult().replaceWithText(str(c->processor.slotPresetJson(lane, slot)));
         });
     });
-    menu.addItem("Load effect preset...", [c, p, lane, slot, safe] {
-        auto chooser = std::make_shared<juce::FileChooser>("Load effect preset", c->prefs.userContentFolder().getChildFile("Racks"), "*.zfx");
-        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [c, p, lane, slot, chooser, safe](const juce::FileChooser& fc) {
-            if (safe == nullptr || !fc.getResult().existsAsFile())
-                return;
-            const std::string json = fc.getResult().loadFileAsString().toStdString();
-            std::vector<zed::Issue> issues;
-            c->session.perform("Load effect preset " + fc.getResult().getFileNameWithoutExtension(), [&] {
-                return c->processor.loadSlotPresetJson(json, lane, slot, issues);
-            });
-            if (!issues.empty() && c->notify)
-                c->notify(str(issues.front().message));
-            p->select(lane, slot);
+    // An effect preset file into this slot: the factory's and yours, or any file.
+    const auto loadEffect = [c, p, lane, slot, safe](const juce::File& file) {
+        if (safe == nullptr || !file.existsAsFile())
+            return;
+        const std::string json = file.loadFileAsString().toStdString();
+        std::vector<zed::Issue> issues;
+        c->session.perform("Load effect preset " + file.getFileNameWithoutExtension(), [&] {
+            return c->processor.loadSlotPresetJson(json, lane, slot, issues);
         });
+        if (!issues.empty() && c->notify)
+            c->notify(str(issues.front().message));
+        p->select(lane, slot);
+    };
+    juce::PopupMenu effects;
+    if (addContentFiles(effects, contentSections(ctx, "Racks/Effects"), "*.zfx", loadEffect) > 0)
+        effects.addSeparator();
+    effects.addItem("Choose a file...", [c, loadEffect] {
+        auto chooser = std::make_shared<juce::FileChooser>("Load effect preset", c->prefs.userContentFolder().getChildFile("Racks"), "*.zfx");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                             [chooser, loadEffect](const juce::FileChooser& fc) { loadEffect(fc.getResult()); });
     });
+    menu.addSubMenu("Load effect preset", effects);
     const juce::String id = slotId(lane, slot);
     menu.addItem("Copy effect", [c, id] { c->session.copyModule(id); });
     menu.addItem("Paste effect here", ctx.session.clipboardClass() == "fx_slot", false, [c, id] {
@@ -916,7 +924,7 @@ public:
             lock_.setToggled(ctx_.processor.rackLocked());
         };
         save_.setHelp("Save rack", "Save all three lanes as a rack preset.");
-        load_.setHelp("Load rack", "Load a rack preset into all three lanes.");
+        load_.setHelp("Load rack", "Load a rack preset from the factory or your Racks folder into all three lanes.");
         save_.onClick = [this] {
             const juce::File folder = ctx_.prefs.userContentFolder().getChildFile("Racks");
             folder.createDirectory();
@@ -928,16 +936,27 @@ public:
                                  });
         };
         load_.onClick = [this] {
-            auto chooser = std::make_shared<juce::FileChooser>("Load rack preset", ctx_.prefs.userContentFolder().getChildFile("Racks"), "*.zrack");
-            chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, safe = juce::Component::SafePointer<RackCard>(this), chooser](const juce::FileChooser& fc) {
-                if (safe == nullptr || !fc.getResult().existsAsFile())
+            // The factory's racks and yours, or any file.
+            const juce::Component::SafePointer<RackCard> safe(this);
+            const auto loadRack = [safe](const juce::File& file) {
+                if (safe == nullptr || !file.existsAsFile())
                     return;
-                const std::string json = fc.getResult().loadFileAsString().toStdString();
+                const std::string json = file.loadFileAsString().toStdString();
                 std::vector<zed::Issue> issues;
-                ctx_.session.perform("Load rack " + fc.getResult().getFileNameWithoutExtension(), [&] { return ctx_.processor.loadRackPresetJson(json, issues); });
-                if (!issues.empty() && ctx_.notify)
-                    ctx_.notify(str(issues.front().message));
+                safe->ctx_.session.perform("Load rack " + file.getFileNameWithoutExtension(),
+                                           [&] { return safe->ctx_.processor.loadRackPresetJson(json, issues); });
+                if (!issues.empty() && safe->ctx_.notify)
+                    safe->ctx_.notify(str(issues.front().message));
+            };
+            juce::PopupMenu menu;
+            if (addContentFiles(menu, contentSections(ctx_, "Racks"), "*.zrack", loadRack) > 0)
+                menu.addSeparator();
+            menu.addItem("Choose a file...", [this, loadRack] {
+                auto chooser = std::make_shared<juce::FileChooser>("Load rack preset", ctx_.prefs.userContentFolder().getChildFile("Racks"), "*.zrack");
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                     [chooser, loadRack](const juce::FileChooser& fc) { loadRack(fc.getResult()); });
             });
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&load_));
         };
         copy_.setHelp("Copy rack", "Copy all three lanes; paste them into another instance or preset.");
         paste_.setHelp("Paste rack", "Replace the rack with a copied one.");

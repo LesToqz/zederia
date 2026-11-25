@@ -5,6 +5,7 @@
 #include "zederia/util/Math.h"
 
 #include <algorithm>
+#include <thread>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -273,47 +274,72 @@ std::shared_ptr<const TableData> TableData::build(const Wavetable& source, const
     // Two positions per inverse transform: their spectra are each conjugate-symmetric, so one goes
     // in as the real part and the other as the imaginary part, and they come out apart.
     const auto& lifts = levelLifts();
-    std::array<Complex, kMaxHarmonics + 1> binsA, binsB;
-    std::vector<Complex> work(4096);
-    for (std::size_t s = 0; s < synthesize.size(); s += 2) {
-        const int fa = synthesize[s];
-        const int fb = s + 1 < synthesize.size() ? synthesize[s + 1] : -1;
-        frameToBins(frames[static_cast<std::size_t>(fa)], binsA);
-        if (fb >= 0)
-            frameToBins(frames[static_cast<std::size_t>(fb)], binsB);
-        else
-            binsB.fill(Complex(0.0));
-        for (int l = 0; l < kNumLevels; ++l) {
-            const Level& level = out->levels_[static_cast<std::size_t>(l)];
-            const auto& lift = lifts[static_cast<std::size_t>(l)];
-            const int n = level.size;
-            const double toLevel = static_cast<double>(n) / kFrameSize;
-            std::fill(work.begin(), work.begin() + n, Complex(0.0));
-            work[0] = Complex(binsA[0].real() * toLevel, binsB[0].real() * toLevel);
-            for (int h = 1; h <= level.harmonics; ++h) { // h < n / 2 at every level: the halves never meet
-                const double gain = lift[static_cast<std::size_t>(h)] * toLevel;
-                Complex a = binsA[static_cast<std::size_t>(h)] * gain, b = binsB[static_cast<std::size_t>(h)] * gain;
-                if (h == kMaxHarmonics) { // the frame's Nyquist bin holds both halves of a cosine
-                    a = a.real() * 0.5;
-                    b = b.real() * 0.5;
+    std::array<const dsp::Fft*, kNumLevels> transforms{};
+    for (int l = 0; l < kNumLevels; ++l)
+        transforms[static_cast<std::size_t>(l)] = &dsp::Fft::forSize(out->levels_[static_cast<std::size_t>(l)].size);
+    const std::size_t pairs = (synthesize.size() + 1) / 2;
+    // Pairs [first, last) of `synthesize`; each run writes only its own positions.
+    const auto synthesizePairs = [&](std::size_t first, std::size_t last) {
+        std::array<Complex, kMaxHarmonics + 1> binsA, binsB;
+        std::vector<Complex> work(4096);
+        for (std::size_t s = first * 2; s < synthesize.size() && s < last * 2; s += 2) {
+            const int fa = synthesize[s];
+            const int fb = s + 1 < synthesize.size() ? synthesize[s + 1] : -1;
+            frameToBins(frames[static_cast<std::size_t>(fa)], binsA);
+            if (fb >= 0)
+                frameToBins(frames[static_cast<std::size_t>(fb)], binsB);
+            else
+                binsB.fill(Complex(0.0));
+            for (int l = 0; l < kNumLevels; ++l) {
+                const Level& level = out->levels_[static_cast<std::size_t>(l)];
+                const auto& lift = lifts[static_cast<std::size_t>(l)];
+                const int n = level.size;
+                const double toLevel = static_cast<double>(n) / kFrameSize;
+                std::fill(work.begin(), work.begin() + n, Complex(0.0));
+                work[0] = Complex(binsA[0].real() * toLevel, binsB[0].real() * toLevel);
+                for (int h = 1; h <= level.harmonics; ++h) { // h < n / 2 at every level: the halves never meet
+                    const double gain = lift[static_cast<std::size_t>(h)] * toLevel;
+                    Complex a = binsA[static_cast<std::size_t>(h)] * gain, b = binsB[static_cast<std::size_t>(h)] * gain;
+                    if (h == kMaxHarmonics) { // the frame's Nyquist bin holds both halves of a cosine
+                        a = a.real() * 0.5;
+                        b = b.real() * 0.5;
+                    }
+                    work[static_cast<std::size_t>(h)] = a + Complex(-b.imag(), b.real());              // a + i b
+                    work[static_cast<std::size_t>(n - h)] = std::conj(a) + Complex(b.imag(), b.real()); // conj(a) + i conj(b)
                 }
-                work[static_cast<std::size_t>(h)] = a + Complex(-b.imag(), b.real());                          // a + i b
-                work[static_cast<std::size_t>(n - h)] = std::conj(a) + Complex(b.imag(), b.real());             // conj(a) + i conj(b)
-            }
-            dsp::Fft::forSize(n).inverse(work.data());
-            for (const auto& [f, imaginary] : {std::pair{fa, false}, std::pair{fb, true}}) {
-                if (f < 0)
-                    continue;
-                float* dest = out->data_.data() + level.offset + f * level.stride;
-                for (int i = 0; i < level.stride; ++i) {
-                    const Complex& v = work[static_cast<std::size_t>((i - kGuardBefore + n) % n)];
-                    dest[i] = static_cast<float>(imaginary ? v.imag() : v.real());
+                transforms[static_cast<std::size_t>(l)]->inverse(work.data());
+                for (const auto& [f, imaginary] : {std::pair{fa, false}, std::pair{fb, true}}) {
+                    if (f < 0)
+                        continue;
+                    float* dest = out->data_.data() + level.offset + f * level.stride;
+                    for (int i = 0; i < level.stride; ++i) {
+                        const Complex& v = work[static_cast<std::size_t>((i - kGuardBefore + n) % n)];
+                        dest[i] = static_cast<float>(imaginary ? v.imag() : v.real());
+                    }
+                    if (f == count - 1)
+                        std::copy(dest, dest + level.stride, dest + level.stride);
                 }
-                if (f == count - 1)
-                    std::copy(dest, dest + level.stride, dest + level.stride);
             }
         }
+    };
+    // A table with many positions (a spectral morph: 256) is synthesized on up to four threads;
+    // the result is the same as on one, since every position is computed on its own.
+    const std::size_t hardware = std::max(1u, std::thread::hardware_concurrency());
+    const std::size_t runs = pairs >= 32 ? std::min<std::size_t>({4, hardware, pairs / 16}) : 1;
+    std::vector<std::thread> helpers;
+    const std::size_t chunk = (pairs + runs - 1) / std::max<std::size_t>(runs, 1);
+    std::size_t done = 0;
+    for (std::size_t r = 1; r < runs; ++r) {
+        try {
+            helpers.emplace_back(synthesizePairs, (r - 1) * chunk, std::min(pairs, r * chunk));
+            done = std::min(pairs, r * chunk);
+        } catch (const std::exception&) { // no thread to be had: the rest is done here
+            break;
+        }
     }
+    synthesizePairs(done, pairs);
+    for (std::thread& t : helpers)
+        t.join();
 
     const std::lock_guard<rt::Mutex> lock(cache().mutex);
     auto& slot = cache().tables[hash];

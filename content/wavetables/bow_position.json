@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Bow Position",
+  "category": "Harmonic",
+  "frames": 16,
+  "morph": "spectral",
+  "about": "A string excited ever nearer its end: hollow odd harmonics at the middle, a bright nasal comb near the bridge.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "sin(pi*h*(0.5 - 0.46*y)) / pow(h, 1.1)", "phase": "pi" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "kind": "texture",
+  "name": "Key Click",
+  "about": "The bright click of a key contact closing. Plays once.",
+  "seconds": 0.15,
+  "rate": 48000,
+  "loop": false,
+  "seed": 31,
+  "peak_db": -2,
+  "layers": [
+    { "type": "burst", "at": 0, "decay_ms": 1.5, "color": "white", "highpass": 3000, "level": 1 },
+    { "type": "burst", "at": 0.001, "decay_ms": 5, "color": "pink", "lowpass": 4000, "level": 0.3 },
+    { "type": "tone", "at": 0, "hz": 2000, "decay_ms": 3, "level": 0.2 }
+  ]
+}

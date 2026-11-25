@@ -353,15 +353,37 @@ private:
 
 // --- What the buttons copy -------------------------------------------------------------------------------
 
-juce::String AgentPage::serverPath() {
+juce::File AgentPage::developmentServer() {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getParentDirectory()
         .getChildFile("Local")
         .getChildFile("Programs")
         .getChildFile("Zederia")
-        .getChildFile("zederia-mcp.exe")
-        .getFullPathName()
-        .replaceCharacter('\\', '/');
+        .getChildFile("zederia-mcp.exe");
+}
+
+juce::File AgentPage::installedServer() {
+#if JUCE_WINDOWS
+    // The installer records its folder; without it, the folder it uses by default.
+    const juce::String recorded = juce::WindowsRegistry::getValue("HKEY_LOCAL_MACHINE\\SOFTWARE\\Zederia\\InstallDir");
+    if (recorded.isNotEmpty() && juce::File::isAbsolutePath(recorded))
+        return juce::File(recorded).getChildFile("zederia-mcp.exe");
+#endif
+    return juce::File::getSpecialLocation(juce::File::globalApplicationsDirectory).getChildFile("Zederia").getChildFile("zederia-mcp.exe");
+}
+
+juce::String AgentPage::chooseServer(const juce::File& self, const juce::File& installed, const juce::File& development) {
+    // A development copy runs from the folder above the development server's (%LOCALAPPDATA%\Programs):
+    // the tools folder itself, or Common\VST3 and Common\CLAP beside it.
+    const juce::File developmentRoot = development.getParentDirectory().getParentDirectory();
+    const bool developmentCopy = self.isAChildOf(developmentRoot);
+    const juce::File first = developmentCopy ? development : installed, second = developmentCopy ? installed : development;
+    const juce::File chosen = first.existsAsFile() ? first : second.existsAsFile() ? second : first;
+    return chosen.getFullPathName().replaceCharacter('\\', '/');
+}
+
+juce::String AgentPage::serverPath() {
+    return chooseServer(juce::File::getSpecialLocation(juce::File::currentApplicationFile), installedServer(), developmentServer());
 }
 
 juce::String AgentPage::claudeJson() {

@@ -1,5 +1,8 @@
 #include "CurveEditor.h"
 
+#include "ContentMenu.h"
+#include "zederia/patch/Modules.h"
+
 #include "zederia/util/Math.h"
 
 #include <cmath>
@@ -97,6 +100,70 @@ void CurveEditor::applyPreset(const juce::String& name) {
     }
     shape_.points = std::move(p);
     selected_.clear();
+}
+
+bool CurveEditor::applyShapeFile(const juce::File& file) {
+    const juce::String text = file.loadFileAsString();
+    zed::Shape shape;
+    std::vector<zed::Issue> issues;
+    if (text.isEmpty() || !zed::pasteShape(text.toStdString(), config_.bipolar ? zed::ShapeKind::Lfo : zed::ShapeKind::Curve, shape, issues) ||
+        shape.points.size() < 2)
+        return false;
+    auto& p = shape.points;
+    if (config_.maxPoints > 0 && static_cast<int>(p.size()) > config_.maxPoints)
+        return false;
+    if (config_.anchoredStart) { // envelopes start from silence
+        if (p.front().x > 0.0 || p.front().y != 0.0)
+            p.insert(p.begin(), {0.0, 0.0, 0.0});
+        p.front() = {0.0, 0.0, p.front().curve};
+        if (config_.maxPoints > 0 && static_cast<int>(p.size()) > config_.maxPoints)
+            return false;
+    }
+    if (config_.fixedEnds) {
+        p.front().x = 0.0;
+        p.back().x = 1.0;
+    }
+    const double loop = shape_.loopStart;
+    shape_ = std::move(shape);
+    shape_.loopStart = config_.loopPoint ? shape_.loopStart : loop;
+    selected_.clear();
+    repaint();
+    return true;
+}
+
+void CurveEditor::addShapeItems(juce::PopupMenu& menu) {
+    const juce::Component::SafePointer<CurveEditor> safe(this);
+    for (const auto& name : presetNames())
+        menu.addItem(name, [safe, name] {
+            if (safe == nullptr)
+                return;
+            safe->applyPreset(name);
+            safe->changed();
+            safe->commit("Shape " + name);
+        });
+    juce::PopupMenu files;
+    addContentFiles(files, contentSections(ctx_, "Shapes"), "*.zshape", [safe](const juce::File& file) {
+        if (safe == nullptr)
+            return;
+        if (!safe->applyShapeFile(file)) {
+            if (safe->ctx_.notify)
+                safe->ctx_.notify(file.getFileNameWithoutExtension() + " cannot be used here.");
+            return;
+        }
+        safe->changed();
+        safe->commit("Shape " + file.getFileNameWithoutExtension());
+    });
+    if (files.getNumItems() > 0) {
+        menu.addSeparator();
+        for (juce::PopupMenu::MenuItemIterator it(files); it.next();)
+            menu.addItem(it.getItem());
+    }
+}
+
+void CurveEditor::showShapesMenu(juce::Component* target) {
+    juce::PopupMenu menu;
+    addShapeItems(menu);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(target != nullptr ? target : this));
 }
 
 void CurveEditor::selectAll() {
@@ -488,12 +555,7 @@ void CurveEditor::showMenu(juce::Point<float>, int point) {
         gx.addItem(juce::String(d), true, gridX == d, [this, d] { gridX = d; repaint(); });
     for (const int d : {1, 2, 3, 4, 6, 8})
         gy.addItem(juce::String(d), true, gridY == d, [this, d] { gridY = d; repaint(); });
-    for (const auto& name : presetNames())
-        presets.addItem(name, [this, name] {
-            applyPreset(name);
-            changed();
-            commit("Shape " + name);
-        });
+    addShapeItems(presets);
     menu.addSubMenu("Grid across", gx);
     menu.addSubMenu("Grid up and down", gy);
     menu.addItem("Snap to grid", true, snap, [this] { snap = !snap; });

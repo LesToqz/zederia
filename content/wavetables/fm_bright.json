@@ -1,0 +1,13 @@
+{
+  "kind": "table",
+  "name": "FM Bright",
+  "category": "Digital",
+  "frames": 12,
+  "morph": "crossfade",
+  "about": "A sine phase-modulated by itself, the depth rising to eight: from a sine to a dense, saw-like spectrum.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "expr": "sin(tau*t + 8*y*y * sin(tau*t))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

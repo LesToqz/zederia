@@ -1,0 +1,1 @@
+{"format": "zederia.shape", "version": 1, "class": "shape", "range": "bipolar", "about": "A fast drop that rests at the bottom: a pluck on every cycle.", "content": {"points": [{"x": 0, "y": 1, "curve": 0.75}, {"x": 0.4, "y": -1, "curve": 0}, {"x": 1, "y": -1, "curve": 0}]}}

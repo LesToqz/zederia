@@ -62,10 +62,7 @@ void ZederiaParameter::setValue(float normalized) {
     owner_.engine().params().set(index_, owner_.effectiveDef(index_).fromNormalized(normalized));
 }
 
-float ZederiaParameter::getDefaultValue() const {
-    const auto& def = owner_.effectiveDef(index_);
-    return static_cast<float>(def.toNormalized(def.def));
-}
+float ZederiaParameter::getDefaultValue() const { return owner_.defaultNormalized(index_); }
 
 juce::String ZederiaParameter::getName(int maximumLength) const {
     const auto& reg = zed::Registry::get();
@@ -143,6 +140,14 @@ ZederiaProcessor::ZederiaProcessor()
     keyboard_.addListener(this);
     tableBuilder_ = std::make_unique<TableBuilder>(*this);
     session_ = std::make_unique<Session>(*this);
+    session_->startWithDefault(); // yours, the factory's, or the built-in init sound
+    // The opening sound's values are the parameters' defaults (defaultNormalized).
+    for (std::size_t s = 0; s < slotTypes_.size(); ++s)
+        startSlotTypes_[s] = slotTypes_[s].load(std::memory_order_relaxed);
+    startDefaults_.assign(static_cast<std::size_t>(reg.size()), -1.0f);
+    for (const auto& def : reg.params())
+        if (def.automatable)
+            startDefaults_[static_cast<std::size_t>(def.index)] = normalizedValue(def.index);
     agentLink_ = std::make_unique<AgentLink>(*this);
     // Off by default (plan 4.8); ZEDERIA_AGENT_LINK=1 switches it on for automated live-link tests.
     if (juce::SystemStats::getEnvironmentVariable("ZEDERIA_AGENT_LINK", {}) == "1") {
@@ -460,6 +465,20 @@ const zed::ParamDef& ZederiaProcessor::effectiveDef(int index) const {
 
 float ZederiaProcessor::normalizedValue(int index) const {
     return static_cast<float>(effectiveDef(index).toNormalized(plainValue(index)));
+}
+
+float ZederiaProcessor::defaultNormalized(int index) const {
+    const auto i = static_cast<std::size_t>(index);
+    if (i < startDefaults_.size() && startDefaults_[i] >= 0.0f) {
+        int lane = 0, slot = 0, field = 0; // any of a slot's parameters: on, mix and the effect's own
+        if (!zed::Registry::get().fxSlotOf(index, lane, slot, field))
+            return startDefaults_[i];
+        const auto s = static_cast<std::size_t>(lane * zed::kNumFxSlots + slot);
+        if (slotTypes_[s].load(std::memory_order_relaxed) == startSlotTypes_[s])
+            return startDefaults_[i];
+    }
+    const auto& def = effectiveDef(index);
+    return static_cast<float>(def.toNormalized(def.def));
 }
 
 void ZederiaProcessor::setNormalizedFromUi(int index, float normalized) {

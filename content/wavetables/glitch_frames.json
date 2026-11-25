@@ -1,0 +1,15 @@
+{
+  "kind": "table",
+  "name": "Glitch Frames",
+  "category": "Digital",
+  "frames": 16,
+  "morph": "none",
+  "stepped": true,
+  "about": "Sixteen unrelated random spectra, one per step, for sequenced or randomly modulated positions.",
+  "steps": [
+    { "op": "harmonic", "name": "randomize_lowest", "n": 64, "amount": 1, "seed": 77 },
+    { "op": "harmonic", "name": "fade_highs", "amount": 0.5 },
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? max(in, 0.3) : in" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "table",
+  "name": "Half Waves",
+  "category": "Basics",
+  "frames": 4,
+  "morph": "crossfade",
+  "about": "A sine, the same sine cut in half, folded up to its octave, and rounded towards a square.",
+  "steps": [
+    { "op": "formula", "domain": "wave", "frames": [0, 0], "expr": "sin(tau*t)" },
+    { "op": "formula", "domain": "wave", "frames": [1, 1], "expr": "max(sin(tau*t), 0)" },
+    { "op": "formula", "domain": "wave", "frames": [2, 2], "expr": "abs(sin(tau*t))" },
+    { "op": "formula", "domain": "wave", "frames": [3, 3], "expr": "sign(sin(tau*t)) * sqrt(abs(sin(tau*t)))" },
+    { "op": "process", "name": "remove_dc" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

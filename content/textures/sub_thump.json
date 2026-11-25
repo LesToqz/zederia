@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Sub Thump",
+  "about": "A low thump whose pitch drops as it fades, with a soft attack click. Plays once.",
+  "seconds": 1.2,
+  "rate": 48000,
+  "loop": false,
+  "seed": 34,
+  "peak_db": -2,
+  "layers": [
+    { "type": "tone", "at": 0, "hz": 60, "decay_ms": 220, "drop_octaves": 1.2, "level": 1 },
+    { "type": "burst", "at": 0, "decay_ms": 6, "color": "pink", "lowpass": 600, "level": 0.3 }
+  ]
+}

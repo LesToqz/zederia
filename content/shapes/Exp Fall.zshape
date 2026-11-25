@@ -1,0 +1,1 @@
+{"format": "zederia.shape", "version": 1, "class": "shape", "range": "bipolar", "about": "A steep exponential fall, like a decaying envelope on every cycle.", "content": {"points": [{"x": 0, "y": 1, "curve": 0.85}, {"x": 1, "y": -1, "curve": 0}]}}

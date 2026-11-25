@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Glass Partials",
+  "category": "Metallic",
+  "frames": 5,
+  "morph": "spectral",
+  "about": "A pure fundamental with a few wide-spaced partials (5, 11, 19, 29) that grow in: glass and struck crystal.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "h == 1 ? 1 : h == 5 ? 0.5*(0.3 + y) : h == 11 ? 0.35*y : h == 19 ? 0.25*y*y : h == 29 ? 0.15*y : 0" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

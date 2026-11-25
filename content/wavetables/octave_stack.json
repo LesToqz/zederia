@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Octave Stack",
+  "category": "Harmonic",
+  "frames": 8,
+  "morph": "spectral",
+  "about": "Partials an octave apart under a bell-shaped weight that climbs five octaves across the table.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "frac(log2(h)) == 0 ? exp(-((log2(h) - 5*y)^2) / 2.5) : 0" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

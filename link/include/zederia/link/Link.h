@@ -28,8 +28,12 @@ std::string localDir();
 std::string settingsDir();
 std::string discoveryDir(); // localDir()/link
 
-// Random bytes from the operating system as lowercase hex.
+// Random bytes as lowercase hex, for names and ids: from the operating system's secure source,
+// or from the clock when there is none.
 std::string randomHex(int bytes);
+// Random bytes from the operating system's secure source as lowercase hex, for secrets (tokens);
+// false, and nothing, when there is no secure source.
+bool secureRandomHex(int bytes, std::string& out);
 
 // --- Discovery files --------------------------------------------------------------------------------
 struct Discovery {
@@ -119,6 +123,11 @@ bool savePermissions(const Permissions& p, std::string& error);
 
 // Writes a file that only the current user can read or write (replacing it whole).
 bool writePrivateFile(const std::string& path, const std::string& text, std::string& error);
+
+// Creates an empty file at `path` only when nothing has that name yet, in one step, so two
+// writers choosing the same name cannot both get it. False when the name is taken (`taken` set)
+// or the file cannot be created there.
+bool createNewFile(const std::string& path, bool& taken);
 
 // --- Text helpers ------------------------------------------------------------------------------------
 std::wstring widen(const std::string& utf8);

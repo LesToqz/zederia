@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Noise Riser",
+  "about": "A band of noise rising from 300 Hz to 9 kHz over four seconds and growing as it goes, with a faint rising tone. Plays once.",
+  "seconds": 4.5,
+  "rate": 48000,
+  "loop": false,
+  "seed": 35,
+  "peak_db": -2,
+  "layers": [
+    { "type": "chirp", "noise": true, "from_hz": 300, "to_hz": 9000, "at": 0, "duration": 4.2, "q": 3, "fade_in": 3.5, "level": 1 },
+    { "type": "chirp", "from_hz": 200, "to_hz": 2000, "at": 0, "duration": 4.2, "fade_in": 3.5, "level": 0.15 }
+  ]
+}

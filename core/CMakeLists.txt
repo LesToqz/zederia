@@ -31,6 +31,7 @@ add_library(zederia_core STATIC
     src/content/Recipe.cpp
     src/content/Library.cpp
     src/content/PresetIndex.cpp
+    src/content/ContentCheck.cpp
     src/engine/VoiceAllocator.cpp
     src/engine/SampleData.cpp
     src/engine/OscKernelScalar.cpp
@@ -54,6 +55,7 @@ add_library(zederia_core STATIC
     src/analysis/Analysis.cpp
     src/music/Theory.cpp
     src/bench/Bench.cpp
+    src/bench/Soak.cpp
 )
 target_include_directories(zederia_core PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(zederia_core PUBLIC nlohmann_json::nlohmann_json PRIVATE zederia_warnings)

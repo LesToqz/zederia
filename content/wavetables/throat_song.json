@@ -1,0 +1,12 @@
+{
+  "kind": "table",
+  "name": "Throat Song",
+  "category": "Formant",
+  "frames": 9,
+  "morph": "spectral",
+  "about": "A low drone with one narrow resonance that climbs from the sixth harmonic to the fourteenth: a melody of overtones above one note.",
+  "steps": [
+    { "op": "formula", "domain": "harmonics", "expr": "pow(h, -1) * (0.25 + exp(-((h - 3)/1.5)^2)) + 1.2 * exp(-((h - (6 + 8*y))/0.45)^2) / sqrt(h)" },
+    { "op": "process", "name": "normalize_each" }
+  ]
+}

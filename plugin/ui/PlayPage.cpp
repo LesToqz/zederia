@@ -1,5 +1,7 @@
 #include "PlayPage.h"
 
+#include "ContentMenu.h"
+
 #include "zederia/params/ValueText.h"
 
 namespace zui {
@@ -717,17 +719,27 @@ PlayPage::PlayPage(Context& ctx) : Page(ctx) {
     auto& clearClip = parts_.add<Button>(*clips_, "Clear clip", Glyph::Trash);
     for (Button* b : {&import, &exportButton, &drag, &quantize, &clearClip})
         b->textSize = kTextSmall + 0.5f;
-    import.setHelp("Import MIDI", "Put a Standard MIDI File into this clip slot (or drop one on the page).");
+    import.setHelp("Import MIDI", "Put a clip from the factory or your Clips folder, or any Standard MIDI File, into this clip slot (or drop a file on the page).");
     exportButton.setHelp("Export MIDI", "Save this clip as a Standard MIDI File.");
     drag.setHelp("Drag to host", "Drag from here into your host's arrangement to drop the clip as MIDI.");
     quantize.setHelp("Quantize", "Snap note starts (the selected notes, or all) to a grid.");
-    import.onClick = [this] {
-        auto chooser = std::make_shared<juce::FileChooser>("Import a MIDI file", ctx_.prefs.userContentFolder(), "*.mid;*.midi");
-        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, chooser](const juce::FileChooser& fc) {
+    import.onClick = [this, button = &import] {
+        // The factory's clips and yours, or any MIDI file.
+        const juce::Component::SafePointer<PlayPage> safe(this);
+        const auto importFile = [safe](const juce::File& file) {
             juce::String error;
-            if (fc.getResult().existsAsFile() && !importClipFile(fc.getResult(), error) && ctx_.notify)
-                ctx_.notify(error);
+            if (safe != nullptr && file.existsAsFile() && !safe->importClipFile(file, error) && safe->ctx_.notify)
+                safe->ctx_.notify(error);
+        };
+        juce::PopupMenu menu;
+        if (addContentFiles(menu, contentSections(ctx_, "Clips"), "*.mid;*.midi", importFile) > 0)
+            menu.addSeparator();
+        menu.addItem("Choose a file...", [this, importFile] {
+            auto chooser = std::make_shared<juce::FileChooser>("Import a MIDI file", ctx_.prefs.userContentFolder(), "*.mid;*.midi");
+            chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                 [chooser, importFile](const juce::FileChooser& fc) { importFile(fc.getResult()); });
         });
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(button));
     };
     exportButton.onClick = [this] {
         auto chooser = std::make_shared<juce::FileChooser>("Export the clip", ctx_.prefs.userContentFolder().getChildFile("Clips").getChildFile("Clip.mid"), "*.mid");

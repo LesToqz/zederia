@@ -1,0 +1,14 @@
+{
+  "kind": "texture",
+  "name": "Breath",
+  "about": "Soft breath: mid-band noise whose colour and strength drift slowly.",
+  "seconds": 5,
+  "rate": 48000,
+  "loop": true,
+  "seed": 23,
+  "peak_db": -4,
+  "layers": [
+    { "type": "noise", "color": "pink", "highpass": 500, "lowpass": 4000, "width": 0.6, "level": 0.45 },
+    { "type": "wind", "center_hz": 1200, "sweep_octaves": 0.6, "rate_hz": 0.3, "q": 1.2, "level": 1 }
+  ]
+}

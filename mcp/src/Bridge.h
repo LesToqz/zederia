@@ -163,9 +163,22 @@ private:
     zed::ContentLibrary library_;
     mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<Session>> sessions_;
+    // Tables and textures renders used, kept while their files stay unchanged. Each cache holds a
+    // few entries; the one used longest ago makes room.
+    template <typename T>
+    struct CacheEntry {
+        std::shared_ptr<const T> data;
+        fs::file_time_type written{};
+        std::uint64_t used = 0;
+    };
+    template <typename T, typename Load>
+    std::shared_ptr<const T> cached(std::map<std::string, CacheEntry<T>>& cache, std::size_t limit, const std::string& ref,
+                                    const std::string& file, Load&& load, std::string& error);
+    static constexpr std::size_t kTableCacheSize = 32, kTextureCacheSize = 8;
     std::mutex tableMutex_;
-    std::map<std::string, std::shared_ptr<const zed::TableData>> tableCache_;
-    std::map<std::string, std::shared_ptr<const zed::SampleData>> textureCache_;
+    std::uint64_t cacheClock_ = 0;
+    std::map<std::string, CacheEntry<zed::TableData>> tableCache_;
+    std::map<std::string, CacheEntry<zed::SampleData>> textureCache_;
 
     std::mutex reportMutex_;
     std::condition_variable reportWake_, reportIdle_;
