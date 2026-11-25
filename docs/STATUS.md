@@ -755,7 +755,7 @@ Milestone 7:
 - The Debug suite takes about five minutes (301 s for 388 tests); Release takes about 72 s. `cli.content_check` runs in optimised builds only.
 - **The installer and the programs are not code-signed.** Windows SmartScreen's warning (release notes) was not seen here: files built on this computer carry no download mark, so the installer ran without it. The installer's own tests ran its silent mode; the wizard's pages were looked at in a preview build that asks for no administrator rights and was cancelled before installing.
 - **The CLAP plug-in was not loaded in a host.** clap-validator passes (Measurements); FL Studio 2026 was checked with the VST3 only.
-- **This folder's agent sessions use the development server.** Claude Code is registered here with `%LOCALAPPDATA%\Programs\Zederia\zederia-mcp.exe`, which is still the development build of 2026-11-23 (0.1.0, without milestone 7's hardening). Register `C:\Program Files\Zederia\zederia-mcp.exe` instead, or run `scripts/install-dev.ps1`, and restart the session.
+- **Agent sessions opened before 2026-11-26 run the old development server.** Claude Code in this folder now starts the installed `C:\Program Files\Zederia\zederia-mcp.exe` (1.0.0-rc1); a session started earlier keeps the development build of 2026-11-23 (0.1.0, without milestone 7's hardening) until it is restarted.
 - **A development install beside the installed one** puts a second Zederia in hosts that scan the per-user plug-in folders; while `%PROGRAMDATA%\Zederia\Factory` exists, both use it. `scripts/install-dev.ps1 -Uninstall` removes the development copy.
 
 ## Next
@@ -763,4 +763,3 @@ Milestone 7:
 - Fix what that turns up, then release 1.0.0: drop `ZED_VERSION_SUFFIX`, rebuild with `scripts/package.ps1`, run `scripts/test-installer.ps1`.
 - Code signing, when a certificate is bought: sign the programs and the installer through Inno Setup's `SignTool` directive (the release notes then lose their SmartScreen section).
 - Publish the source with the installer (AGPL section 6): the repository at the release's tag.
-- Point this folder's agent registration at the installed `zederia-mcp.exe` (Known issues).

@@ -57,7 +57,7 @@ Which protocol revisions each installed client speaks was observed with a loggin
 | Codex CLI | 0.170.0 | `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe` | `initialize` at 2025-06-18 only |
 | Antigravity CLI (`agy`) | - | not installed | - |
 
-`zederia-mcp` is registered with Claude Code for this project only (`claude mcp add -s local zederia -- "%LOCALAPPDATA%/Programs/Zederia/zederia-mcp.exe" --stdio`, stored in `%USERPROFILE%\.claude.json` under this folder; `claude mcp remove -s local zederia` removes it). Codex was given the server per run with `-c mcp_servers.zederia.command=...`; nothing was written to `~/.codex/config.toml`.
+`zederia-mcp` is registered with Claude Code for this project only, since 2026-11-26 with the installed copy (`claude mcp add -s local zederia -- "C:/Program Files/Zederia/zederia-mcp.exe" --stdio`; before, the development copy in `%LOCALAPPDATA%/Programs/Zederia`), stored in `%USERPROFILE%\.claude.json` under this folder; `claude mcp remove -s local zederia` removes it. An installer upgrade replaces that copy (it may offer to close sessions that run it). Codex was given the server per run with `-c mcp_servers.zederia.command=...`; nothing was written to `~/.codex/config.toml`.
 
 ## Development install locations (no administrator rights)
 - VST3: `%LOCALAPPDATA%\Programs\Common\VST3\`
