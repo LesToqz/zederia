@@ -159,6 +159,36 @@ TEST_CASE("analysis: silence and empty input do not fail", "[analysis]") {
     CHECK(analysis::toJson(d)["level"]["peak_dbfs"].get<double>() <= -199.0);
 }
 
+TEST_CASE("analysis: a held low note is sustained and a low pluck percussive", "[analysis]") {
+    // The decay used to be read on a 1 ms envelope, which dips at each zero crossing of a low
+    // note: a C3 saw held for three seconds read as a 4 ms percussive decay (milestone 7).
+    const auto saw = [](double hz, double seconds, double decaySeconds) {
+        Signal s;
+        for (int i = 0; i < static_cast<int>(48000 * seconds); ++i) {
+            const double t = i / 48000.0;
+            const double env = decaySeconds > 0.0 ? std::exp(-t / decaySeconds) : 1.0;
+            double v = 0.0;
+            for (int h = 1; h <= 40; ++h)
+                v += std::sin(2.0 * kPi * hz * h * t) / h;
+            s.l.push_back(static_cast<float>(0.3 * env * v));
+            s.r.push_back(static_cast<float>(0.3 * env * v));
+        }
+        return s;
+    };
+    analysis::Options o;
+    o.noteOffSeconds = 3.0;
+    for (const double hz : {130.81, 65.41, 41.2}) {
+        INFO(hz << " Hz held");
+        const auto d = analysis::analyze(saw(hz, 3.1, 0.0).audio(), o);
+        CHECK(d.decayShape == "sustained");
+        CHECK_FALSE(hasTag(d, "plucky"));
+    }
+    o.noteOffSeconds = 0.5;
+    const auto pluck = analysis::analyze(saw(65.41, 1.5, 0.05).audio(), o);
+    CHECK(pluck.decayShape == "percussive");
+    CHECK(hasTag(pluck, "plucky"));
+}
+
 TEST_CASE("analysis: attack time of a linear ramp", "[analysis]") {
     Signal s;
     for (int i = 0; i < 48000; ++i) {

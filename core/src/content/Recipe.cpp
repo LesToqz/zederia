@@ -883,10 +883,11 @@ std::vector<std::uint8_t> withLfEndings(const std::vector<std::uint8_t>& bytes) 
 std::string checkFactoryFile(const std::string& extension, const std::string& text) {
     std::vector<Issue> issues;
     const auto first = [&](const char* what) {
-        for (const Issue& i : issues)
-            return std::string(what) + (i.severity == Severity::Error ? " error at " : " warning at ") +
-                   (i.path.empty() ? std::string("(document)") : i.path) + ": " + i.message;
-        return std::string(what) + " could not be read";
+        if (issues.empty())
+            return std::string(what) + " could not be read";
+        const Issue& i = issues.front();
+        return std::string(what) + (i.severity == Severity::Error ? " error at " : " warning at ") +
+               (i.path.empty() ? std::string("(document)") : i.path) + ": " + i.message;
     };
     if (extension == ".zpreset") {
         const LoadResult loaded = loadPatch(text);
