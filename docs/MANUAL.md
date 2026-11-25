@@ -40,7 +40,8 @@ says what it shows and how to continue.
 
 The plug-in folders are the standard ones, so a host such as FL Studio finds Zederia when it
 scans for plug-ins, with no extra search folder. The Standalone has a Start menu entry. Choose
-**Custom** on the components page to leave out a part; the factory content is always installed.
+**Choose the parts** on the components page to leave out a part; the factory content is always
+installed.
 
 To upgrade, run the newer installer: it removes the files of the version before it first, so
 nothing stale is left. To uninstall, use **Apps & features** (Installed apps) in the Windows

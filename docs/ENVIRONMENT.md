@@ -18,7 +18,9 @@ Verified 2026-11-10 with `scripts/check-env.ps1` (re-runnable; exits non-zero if
 | Also present | VS 2026 Insiders (not used) |
 
 Add `/Zc:__cplusplus` to MSVC flags, otherwise `__cplusplus` reads 199711 (C++20 itself works).
-Optional, not installed: clang-cl, Inno Setup (needed for milestone 7), agy. Node is present. Host found: FL Studio. The agent clients claude and codex were installed later (see Agent clients below).
+Optional, not installed: clang-cl, agy. Node is present. Host found: FL Studio (2026, version 26.1.1.5547 when checked on 2026-11-26). The agent clients claude and codex were installed later (see Agent clients below).
+
+Inno Setup 7.1.1 was installed by the user for milestone 7, per user, in `%LOCALAPPDATA%\Programs\Inno Setup 7` (`ISCC.exe`); `scripts/package.ps1` looks there and in Program Files.
 
 ## Pinned dependencies (cmake/Versions.cmake)
 | Dependency | Pin |
@@ -61,4 +63,11 @@ Which protocol revisions each installed client speaks was observed with a loggin
 - VST3: `%LOCALAPPDATA%\Programs\Common\VST3\`
 - CLAP: `%LOCALAPPDATA%\Programs\Common\CLAP\`
 - Tools: `%LOCALAPPDATA%\Programs\Zederia\`
-These folders do not exist yet. Whether FL Studio scans them by default is not confirmed: the VST3 standard includes the per-user folder, but FL Studio's extra search paths must be checked in its plug-in manager settings.
+- Factory content: `%LOCALAPPDATA%\Zederia\Factory\`
+
+## Installed locations (the installer, administrator rights once)
+- VST3: `C:\Program Files\Common Files\VST3\Zederia.vst3`; CLAP: `C:\Program Files\Common Files\CLAP\Zederia.clap`
+- Standalone, `zederia-mcp`, `zederia-cli`, documents: `C:\Program Files\Zederia` (recorded in `HKLM\SOFTWARE\Zederia\InstallDir`)
+- Factory content: `%PROGRAMDATA%\Zederia\Factory`
+
+FL Studio 2026 on this machine finds the plug-in in the machine-wide VST3 folder (its plug-in database points there). While `%PROGRAMDATA%\Zederia\Factory` exists, every copy of Zederia uses it, the development install included, and the per-user factory folder is ignored; set `ZEDERIA_FACTORY` to test other content. A host that scans both the per-user and the machine-wide plug-in folders lists the development and the installed copy side by side; `scripts/install-dev.ps1 -Uninstall` removes the development copy. `scripts/test-installer.ps1` tests install, upgrade, component choice and uninstall here (one administrator prompt).

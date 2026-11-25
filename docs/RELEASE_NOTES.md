@@ -22,7 +22,7 @@ Standalone application) with a local bridge for AI agents. This candidate is for
 ## System requirements
 
 Windows 10 or 11, 64-bit, on an x64 processor (AVX2 is used when present). A VST3 or CLAP host,
-or the Standalone. About 60 MB of disk space.
+or the Standalone. About 90 MB of disk space.
 
 ## Installing
 
@@ -56,9 +56,9 @@ What goes where:
 | Factory content | `%PROGRAMDATA%\Zederia\Factory` |
 | Your presets and files (made when first used) | `Documents\Zederia` |
 
-Hosts find the plug-ins in these standard folders. In FL Studio, open **Options > Manage
-plugins** and click **Find installed plugins** (or **Start scan**) once after installing; Zederia
-then appears in the plug-in database under its own name.
+Hosts find the plug-ins in these standard folders. If FL Studio does not list Zederia yet,
+choose **ADD > Refresh plugin list (fast scan)** once; Zederia then appears in the ADD menu and
+the plug-in database under its own name.
 
 ## Upgrading and uninstalling
 
@@ -80,8 +80,11 @@ then appears in the plug-in database under its own name.
 ## Known issues
 
 - The installer and the programs are not code-signed (see Installing).
-- The plug-in has been loaded in FL Studio and the Standalone only; other hosts have not been
-  tried. [STATUS.md](STATUS.md) lists the host checks done and the ones still open.
+- Hosts checked for this candidate: FL Studio 2026 (26.1.1) with the installed VST3 (loading,
+  playing, two instances at once, automating a parameter, saving and reopening a project,
+  rendering it) and the Standalone (loading, playing, the factory library, the agent link).
+  The CLAP plug-in passed its validator but was not loaded in a host, and no other host was
+  tried.
 - Nobody has listened to every factory preset in a host; the content check measures them.
 - In a host, the computer keys play only while Zederia's window has the keyboard focus, and some
   hosts take letters for their own typing keyboard first.

@@ -441,8 +441,21 @@ const char* const kHelpEnd = "<!-- ui-help: end -->";
 
 int cmdUiHelp(const Args& args) {
     juce::ScopedJuceInitialiser_GUI gui;
-    // Default preferences with every control showing (not the Simple view).
-    Prefs::useFile(juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia-ui-help-settings-none.json"));
+    // The reference describes the interface itself, whatever this computer has installed: the
+    // built-in init sound (an empty factory folder, so no Default preset), an empty library and
+    // default preferences with every control showing (not the Simple view).
+    const juce::File scratch = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("zederia-ui-help");
+    const juce::File emptyFactory = scratch.getChildFile("factory"), emptyUser = scratch.getChildFile("user");
+    scratch.deleteRecursively();
+    emptyFactory.createDirectory();
+    emptyUser.createDirectory();
+#ifdef _WIN32
+    _putenv_s("ZEDERIA_FACTORY", emptyFactory.getFullPathName().toRawUTF8());
+#else
+    setenv("ZEDERIA_FACTORY", emptyFactory.getFullPathName().toRawUTF8(), 1);
+#endif
+    Prefs::useFile(scratch.getChildFile("settings-none.json"));
+    Prefs::get().userFolder = emptyUser.getFullPathName();
     ZederiaProcessor processor;
     processor.setPlayConfigDetails(0, 2, 48000.0, 512);
     processor.prepareToPlay(48000.0, 512);
