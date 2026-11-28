@@ -3,6 +3,7 @@
 #include "CliUtil.h"
 
 #if ZED_HAVE_UI
+#include "AgentLink.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/Audit.h"
@@ -140,6 +141,54 @@ int cmdUiSnapshot(const Args& args) {
     auto* editor = dynamic_cast<ZederiaEditor*>(base.get());
     if (editor == nullptr)
         return kFailed;
+    // --agent-wait: with the agent link on (ZEDERIA_AGENT_LINK=1), keep it open this long and carry
+    // out what agents ask before rendering, so the pages show their work (images for the documents
+    // and the website). This loop stands in for the message thread the plug-in would have.
+    if (args.has("agent-wait")) {
+        double seconds = 0.0;
+        if (!toNumber(args.get("agent-wait"), seconds) || seconds < 0.0 || seconds > 600.0) {
+            std::fprintf(stderr, "error: --agent-wait takes seconds from 0 to 600\n");
+            return kUsage;
+        }
+        auto& link = processor.agentLink();
+        if (!link.enabled()) {
+            std::fprintf(stderr, "error: --agent-wait needs the agent link on: set ZEDERIA_AGENT_LINK=1\n");
+            return kUsage;
+        }
+        std::printf("agent link open as live:%s for %.0f s\n", link.discovery().instanceId.c_str(), seconds);
+        std::fflush(stdout);
+        const double until = juce::Time::getMillisecondCounterHiRes() + seconds * 1000.0;
+        while (juce::Time::getMillisecondCounterHiRes() < until) {
+            link.service();
+            processor.session().dispatchPendingMessages();
+            run(1);
+            editor->tickFrame();
+            juce::Thread::sleep(10);
+        }
+    }
+    // --frames N --fps F: N images of each page, 1/F s of sound apart, the frames of an animation
+    // (the displays follow the engine, so they move as the sound does).
+    double frameCount = 1.0, fps = 30.0;
+    if ((args.has("frames") && (!toNumber(args.get("frames"), frameCount) || frameCount < 1.0 || frameCount > 3600.0)) ||
+        (args.has("fps") && (!toNumber(args.get("fps"), fps) || fps < 1.0 || fps > 120.0))) {
+        std::fprintf(stderr, "error: --frames takes 1 to 3600 and --fps 1 to 120\n");
+        return kUsage;
+    }
+    const int frames = static_cast<int>(frameCount);
+    double owed = 0.0; // samples carried over between frames, so the frames keep exact time
+    const auto advance = [&](double seconds) {
+        owed += seconds * 48000.0;
+        int samples = static_cast<int>(owed);
+        owed -= samples;
+        while (samples > 0) {
+            const int n = std::min(samples, buffer.getNumSamples());
+            juce::AudioBuffer<float> part(buffer.getArrayOfWritePointers(), buffer.getNumChannels(), n);
+            part.clear();
+            processor.processBlock(part, midi);
+            midi.clear();
+            samples -= n;
+        }
+    };
     const bool check = args.has("audit");
     int findings = 0;
     std::vector<zui::Finding> themeFindings;
@@ -157,25 +206,35 @@ int cmdUiSnapshot(const Args& args) {
                     run(1);
                     editor->tickFrame();
                 }
-                step("render");
-                std::vector<zui::Finding> list;
-                const juce::Image image = zui::renderSnapshot(*editor, check ? &list : nullptr);
-                if (check)
-                    for (auto& f : zui::checkLayout(*editor))
-                        list.push_back(f);
-                juce::String name = juce::String(kPages[page]) + "_" + juce::String(scale);
-                if (themeName != "Graphite")
-                    name << "_" << themeName.toLowerCase();
-                const juce::File file = outDir.getChildFile(name + ".png");
-                if (!zui::writePng(image, file)) {
-                    std::fprintf(stderr, "error: could not write %s\n", file.getFullPathName().toRawUTF8());
-                    return kFailed;
+                for (int frame = 0; frame < frames; ++frame) {
+                    if (frame > 0) { // the next frame of an animation: 1/fps of sound later
+                        advance(1.0 / fps);
+                        editor->tickFrame();
+                    }
+                    step("render");
+                    const bool audit = check && frame == 0;
+                    std::vector<zui::Finding> list;
+                    const juce::Image image = zui::renderSnapshot(*editor, audit ? &list : nullptr);
+                    if (audit)
+                        for (auto& f : zui::checkLayout(*editor))
+                            list.push_back(f);
+                    juce::String name = juce::String(kPages[page]) + "_" + juce::String(scale);
+                    if (themeName != "Graphite")
+                        name << "_" << themeName.toLowerCase();
+                    if (frames > 1)
+                        name << "_f" << juce::String(frame).paddedLeft('0', 4);
+                    const juce::File file = outDir.getChildFile(name + ".png");
+                    if (!zui::writePng(image, file)) {
+                        std::fprintf(stderr, "error: could not write %s\n", file.getFullPathName().toRawUTF8());
+                        return kFailed;
+                    }
+                    if (frames == 1 || frame == 0 || frame == frames - 1)
+                        std::printf("%s  %dx%d  %d finding(s)\n", file.getFullPathName().toRawUTF8(), image.getWidth(),
+                                    image.getHeight(), static_cast<int>(list.size()));
+                    for (const auto& f : list)
+                        std::printf("  %s: %s: %s\n", f.kind.toRawUTF8(), f.where.toRawUTF8(), f.detail.toRawUTF8());
+                    findings += static_cast<int>(list.size());
                 }
-                std::printf("%s  %dx%d  %d finding(s)\n", file.getFullPathName().toRawUTF8(), image.getWidth(), image.getHeight(),
-                            static_cast<int>(list.size()));
-                for (const auto& f : list)
-                    std::printf("  %s: %s: %s\n", f.kind.toRawUTF8(), f.where.toRawUTF8(), f.detail.toRawUTF8());
-                findings += static_cast<int>(list.size());
             }
         }
     }
