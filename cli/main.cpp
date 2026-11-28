@@ -79,6 +79,10 @@ Usage: zederia-cli <command> [options]
       --user DIR               user folder (presets for the library page)
       --settings FILE          preferences file to use (default: the defaults, not yours)
       --play NOTES             hold these keys (for example 48,52,55) so the displays move
+      --agent-wait SECONDS     with ZEDERIA_AGENT_LINK=1: keep the agent link open this long and
+                               carry out what agents ask before rendering
+      --frames N --fps F       N images of each page, 1/F s of sound apart (an animation's frames,
+                               named <page>_<scale>_f0000.png ...; default 1 and 30)
       --trace                  print each step as it happens
       --audit                  check clipping, overlap, truncated and small text, unlabeled
                                controls and theme contrast; exit code 1 on any finding

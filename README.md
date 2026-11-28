@@ -22,7 +22,8 @@ a local bridge that lets AI agents design sounds with it.
 
 **[Download ZederiaSetup-1.0.1.exe](https://github.com/LesToqz/zederia/releases/download/v1.0.1/ZederiaSetup-1.0.1.exe)**
 (Windows 10 / 11, 64-bit, 34 MB). Every version is on the
-[releases page](https://github.com/LesToqz/zederia/releases).
+[releases page](https://github.com/LesToqz/zederia/releases), and the website is
+**[lestoqz.github.io/zederia](https://lestoqz.github.io/zederia/)**.
 
 ## Install
 
