@@ -91,23 +91,14 @@ code, pre, kbd { font-family: var(--mono); }
 }
 .skip:focus { top: 12px; }
 
-/* --- Labels: uppercase, spaced, with the module's coloured dot, as the instrument's panels ------ */
+/* --- Labels: uppercase and spaced, as the instrument's panel headings ----------------------------- */
 
 .eyebrow {
-  display: inline-flex; align-items: flex-start; gap: 10px;
+  display: block;
   margin-bottom: 18px;
   font-size: 0.78rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--text-faint);
 }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
-.eyebrow .dot { margin-top: 0.5em; } /* on the first line when the label wraps */
-.tab .dot { margin-top: 0; }
-.dot.sources { background: var(--sources); box-shadow: 0 0 10px rgba(239, 185, 107, 0.55); }
-.dot.filters { background: var(--filters); box-shadow: 0 0 10px rgba(79, 208, 190, 0.5); }
-.dot.modulators { background: var(--modulators); box-shadow: 0 0 10px rgba(169, 147, 255, 0.5); }
-.dot.effects { background: var(--effects); box-shadow: 0 0 10px rgba(255, 143, 107, 0.5); }
-.dot.play { background: var(--play); box-shadow: 0 0 10px rgba(150, 217, 113, 0.5); }
-.dot.global { background: var(--global); box-shadow: 0 0 10px rgba(159, 176, 194, 0.45); }
 
 /* --- Buttons ------------------------------------------------------------------------------------- */
 
@@ -153,16 +144,12 @@ code, pre, kbd { font-family: var(--mono); }
   font-size: 0.95rem; font-weight: 500; color: var(--text-dim);
 }
 .nav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); text-decoration: none; }
-.nav a[aria-current="page"] { color: var(--text); }
-.nav a[aria-current="page"]::after {
-  content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin-left: 2px;
-}
+.nav a[aria-current="page"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 0; }
 .nav svg { width: 18px; height: 18px; flex: none; }
 
 /* --- Hero ---------------------------------------------------------------------------------------- */
 
 .hero { position: relative; padding: 88px 0 0; text-align: center; overflow: hidden; }
-.hero .eyebrow { justify-content: center; }
 .hero h1 { max-width: 19ch; margin-inline: auto; text-wrap: balance; }
 .hero h1 .accent { color: var(--accent); }
 .lede { max-width: 640px; margin: 24px auto 0; font-size: 1.2rem; line-height: 1.6; color: var(--text-dim); }
@@ -283,7 +270,6 @@ figcaption, .caption { margin-top: 14px; font-size: 0.88rem; color: var(--text-f
 }
 .tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 .tab[aria-selected="true"] { color: #121a1b; background: var(--control); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12); }
-.tab .dot { width: 7px; height: 7px; box-shadow: none; }
 
 .panel { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 48px; align-items: start; }
 .panel[hidden] { display: none; }
