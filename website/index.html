@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zederia — the wavetable synthesizer your AI agent can play</title>
+  <title>Zederia</title>
   <meta name="description" content="Zederia is a free, open-source wavetable synthesizer for Windows (VST3, CLAP and Standalone) with a built-in MCP server, so Claude Code, Codex and other AI agents can design sounds with you.">
   <meta name="theme-color" content="#101819">
   <link rel="canonical" href="https://lestoqz.github.io/zederia/">
@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="assets/img/icon-256.png">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Zederia">
-  <meta property="og:title" content="Zederia — the wavetable synthesizer your AI agent can play">
+  <meta property="og:title" content="Zederia">
   <meta property="og:description" content="Free, open-source wavetable synth for Windows: VST3, CLAP and Standalone, with an MCP server for AI agents.">
   <meta property="og:url" content="https://lestoqz.github.io/zederia/">
   <meta property="og:image" content="https://lestoqz.github.io/zederia/assets/img/social-card.jpg">
@@ -93,13 +93,38 @@
             <li>Renders come back measured: loudness, attack, brightness, width and movement.</li>
             <li>Off by default. You decide what agents may read, edit, write and play.</li>
           </ul>
-          <div class="code">
-            <div class="code-head">Claude Code
-              <button class="copy" type="button" data-copy="setup-claude"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span>Copy</span></button>
+          <div class="code" data-tabs>
+            <div class="code-head">
+              <div class="code-tabs" role="tablist" aria-label="Your agent">
+                <button class="code-tab" type="button" role="tab" id="client-claude" aria-controls="setup-claude" aria-selected="true">Claude Code</button>
+                <button class="code-tab" type="button" role="tab" id="client-codex" aria-controls="setup-codex" aria-selected="false" tabindex="-1">Codex</button>
+                <button class="code-tab" type="button" role="tab" id="client-antigravity" aria-controls="setup-antigravity" aria-selected="false" tabindex="-1">Antigravity</button>
+              </div>
+              <button class="copy" type="button" data-copy-visible><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span>Copy</span></button>
             </div>
-            <pre id="setup-claude" data-copy-text='claude mcp add zederia -s user -- "C:\Program Files\Zederia\zederia-mcp.exe" --stdio'><span class="prompt">&gt; </span>claude mcp add zederia -s user -- "C:\Program Files\Zederia\zederia-mcp.exe" --stdio</pre>
+            <div role="tabpanel" id="setup-claude" aria-labelledby="client-claude">
+              <p class="code-where">Run it in a terminal. It adds Zederia for all your projects.</p>
+              <pre data-copy-text='claude mcp add zederia -s user -- "C:/Program Files/Zederia/zederia-mcp.exe" --stdio'><span class="prompt">&gt; </span>claude mcp add zederia -s user -- "C:/Program Files/Zederia/zederia-mcp.exe" --stdio</pre>
+            </div>
+            <div role="tabpanel" id="setup-codex" aria-labelledby="client-codex" hidden>
+              <p class="code-where">Add it to <code>%USERPROFILE%\.codex\config.toml</code>, then restart Codex.</p>
+              <pre>[mcp_servers.zederia]
+command = "C:/Program Files/Zederia/zederia-mcp.exe"
+args = ["--stdio"]</pre>
+            </div>
+            <div role="tabpanel" id="setup-antigravity" aria-labelledby="client-antigravity" hidden>
+              <p class="code-where">Merge it into <code>mcp_config.json</code> (<code>/mcp</code> shows where it is), then reload the MCP servers.</p>
+              <pre>{
+  "mcpServers": {
+    "zederia": {
+      "command": "C:/Program Files/Zederia/zederia-mcp.exe",
+      "args": ["--stdio"]
+    }
+  }
+}</pre>
+            </div>
           </div>
-          <p class="caption">For Codex and Antigravity, <em>Client setup</em> on the AGENT page copies the configuration. The <a href="https://github.com/LesToqz/zederia/blob/master/docs/AGENT_GUIDE.md">agent guide</a> explains the rest.</p>
+          <p class="caption"><em>Client setup</em> on the AGENT page copies the same for your computer, or a prompt that lets the agent set itself up. The <a href="https://github.com/LesToqz/zederia/blob/master/docs/AGENT_GUIDE.md">agent guide</a> explains the rest.</p>
         </div>
         <figure>
           <div class="window">

@@ -29,11 +29,14 @@
   });
 
   // --- Copy buttons -----------------------------------------------------------------------------
-  document.querySelectorAll('[data-copy]').forEach((button) => {
+  // data-copy names the element to copy; data-copy-visible copies the shown tab's code in its box.
+  document.querySelectorAll('[data-copy], [data-copy-visible]').forEach((button) => {
     const label = button.querySelector('span');
     const idle = label ? label.textContent : '';
     button.addEventListener('click', async () => {
-      const source = document.getElementById(button.dataset.copy);
+      const source = button.hasAttribute('data-copy-visible')
+        ? button.closest('.code').querySelector('[role="tabpanel"]:not([hidden]) pre')
+        : document.getElementById(button.dataset.copy);
       if (!source) return;
       const text = source.dataset.copyText || source.textContent.trim();
       try {

@@ -1,9 +1,26 @@
-<p align="center"><img src="plugin/brand/png/zederia-128.png" width="96" alt="Zederia logo: a Z cut into two slabs"></p>
+<p align="center">
+  <a href="https://lestoqz.github.io/zederia/"><img src="website/assets/img/zederia-preview.gif" width="880" alt="Zederia's SYNTH page playing a pad: the wavetables sweep, the filter moves and the output scope runs"></a>
+</p>
 
-# Zederia
+<h1 align="center">Zederia</h1>
 
-A wavetable synthesizer for Windows: VST3 and CLAP plug-ins and a Standalone application, with
-a local bridge that lets AI agents design sounds with it.
+<p align="center">
+  <b>Download</b>: <a href="https://github.com/LesToqz/zederia/releases/download/v1.0.1/ZederiaSetup-1.0.1.exe">ZederiaSetup-1.0.1.exe</a>
+  &nbsp;|&nbsp;
+  <b>Website</b>: <a href="https://lestoqz.github.io/zederia/">lestoqz.github.io/zederia</a>
+  &nbsp;|&nbsp;
+  <b>User manual</b>: <a href="docs/MANUAL.md">docs/MANUAL.md</a>
+</p>
+
+<p align="center">Zederia 1.0.1 · <a href="https://github.com/LesToqz/zederia/releases/tag/v1.0.1">Release notes</a> · <a href="https://github.com/LesToqz/zederia/releases">All versions</a></p>
+
+<h3 align="center">A wavetable synthesizer for Windows, with a bridge for AI agents</h3>
+
+<p align="center"><b>VST3 · CLAP · Standalone · MCP server for Claude Code, Codex and Antigravity</b></p>
+
+<p align="center">Design sounds yourself, or let an AI agent shape the patch, write clips and render audio with you.</p>
+
+## What is in it
 
 - Three wavetable oscillators (up to 256 frames, five morph modes, two warp slots, 16-voice
   unison) or a low-cost classic engine, a Sub and a Texture sample player.
@@ -17,13 +34,6 @@ a local bridge that lets AI agents design sounds with it.
   effect rack presets.
 - `zederia-mcp`, a Model Context Protocol server for AI agents, and `zederia-cli` for
   rendering, analysis and the wavetable toolkit.
-
-## Download
-
-**[Download ZederiaSetup-1.0.1.exe](https://github.com/LesToqz/zederia/releases/download/v1.0.1/ZederiaSetup-1.0.1.exe)**
-(Windows 10 / 11, 64-bit, 34 MB). Every version is on the
-[releases page](https://github.com/LesToqz/zederia/releases), and the website is
-**[lestoqz.github.io/zederia](https://lestoqz.github.io/zederia/)**.
 
 ## Install
 
