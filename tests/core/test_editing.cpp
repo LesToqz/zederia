@@ -479,6 +479,51 @@ TEST_CASE("editing: the preset index searches, filters, sorts, counts facets and
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("editing: the installer's copies of the factory presets in Documents are listed once, as factory", "[editing][library]") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / ("zederia_test_mirror_" + std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    const fs::path factory = root / "Factory", user = root / "Documents";
+    const auto write = [&](const fs::path& base, const std::string& rel, const Patch& patch) {
+        const fs::path file = base / "Presets" / rel;
+        fs::create_directories(file.parent_path());
+        std::string error;
+        const std::string text = savePatch(patch);
+        REQUIRE(writeFile(file.string(), std::span(reinterpret_cast<const std::uint8_t*>(text.data()), text.size()), error));
+    };
+    Patch bass;
+    bass.meta.name = "Deep Bass";
+    bass.set(idx("filter1.cutoff"), 300.0);
+    Patch lead;
+    lead.meta.name = "Lead One";
+    lead.set(idx("filter1.cutoff"), 6000.0);
+    write(factory, "Bass/Deep Bass.zpreset", bass);
+    write(factory, "Lead/Lead One.zpreset", lead);
+    write(factory, "Default.zpreset", Patch{});
+    // The installer's copies, one of them in different case (Windows paths ignore it).
+    write(user, "Bass/Deep Bass.zpreset", bass);
+    write(user, "lead/lead one.zpreset", lead);
+    write(user, "Default.zpreset", Patch{});
+    // In another folder: the user's own copy. Changed in place: the user's now.
+    write(user, "Bass/Lead One.zpreset", lead);
+    Patch edited = bass;
+    edited.set(idx("filter1.cutoff"), 1200.0);
+    fs::remove(user / "Presets" / "Bass" / "Deep Bass.zpreset");
+    write(user, "Bass/Deep Bass.zpreset", edited);
+
+    const auto presets = scanPresets(factory.string(), user.string());
+    int factoryCount = 0, userCount = 0;
+    for (const auto& p : presets)
+        (p.factory ? factoryCount : userCount)++;
+    CHECK(factoryCount == 3);
+    CHECK(userCount == 2); // the edited Deep Bass and the Lead One copied into Bass
+    for (const auto& p : presets)
+        if (!p.factory)
+            CHECK(p.folder == "Bass");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("editing: an incremental table build equals a full one and reuses unchanged frames", "[editing][table]") {
     for (const MorphMode mode : {MorphMode::None, MorphMode::Spectral}) {
         Wavetable table = sawTable(32);

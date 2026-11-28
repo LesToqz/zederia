@@ -29,7 +29,9 @@ bool readPresetInfo(const std::string& path, PresetInfo& out, std::string& error
 std::uint64_t soundHash(const Patch& patch);
 
 // Every *.zpreset under <factory>/Presets and <user>/Presets. Unreadable files are reported in
-// `problems` (one line each) and left out.
+// `problems` (one line each) and left out. A user file in the same folder and with the same file
+// name and sound as a factory preset (the installer's copy in Documents) is the factory preset and
+// is listed once, as factory.
 std::vector<PresetInfo> scanPresets(const std::string& factoryDir, const std::string& userDir,
                                     std::vector<std::string>* problems = nullptr);
 

@@ -142,7 +142,23 @@ std::vector<PresetInfo> scanPresets(const std::string& factoryDir, const std::st
         }
     };
     scan(factoryDir, true);
+    // The installer also copies the factory presets into the user's Presets folder, into the same
+    // folders, so they can be seen in Explorer. Such a copy is the factory preset, listed once: a
+    // user file in the same place as a factory preset with the same sound is left out. One whose
+    // sound was changed is the user's.
+    const auto place = [](const PresetInfo& p) { return lower(p.folder + "/" + fs::path(p.path).filename().string()); };
+    std::unordered_map<std::string, std::uint64_t> factorySounds;
+    for (const auto& p : out)
+        factorySounds.emplace(place(p), p.soundHash);
+    const std::size_t factoryCount = out.size();
     scan(userDir, false);
+    if (!factorySounds.empty())
+        out.erase(std::remove_if(out.begin() + static_cast<std::ptrdiff_t>(factoryCount), out.end(),
+                                 [&](const PresetInfo& p) {
+                                     const auto it = factorySounds.find(place(p));
+                                     return it != factorySounds.end() && it->second == p.soundHash;
+                                 }),
+                  out.end());
     return out;
 }
 
