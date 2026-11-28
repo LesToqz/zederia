@@ -7,8 +7,11 @@
 ;   CLAP        C:\Program Files\Common Files\CLAP\Zederia.clap
 ;   Standalone and tools   C:\Program Files\Zederia
 ;   factory content        %PROGRAMDATA%\Zederia\Factory
+;   factory presets again  Documents\Zederia\Presets of the user who installs, in the factory's
+;                          folders, to be seen in Explorer (the library lists each preset once)
 ; The uninstaller removes all of it and keeps what belongs to the user: Documents\Zederia (presets,
-; wavetables, renders), the settings and the agent permissions.
+; wavetables, renders), the settings and the agent permissions. Of the factory presets' copies in
+; Documents it removes those that are as installed; a copy the user changed stays.
 
 #ifndef AppVersion
   #error AppVersion is not defined: build the installer with scripts/package.ps1
@@ -38,6 +41,8 @@ DefaultDirName={autopf}\Zederia
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
+; The factory presets are also copied into the installing user's Documents (see [Files]).
+UsedUserAreasWarning=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -49,8 +54,14 @@ UninstallDisplayName=Zederia {#AppVersion}
 LicenseFile=..\LICENSE
 WizardStyle=modern dynamic
 DisableWelcomePage=no
-WizardImageFile=images\wizard-side-202x386.png,images\wizard-side-269x515.png,images\wizard-side-336x643.png,images\wizard-side-403x772.png,images\wizard-side-430x824.png,images\wizard-side-498x953.png,images\wizard-side-534x1022.png
-WizardSmallImageFile=images\wizard-small-58.png,images\wizard-small-77.png,images\wizard-small-97.png,images\wizard-small-116.png,images\wizard-small-124.png,images\wizard-small-143.png,images\wizard-small-159.png
+; The images are drawn on dark, so they serve the light and the dark theme alike. Without the
+; DynamicDark ones the dynamic style shows Inno Setup's own pictures when Windows is in dark mode.
+#define SideImages "images\wizard-side-202x386.png,images\wizard-side-269x515.png,images\wizard-side-336x643.png,images\wizard-side-403x772.png,images\wizard-side-430x824.png,images\wizard-side-498x953.png,images\wizard-side-534x1022.png"
+#define SmallImages "images\wizard-small-58.png,images\wizard-small-77.png,images\wizard-small-97.png,images\wizard-small-116.png,images\wizard-small-124.png,images\wizard-small-143.png,images\wizard-small-159.png"
+WizardImageFile={#SideImages}
+WizardImageFileDynamicDark={#SideImages}
+WizardSmallImageFile={#SmallImages}
+WizardSmallImageFileDynamicDark={#SmallImages}
 Compression=lzma2/max
 SolidCompression=yes
 ; Programs that keep installed files open (a host with the plug-in loaded, the Standalone, an agent
@@ -70,7 +81,7 @@ VersionInfoCopyright=Copyright (C) 2026 LesToqz
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nThe VST3 and CLAP plug-ins go to the standard Common Files folders, where hosts such as FL Studio find them without extra search folders. The Standalone application and the agent tools go to Program Files, and the factory content is shared by every user of this computer.%n%nYour own presets, wavetables and settings in Documents\Zederia stay when you upgrade or uninstall.%n%nClose any host that has Zederia loaded before you continue.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nThe VST3 and CLAP plug-ins go to the standard Common Files folders, where hosts such as FL Studio find them without extra search folders. The Standalone application and the agent tools go to Program Files, and the factory content is shared by every user of this computer. The factory presets are also copied to Documents\Zederia\Presets.%n%nYour own presets, wavetables and settings in Documents\Zederia stay when you upgrade or uninstall.%n%nClose any host that has Zederia loaded before you continue.
 
 [Types]
 Name: "full"; Description: "Everything"
@@ -108,6 +119,10 @@ Source: "{#Stage}\Zederia.exe"; DestDir: "{app}"; Components: standalone; Flags:
 Source: "{#Stage}\zederia-mcp.exe"; DestDir: "{app}"; Components: agent; Flags: ignoreversion
 Source: "{#Stage}\zederia-cli.exe"; DestDir: "{app}"; Components: agent; Flags: ignoreversion
 Source: "{#Stage}\Factory\*"; DestDir: "{commonappdata}\Zederia\Factory"; Components: content; Flags: ignoreversion recursesubdirs createallsubdirs
+; The factory presets again in Documents, where users look for them. [Code] first removes the
+; copies that are as installed, so a copy still there was changed by the user and is not replaced.
+; The uninstaller leaves the copies to [Code] too, which removes only the unchanged ones.
+Source: "{#Stage}\Factory\Presets\*"; DestDir: "{userdocs}\Zederia\Presets"; Components: content; Flags: onlyifdoesntexist uninsneveruninstall recursesubdirs createallsubdirs
 Source: "{#Stage}\zederia.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\NOTICE.txt"; DestDir: "{app}"; Flags: ignoreversion
@@ -135,6 +150,44 @@ Type: dirifempty; Name: "{app}\docs"
 Type: dirifempty; Name: "{app}"
 
 [Code]
+// Removes the copies of the factory presets in Documents\Zederia\Presets that are as installed:
+// the same bytes as the preset at the same place in the factory folder. Folders left empty go too
+// (the application makes its default folders again). Copies the user changed, and the user's own
+// presets, stay.
+procedure RemoveUnchangedPresetCopies(const FactoryDir, CopyDir: String);
+var
+  Found: TFindRec;
+  Original, Copied: AnsiString;
+begin
+  if not DirExists(CopyDir) then
+    exit;
+  if FindFirst(FactoryDir + '\*', Found) then
+  try
+    repeat
+      if (Found.Name <> '.') and (Found.Name <> '..') then
+      begin
+        if (Found.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+        begin
+          RemoveUnchangedPresetCopies(FactoryDir + '\' + Found.Name, CopyDir + '\' + Found.Name);
+          RemoveDir(CopyDir + '\' + Found.Name);
+        end
+        else if FileExists(CopyDir + '\' + Found.Name) and
+                LoadStringFromFile(FactoryDir + '\' + Found.Name, Original) and
+                LoadStringFromFile(CopyDir + '\' + Found.Name, Copied) and (Original = Copied) then
+          DeleteFile(CopyDir + '\' + Found.Name);
+      end;
+    until not FindNext(Found);
+  finally
+    FindClose(Found);
+  end;
+end;
+
+procedure RemoveUnchangedPresetCopiesHere();
+begin
+  RemoveUnchangedPresetCopies(ExpandConstant('{commonappdata}\Zederia\Factory\Presets'),
+                              ExpandConstant('{userdocs}\Zederia\Presets'));
+end;
+
 // A development install (scripts/install-dev.ps1) puts a second copy of the plug-ins in the
 // per-user folders; hosts that scan those would list Zederia twice.
 function DevelopmentInstallFound(): Boolean;
@@ -145,8 +198,19 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  // Before [InstallDelete] replaces the factory folder: the copies an earlier version made can
+  // still be compared with its presets, so its retired presets leave Documents too.
+  if CurStep = ssInstall then
+    RemoveUnchangedPresetCopiesHere();
   if (CurStep = ssPostInstall) and DevelopmentInstallFound() then
     SuppressibleMsgBox('A development copy of Zederia is also installed in ' +
       ExpandConstant('{localappdata}\Programs\Common') + '. Hosts that scan that folder list Zederia twice. ' +
       'Remove it with scripts\install-dev.ps1 -Uninstall in the source folder.', mbInformation, MB_OK, IDOK);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  // Before the factory folder is removed, while the copies can be compared with it.
+  if CurUninstallStep = usUninstall then
+    RemoveUnchangedPresetCopiesHere();
 end;

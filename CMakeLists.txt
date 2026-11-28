@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
-project(Zederia VERSION 1.0.0 LANGUAGES C CXX)
-# The release is 1.0.0 plus this suffix ("-rc1": the first release candidate; "" for the release).
+project(Zederia VERSION 1.0.1 LANGUAGES C CXX)
+# The release is the project version plus this suffix ("-rc1": the first release candidate; "" for the release).
 # Binaries carry the numeric version in their version resources and the full one in their text.
-set(ZED_VERSION_SUFFIX "-rc1")
+set(ZED_VERSION_SUFFIX "")
 set(ZED_VERSION_FULL "${PROJECT_VERSION}${ZED_VERSION_SUFFIX}")
 
 set(CMAKE_CXX_STANDARD 20)

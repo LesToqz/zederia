@@ -1,8 +1,16 @@
-# Zederia 1.0.0-rc1 release notes
+# Zederia 1.0.1 release notes
 
-The first release candidate of Zederia, a wavetable synthesizer for Windows (VST3, CLAP and a
-Standalone application) with a local bridge for AI agents. This candidate is for testing before
-1.0.0: please report what does not work.
+Zederia, a wavetable synthesizer for Windows (VST3, CLAP and a Standalone application) with a
+local bridge for AI agents. Please report what does not work.
+
+## Changes since 1.0.0-rc1
+
+- The installer shows the Zederia logo when Windows is in dark mode too; it showed Inno Setup's
+  own picture there.
+- The installer also copies the factory presets into `Documents\Zederia\Presets`, in their
+  folders (`Bass`, `Lead`, `Pad`, ...), so they can be seen and used in Explorer. The library
+  lists each of them once. A copy you change is yours: upgrades do not replace it and the
+  uninstaller keeps it.
 
 ## What is in it
 
@@ -26,13 +34,13 @@ or the Standalone. About 90 MB of disk space.
 
 ## Installing
 
-1. Download `ZederiaSetup-1.0.0-rc1.exe`. A browser may say that it is not commonly downloaded:
+1. Download `ZederiaSetup-1.0.1.exe`. A browser may say that it is not commonly downloaded:
    choose to keep it.
 2. Run it. **The installer is not code-signed** (signing needs a certificate that has not been
    bought for this release), so Windows Defender SmartScreen may stop it first with a blue
    window, **"Windows protected your PC"**: "Microsoft Defender SmartScreen prevented an
    unrecognized app from starting. Running this app might put your PC at risk." To continue,
-   click **More info**: the window then shows the app's name (`ZederiaSetup-1.0.0-rc1.exe`) and
+   click **More info**: the window then shows the app's name (`ZederiaSetup-1.0.1.exe`) and
    **Publisher: Unknown publisher**. Click **Run anyway**.
 3. Windows then asks for administrator rights ("Do you want to allow this app from an unknown
    publisher to make changes to your device?"). Click **Yes**. This is the only time the
@@ -41,7 +49,7 @@ or the Standalone. About 90 MB of disk space.
    Standalone, agent tools; the factory content is always installed), and Install.
 
 Before running an unsigned installer, check that it is the file that was published: in
-PowerShell, `Get-FileHash .\ZederiaSetup-1.0.0-rc1.exe -Algorithm SHA256` must print the
+PowerShell, `Get-FileHash .\ZederiaSetup-1.0.1.exe -Algorithm SHA256` must print the
 SHA-256 value published beside the download. If **Smart App Control** is on (Windows 11), it
 blocks unsigned installers with no Run anyway button; the installer cannot be run while it is
 on.
@@ -54,6 +62,7 @@ What goes where:
 | CLAP plug-in | `C:\Program Files\Common Files\CLAP\Zederia.clap` |
 | Standalone, `zederia-mcp`, `zederia-cli`, documents | `C:\Program Files\Zederia` |
 | Factory content | `%PROGRAMDATA%\Zederia\Factory` |
+| A copy of the factory presets, for the user who installs | `Documents\Zederia\Presets` |
 | Your presets and files (made when first used) | `Documents\Zederia` |
 
 Hosts find the plug-ins in these standard folders. If FL Studio does not list Zederia yet,
@@ -80,7 +89,7 @@ the plug-in database under its own name.
 ## Known issues
 
 - The installer and the programs are not code-signed (see Installing).
-- Hosts checked for this candidate: FL Studio 2026 (26.1.1) with the installed VST3 (loading,
+- Hosts checked for 1.0.0-rc1: FL Studio 2026 (26.1.1) with the installed VST3 (loading,
   playing, two instances at once, automating a parameter, saving and reopening a project,
   rendering it) and the Standalone (loading, playing, the factory library, the agent link).
   The CLAP plug-in passed its validator but was not loaded in a host, and no other host was
@@ -108,5 +117,5 @@ JUCE extensions, nlohmann/json, cpp-httplib, and the Inno Setup setup program) a
 their licences in `NOTICE.txt`.
 
 The complete corresponding source code of this release is the Zederia source tree at the tag
-`v1.0.0-rc1`. Whoever passes this installer on must also offer that source, as the licence's
+`v1.0.1`. Whoever passes this installer on must also offer that source, as the licence's
 section 6 requires.

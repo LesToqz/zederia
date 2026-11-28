@@ -80,6 +80,20 @@ function Get-Fingerprint([string]$dir) {
     return "$($files.Count) files, $((($files | Measure-Object Length -Sum).Sum)) bytes"
 }
 $userBefore = Get-Fingerprint $userDir
+# The factory presets' copies in Documents. One of them is changed during the test, as a user
+# would: only when there is no such file of the user's already.
+$copies = Join-Path $userDir 'Presets'
+$changedCopy = Join-Path $copies 'Default.zpreset'
+$changeCopy = -not (Test-Path $changedCopy)
+function Test-CopiesMatch {
+    $base = Join-Path $factory 'Presets'
+    foreach ($f in Get-ChildItem -LiteralPath $base -Recurse -File) {
+        $copy = Join-Path $copies $f.FullName.Substring($base.Length + 1)
+        if (-not (Test-Path -LiteralPath $copy)) { return $false }
+        if ((Get-FileHash -LiteralPath $copy).Hash -ne (Get-FileHash -LiteralPath $f.FullName).Hash) { return $false }
+    }
+    return $true
+}
 $settingsBefore = Get-Fingerprint $settingsDir
 
 function Install([string]$file, [string]$name, [string]$extra = '') {
@@ -113,11 +127,14 @@ foreach ($there in @($appDir, $vst3, $clap, $factory)) {
 # 1. The older version.
 Install $oldSetup 'old'
 Check 'old: stale preset installed' (Test-Path (Join-Path $factory 'Presets\Retired\Old Sound.zpreset'))
+Check 'old: its copy in Documents' (Test-Path (Join-Path $copies 'Retired\Old Sound.zpreset'))
 Check 'old: Apps entry says 0.9.0-test' ((Get-ItemProperty $uninstallKey).DisplayVersion -eq '0.9.0-test')
 
 # 2. The upgrade.
 Install $setup 'upgrade'
 Check 'upgrade: the retired preset folder is gone' (-not (Test-Path (Join-Path $factory 'Presets\Retired')))
+Check 'upgrade: its copy in Documents is gone' (-not (Test-Path (Join-Path $copies 'Retired')))
+Check 'upgrade: every factory preset is copied to Documents\Zederia\Presets' (Test-CopiesMatch)
 Check 'upgrade: the retired table is gone' (-not (Test-Path (Join-Path $factory 'Wavetables\Basics\Old Table.wav')))
 Check 'upgrade: the old document is gone' (-not (Test-Path (Join-Path $appDir 'docs\OLD_NOTES.md')))
 Check 'upgrade: the stale file in the VST3 bundle is gone' (-not (Test-Path (Join-Path $vst3 'Contents\Resources\old.txt')))
@@ -154,9 +171,19 @@ Check 'parts: CLAP removed' (-not (Test-Path $clap))
 Check 'parts: Standalone and its Start menu entry removed' (-not (Test-Path (Join-Path $appDir 'Zederia.exe')) -and -not (Test-Path $startMenu))
 Check 'parts: agent tools removed' (-not (Test-Path (Join-Path $appDir 'zederia-mcp.exe')) -and -not (Test-Path (Join-Path $appDir 'zederia-cli.exe')))
 
-# 5. Uninstalling.
+# 5. Uninstalling. Before it, a copy in Documents is changed: installing again keeps it, and so
+# does the uninstaller.
+if ($changeCopy) { Add-Content -LiteralPath $changedCopy -Value ' ' }
 Install $setup 'full-again'
+if ($changeCopy) { Check 'again: the changed copy in Documents is kept' ((Get-Content -Raw -LiteralPath $changedCopy).EndsWith(" `r`n")) }
+$base = Join-Path $factory 'Presets'
+$copyFiles = @(Get-ChildItem -LiteralPath $base -Recurse -File | ForEach-Object { Join-Path $copies $_.FullName.Substring($base.Length + 1) } | Where-Object { $_ -ne $changedCopy })
 Uninstall
+if ($changeCopy) {
+    Check 'uninstall: the changed copy in Documents is kept' (Test-Path -LiteralPath $changedCopy)
+    Remove-Item -Force -LiteralPath $changedCopy -ErrorAction SilentlyContinue
+}
+Check "uninstall: the $($copyFiles.Count) unchanged copies in Documents are gone" (@($copyFiles | Where-Object { Test-Path -LiteralPath $_ }).Count -eq 0)
 foreach ($left in @($appDir, $vst3, $clap, (Join-Path $env:ProgramData 'Zederia'), $startMenu, 'HKLM:\SOFTWARE\Zederia', $uninstallKey)) {
     Check "nothing left: $left" (-not (Test-Path $left))
 }

@@ -37,6 +37,11 @@ says what it shows and how to continue.
 | CLAP plug-in | `C:\Program Files\Common Files\CLAP\Zederia.clap` |
 | Standalone application, agent tools, these documents | `C:\Program Files\Zederia` |
 | Factory content (presets, wavetables, textures, shapes, clips, effect racks) | `%PROGRAMDATA%\Zederia\Factory` |
+| A copy of the factory presets, for the user who installs | `Documents\Zederia\Presets`, in the same folders (`Bass`, `Lead`, ...) |
+
+The library lists each factory preset once, whether it finds the copy or not. A copy you change in
+place becomes yours: an upgrade does not replace it and the uninstaller keeps it; the unchanged
+copies are replaced by an upgrade and removed by the uninstaller.
 
 The plug-in folders are the standard ones, so a host such as FL Studio finds Zederia when it
 scans for plug-ins, with no extra search folder. The Standalone has a Start menu entry. Choose
@@ -277,7 +282,7 @@ preset, Offline quality, the default author for saved presets, Content folder, a
 
 | What | Where |
 |---|---|
-| Your presets | `Documents\Zederia\Presets` (agents save in `Presets\Agent`) |
+| Your presets | `Documents\Zederia\Presets` (agents save in `Presets\Agent`); the installer also copies the factory presets here |
 | Your wavetables, textures, shapes, clips, effect racks | `Documents\Zederia\Wavetables`, `Textures`, `Shapes`, `Clips`, `Racks` |
 | Renders and packs from agents | `Documents\Zederia\Renders`, `Documents\Zederia\Packs` |
 | Factory content (read-only) | `%PROGRAMDATA%\Zederia\Factory` |

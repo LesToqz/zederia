@@ -758,8 +758,12 @@ Milestone 7:
 - **Agent sessions opened before 2026-11-26 run the old development server.** Claude Code in this folder now starts the installed `C:\Program Files\Zederia\zederia-mcp.exe` (1.0.0-rc1); a session started earlier keeps the development build of 2026-11-23 (0.1.0, without milestone 7's hardening) until it is restarted.
 - **A development install beside the installed one** puts a second Zederia in hosts that scan the per-user plug-in folders; while `%PROGRAMDATA%\Zederia\Factory` exists, both use it. `scripts/install-dev.ps1 -Uninstall` removes the development copy.
 
+- Release 1.0.1, tagged `v1.0.1` (after 1.0.0-rc1; `ZED_VERSION_SUFFIX` dropped):
+  - **Installer logo in dark mode**: `WizardStyle=modern dynamic` showed Inno Setup's own pictures when Windows was in dark mode; the same (dark) images are now also the `WizardImageFileDynamicDark` and `WizardSmallImageFileDynamicDark` ones.
+  - **Factory presets in Documents**: the installer also copies the factory presets into `Documents\Zederia\Presets` of the user who installs, in the factory's folders. `scanPresets` lists a user file with the same folder, file name and sound as a factory preset once, as factory. The installer's [Code] removes the unchanged copies before an upgrade and on uninstall (comparing bytes with the factory folder) and never replaces a changed one.
+
 ## Next
 - Listen to the factory presets in a host and work through the rest of the host checklist (Measurements): the CLAP plug-in, a small audio buffer, automation drawn by hand, the downloaded installer with SmartScreen, an uninstall from Settings by hand.
-- Fix what that turns up, then release 1.0.0: drop `ZED_VERSION_SUFFIX`, rebuild with `scripts/package.ps1`, run `scripts/test-installer.ps1`.
+- Fix what that turns up in the next version: rebuild with `scripts/package.ps1`, run `scripts/test-installer.ps1`.
 - Code signing, when a certificate is bought: sign the programs and the installer through Inno Setup's `SignTool` directive (the release notes then lose their SmartScreen section).
 - Publish the source with the installer (AGPL section 6): the repository at the release's tag.

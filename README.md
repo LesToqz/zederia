@@ -18,11 +18,18 @@ a local bridge that lets AI agents design sounds with it.
 - `zederia-mcp`, a Model Context Protocol server for AI agents, and `zederia-cli` for
   rendering, analysis and the wavetable toolkit.
 
+## Download
+
+**[Download ZederiaSetup-1.0.1.exe](https://github.com/LesToqz/zederia/releases/download/v1.0.1/ZederiaSetup-1.0.1.exe)**
+(Windows 10 / 11, 64-bit, 34 MB). Every version is on the
+[releases page](https://github.com/LesToqz/zederia/releases).
+
 ## Install
 
 Run `ZederiaSetup-<version>.exe` (administrator rights once). It puts the plug-ins in the
 standard folders under `C:\Program Files\Common Files`, the Standalone and the tools in
-`C:\Program Files\Zederia` and the factory content in `%PROGRAMDATA%\Zederia\Factory`. The
+`C:\Program Files\Zederia` and the factory content in `%PROGRAMDATA%\Zederia\Factory`, with a
+copy of the factory presets in `Documents\Zederia\Presets`. The
 installer is not code-signed; [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) says what Windows
 shows and how to continue.
 
