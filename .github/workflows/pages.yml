@@ -28,6 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
+      # Browsers keep the stylesheet and script for 10 minutes: name them by their content, so a
+      # changed one is fetched again instead of pairing new pages with the old styles.
+      - name: Stamp the stylesheet and script with their content hash
+        run: |
+          css=$(sha256sum website/assets/css/site.css | cut -c1-10)
+          js=$(sha256sum website/assets/js/site.js | cut -c1-10)
+          sed -i "s|assets/css/site.css\"|assets/css/site.css?v=$css\"|g; s|assets/js/site.js\"|assets/js/site.js?v=$js\"|g" website/*.html
+          grep -c "site.css?v=$css" website/*.html
       - uses: actions/upload-pages-artifact@v5
         with:
           path: website

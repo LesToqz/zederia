@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://lestoqz.github.io/zederia/"><img src="website/assets/img/zederia-preview.gif" width="880" alt="Zederia's SYNTH page playing a pad: the wavetables sweep, the filter moves and the output scope runs"></a>
+  <a href="https://lestoqz.github.io/zederia/"><img src="website/assets/img/zederia-preview.png" alt="Zederia's SYNTH page playing a pad: the wavetables sweep, the filter moves and the output scope runs"></a>
 </p>
 
 <h1 align="center">Zederia</h1>
